@@ -9,6 +9,22 @@ export const PRODUCT_SLUG = "custom-pillow" as const;
 export const PRODUCT_PRICE_CENTS = 1999;
 export const PRODUCT_CURRENCY = "usd";
 
+type ProductArtworkFrame = {
+  aspectRatio: number;
+  label: string;
+  outputHeight: number;
+  outputWidth: number;
+  shape: "circle" | "rectangle" | "square";
+};
+
+export const PRODUCT_ARTWORK_FRAME: ProductArtworkFrame = {
+  shape: "square",
+  aspectRatio: 1,
+  outputWidth: 1200,
+  outputHeight: 1200,
+  label: "Square pillow artwork",
+};
+
 export const COLOR_OPTIONS = [
   { value: "soft-mint", label: "Soft mint", hex: "#dbeec6" },
   { value: "warm-cream", label: "Warm cream", hex: "#f7f1de" },
@@ -52,10 +68,10 @@ export const DEFAULT_DESIGN: DesignPayload = {
   selection: DEFAULT_SELECTION,
   sides: {
     front: {
-      kind: "text",
-      text: "Dodo",
+      kind: "image",
+      imagePreviewUrl: "/debug/pillow-sample.png",
       shape: "rectangle",
-      position: "top_banner",
+      position: "full_panel",
     },
     back: {
       kind: "none",

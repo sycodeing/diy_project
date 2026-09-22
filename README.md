@@ -1,133 +1,111 @@
 # Studio Blank DIY
 
-A Vercel-ready DIY pillow commerce MVP built with Next.js App Router,
-Supabase Auth/Postgres/Storage, Stripe Checkout, and Temu order mirroring.
+A Vercel-ready custom pillow preview and ordering MVP built with Next.js,
+Supabase, and a lightweight Python mockup renderer.
 
-## Features
+## Current Flow
 
-- Email and password account flow through Supabase Auth.
-- Two-step DIY editor: pillow blank selection, then front/back custom content.
-- Pillow preview with color, cover style, size, text/image, shape, and preset
-  placement controls.
-- Private Supabase Storage uploads under `design-assets/{user_id}/...`.
-- Stripe Checkout order flow with shipping address collection.
-- User order list and order detail pages with Temu mirror fields.
-- Admin order list/detail pages with production and Temu status updates.
-- Temu import endpoint that stores marketplace-limited order data locally.
-- Supabase RLS policies for user-owned designs/orders and database-backed
-  admin roles.
+- `/` is the product showcase home page.
+- `/design` accepts `image`, `shape`, and `position` query parameters.
+- Legacy links that pass an image to `/` redirect to `/design` automatically.
+- Users can replace the incoming artwork, drag/zoom a square crop, and compare
+  four realistic pillow scenes.
+- Checkout validates a configurable delivery area, creates a browser-local mock
+  order, and redirects to its order detail page.
+- `/orders` lists mock orders and, when Supabase is configured, database orders.
+- `/profile` supports nickname and avatar editing.
 
-## Local Setup
+The current preview order is:
 
-1. Install dependencies:
+1. Grey sofa close-up
+2. 18in / 45cm size
+3. Wood chair
+4. Sofa room
 
-```bash
+## Vercel Architecture
+
+- Next.js pages and route handlers deploy normally on Vercel.
+- `api/mockup.py` deploys as a Vercel Python Function at `/api/mockup`.
+- Production previews use the same-origin Python Function automatically.
+- Local development uses the renderer at `http://127.0.0.1:8010`.
+- Supabase stores application data and private design assets.
+
+The source currently retains the Supabase Auth implementation. The intended
+production account provider is Clerk from the Vercel Marketplace so the hosted
+sign-in/sign-up UI, email accounts, Google login, and sessions do not need to be
+maintained in this repository. Provision Clerk before replacing the current
+auth adapter.
+
+## Local Development
+
+Install JavaScript dependencies:
+
+```powershell
 npm install
 ```
 
-2. Copy environment placeholders:
+Create the local environment file:
 
-```bash
-copy .env.example .env.local
+```powershell
+Copy-Item .env.example .env.local
 ```
 
-3. Fill in `.env.local`:
+Run the mockup renderer:
 
-```env
-NEXT_PUBLIC_APP_URL=http://localhost:3000
-NEXT_PUBLIC_SUPABASE_URL=...
-NEXT_PUBLIC_SUPABASE_ANON_KEY=...
-SUPABASE_SERVICE_ROLE_KEY=...
-STRIPE_SECRET_KEY=...
-STRIPE_WEBHOOK_SECRET=...
-TEMU_SYNC_SECRET=...
+```powershell
+cd mockup-renderer
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port 8010
 ```
 
-4. Run `supabase/schema.sql` in the Supabase SQL Editor.
+Run Next.js from the repository root:
 
-5. Add at least one admin user after that user registers:
-
-```sql
-insert into public.admin_roles (user_id)
-values ('00000000-0000-0000-0000-000000000000');
-```
-
-Replace the UUID with the user's `auth.users.id`.
-
-6. Run the app:
-
-```bash
+```powershell
 npm run dev
 ```
 
-## Stripe Webhook
+Open `http://127.0.0.1:3000`.
 
-Create a webhook endpoint pointing to:
+## Service Area
 
-```text
-https://your-domain.com/api/stripe/webhook
+Countries are configured with:
+
+```env
+NEXT_PUBLIC_ALLOWED_COUNTRIES=US,CN
 ```
 
-Listen for:
+Optional region restrictions use `COUNTRY:REGION` entries separated by `|`:
 
-```text
-checkout.session.completed
+```env
+NEXT_PUBLIC_ALLOWED_REGIONS=US:CA|US:NY|CN:GD
 ```
 
-For local testing, use Stripe CLI:
+## Supabase
 
-```bash
-stripe listen --forward-to localhost:3000/api/stripe/webhook
+Run `supabase/schema.sql` in the Supabase SQL Editor for a new project. Existing
+projects can apply migrations from `supabase/migrations`.
+
+The app accepts the modern environment names created by the Vercel Supabase
+integration:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
+SUPABASE_SECRET_KEY=...
 ```
 
-Then copy the generated webhook signing secret into `STRIPE_WEBHOOK_SECRET`.
+Legacy anon and service-role key names remain supported.
 
-## Temu Order Mirror
+## Verification
 
-Temu remains the marketplace order source. This app stores a local copy with
-the DIY design proof, payment records, and whatever Temu fields are available.
-The mirror supports coarse Temu statuses:
-
-- `UN_SHIPPING`: awaiting shipment
-- `CANCELED`: canceled
-- `SHIPPED`: shipped
-- `UNKNOWN`: payload did not map cleanly
-- `NOT_SUBMITTED`: local order has no Temu order number yet
-
-External sync jobs can POST normalized order data to:
-
-```text
-POST /api/temu/orders/import
-Authorization: Bearer <TEMU_SYNC_SECRET>
-```
-
-Example payload:
-
-```json
-{
-  "orders": [
-    {
-      "localOrderId": "00000000-0000-0000-0000-000000000000",
-      "parentOrderSn": "PO-123",
-      "orderSn": "O-456",
-      "status": "UN_SHIPPING",
-      "shipping": { "masked": true },
-      "raw": { "source": "temu-partner-v2" }
-    }
-  ]
-}
-```
-
-If `localOrderId` is omitted, the importer matches by `parentOrderSn`.
-
-## Deployment
-
-Deploy as a standard Next.js project on Vercel. Add all environment variables
-for Production and Preview. Set `NEXT_PUBLIC_APP_URL` to the deployed origin.
-
-Before deploying:
-
-```bash
+```powershell
 npm run lint
 npm run build
+```
+
+The Python deployment entry point can be checked locally with:
+
+```powershell
+.\mockup-renderer\.venv\Scripts\python.exe -m uvicorn api.mockup:app --port 8011
 ```

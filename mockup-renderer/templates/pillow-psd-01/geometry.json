@@ -1,0 +1,31 @@
+{
+  "template_id": "pillow-psd-01",
+  "name": "PSD calibrated square pillow",
+  "render_mode": "psd_multiply",
+  "output_width": 800,
+  "output_height": 800,
+  "print_area": {
+    "type": "quad",
+    "points": [
+      [
+        114,
+        177
+      ],
+      [
+        603,
+        177
+      ],
+      [
+        603,
+        640
+      ],
+      [
+        114,
+        640
+      ]
+    ]
+  },
+  "blend": {
+    "mask_opacity": 1.0
+  }
+}

@@ -37,6 +37,17 @@ export type DesignPayload = {
   sides: Record<ProductSide, DesignSide>;
 };
 
+export type ShippingAddress = {
+  fullName: string;
+  line1: string;
+  line2?: string;
+  city: string;
+  region: string;
+  postalCode: string;
+  country: string;
+  phone?: string;
+};
+
 export type PaymentStatus =
   | "pending_payment"
   | "paid"

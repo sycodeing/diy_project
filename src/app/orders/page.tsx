@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { MockOrdersList } from "@/components/mock-orders";
 import { OrderStatus } from "@/components/order-status";
-import { SetupWarning } from "@/components/setup-warning";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { OrderSummary } from "@/lib/types";
 import { formatDate, formatMoney } from "@/lib/utils";
@@ -13,8 +13,9 @@ export default async function OrdersPage() {
   if (!supabase) {
     return (
       <AppShell>
-        <main className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6">
-          <SetupWarning />
+        <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8 sm:px-6">
+          <OrdersHeader />
+          <MockOrdersList />
         </main>
       </AppShell>
     );
@@ -38,22 +39,7 @@ export default async function OrdersPage() {
   return (
     <AppShell>
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8 sm:px-6">
-        <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-xs font-black uppercase tracking-[0.18em] text-accent">
-              Order archive
-            </p>
-            <h1 className="mt-2 text-4xl font-black tracking-normal">
-              Your Temu-linked queue
-            </h1>
-          </div>
-          <Link
-            className="focus-ring inline-flex h-11 items-center justify-center rounded-lg border border-line bg-white/5 px-4 text-sm font-bold text-foreground transition hover:bg-white/10"
-            href="/"
-          >
-            Start another design
-          </Link>
-        </div>
+        <OrdersHeader />
 
         <div className="space-y-3">
           {(orders as OrderSummary[] | null)?.length ? (
@@ -69,7 +55,7 @@ export default async function OrdersPage() {
                       {order.order_number}
                     </p>
                     <h2 className="mt-1 text-xl font-black">
-                      Custom Pillow / {order.design_snapshot.selection.size}
+                      Custom Pillow photo proof
                     </h2>
                     <p className="mt-1 text-sm text-muted">
                       Ordered {formatDate(order.created_at)}
@@ -96,7 +82,33 @@ export default async function OrdersPage() {
             </div>
           )}
         </div>
+
+        <section className="mt-10 border-t border-line pt-6">
+          <h2 className="mb-4 text-xl font-black">Local mock orders</h2>
+          <MockOrdersList showEmpty={false} />
+        </section>
       </main>
     </AppShell>
+  );
+}
+
+function OrdersHeader() {
+  return (
+    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-accent">
+          Order archive
+        </p>
+        <h1 className="mt-2 text-4xl font-black tracking-normal">
+          Debug and Temu-linked orders
+        </h1>
+      </div>
+      <Link
+        className="focus-ring inline-flex h-11 items-center justify-center rounded-lg border border-line bg-white/5 px-4 text-sm font-bold text-foreground transition hover:bg-white/10"
+        href="/design"
+      >
+        Start another design
+      </Link>
+    </div>
   );
 }

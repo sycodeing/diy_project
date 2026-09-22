@@ -1,11 +1,16 @@
 import Link from "next/link";
-import { Package, Shield } from "lucide-react";
+import { ImageUp, Package, Shield, UserRound } from "lucide-react";
 import { getCurrentUser, getIsAdmin } from "@/lib/auth";
 import { SignOutButton } from "@/components/sign-out-button";
 
 export async function AppShell({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
   const isAdmin = await getIsAdmin();
+  const avatarUrl = user?.user_metadata?.avatar_url ?? user?.user_metadata?.picture;
+  const nickname =
+    user?.user_metadata?.display_name ??
+    user?.user_metadata?.full_name ??
+    user?.user_metadata?.name;
 
   return (
     <div className="grain min-h-[100dvh] bg-background text-foreground">
@@ -25,10 +30,20 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
 
           <nav className="flex items-center gap-2 text-sm">
             <Link
-              className="focus-ring hidden rounded-lg px-3 py-2 text-muted transition hover:bg-white/5 hover:text-foreground sm:inline-flex"
+              aria-label="Design"
+              className="focus-ring inline-flex size-10 items-center justify-center rounded-lg text-muted transition hover:bg-white/5 hover:text-foreground sm:size-auto sm:px-3 sm:py-2"
+              href="/design"
+            >
+              <ImageUp size={17} />
+              <span className="hidden sm:ml-2 sm:inline">Design</span>
+            </Link>
+            <Link
+              aria-label="Orders"
+              className="focus-ring inline-flex size-10 items-center justify-center rounded-lg text-muted transition hover:bg-white/5 hover:text-foreground sm:size-auto sm:px-3 sm:py-2"
               href="/orders"
             >
-              Orders
+              <Package size={17} />
+              <span className="hidden sm:ml-2 sm:inline">Orders</span>
             </Link>
             {isAdmin ? (
               <Link
@@ -42,21 +57,42 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
             {user ? (
               <>
                 <Link
-                  className="focus-ring inline-flex size-10 items-center justify-center rounded-lg border border-line bg-white/5 text-foreground sm:hidden"
-                  href="/orders"
-                  aria-label="Orders"
+                  aria-label="Profile"
+                  className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-line bg-white/5 px-2 text-foreground"
+                  href="/profile"
                 >
-                  <Package size={18} />
+                  {avatarUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      alt=""
+                      className="size-7 rounded object-cover"
+                      src={avatarUrl}
+                    />
+                  ) : (
+                    <UserRound size={18} />
+                  )}
+                  {nickname ? (
+                    <span className="hidden max-w-24 truncate sm:inline">{nickname}</span>
+                  ) : null}
                 </Link>
                 <SignOutButton />
               </>
             ) : (
-              <Link
-                className="focus-ring rounded-lg bg-accent px-4 py-2 font-bold text-accent-ink transition hover:bg-foreground active:translate-y-px"
-                href="/auth"
-              >
-                Sign in
-              </Link>
+              <>
+                <Link
+                  aria-label="Profile"
+                  className="focus-ring hidden size-10 items-center justify-center rounded-lg text-muted hover:bg-white/5 hover:text-foreground sm:inline-flex"
+                  href="/profile"
+                >
+                  <UserRound size={18} />
+                </Link>
+                <Link
+                  className="focus-ring rounded-lg bg-accent px-4 py-2 font-bold text-accent-ink transition hover:bg-foreground active:translate-y-px"
+                  href="/auth"
+                >
+                  Sign in
+                </Link>
+              </>
             )}
           </nav>
         </div>

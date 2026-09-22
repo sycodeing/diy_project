@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900" viewBox="0 0 900 900">
+  <rect width="900" height="900" fill="#dbeec6"/>
+  <path d="M170 212c96 40 194 52 294 40 78-9 165-31 266-66-18 55-20 105-5 150-80 14-165 23-255 27-116 5-222-1-318-18 26-44 32-88 18-133z" fill="#7fbd55"/>
+  <path d="M248 288h402v92H248z" rx="18" fill="#8fc86a"/>
+  <path d="M285 305c98 24 204 25 319 0" fill="none" stroke="#629744" stroke-width="10" stroke-linecap="round"/>
+  <text x="450" y="356" text-anchor="middle" font-family="Arial, sans-serif" font-size="62" font-weight="800" fill="#4e8038">Dodo</text>
+  <circle cx="450" cy="534" r="128" fill="#fff9ed"/>
+  <circle cx="386" cy="470" r="74" fill="#fff9ed"/>
+  <circle cx="514" cy="470" r="74" fill="#fff9ed"/>
+  <circle cx="392" cy="530" r="13" fill="#352b23"/>
+  <circle cx="508" cy="530" r="13" fill="#352b23"/>
+  <ellipse cx="450" cy="563" rx="22" ry="16" fill="#4b382c"/>
+  <path d="M410 590c22 20 56 20 80 0" fill="none" stroke="#4b382c" stroke-width="8" stroke-linecap="round"/>
+  <path d="M345 670c32-74 179-75 214 0" fill="#ffffff"/>
+  <path d="M350 632c-56 12-75 52-58 91m258-91c56 12 75 52 58 91" fill="none" stroke="#fff9ed" stroke-width="42" stroke-linecap="round"/>
+  <text x="450" y="760" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" font-style="italic" fill="#86a967">Soft cushion, cozy days!</text>
+  <g opacity=".85">
+    <rect x="125" y="570" width="50" height="38" rx="8" fill="#f8f1dc" transform="rotate(-18 150 589)"/>
+    <circle cx="145" cy="588" r="8" fill="#f46d75"/>
+    <circle cx="164" cy="582" r="8" fill="#65a8ff"/>
+    <rect x="725" y="620" width="56" height="42" rx="8" fill="#f8f1dc" transform="rotate(18 753 641)"/>
+    <path d="M738 646l16-18 14 20" fill="none" stroke="#f49a45" stroke-width="6" stroke-linecap="round"/>
+  </g>
+</svg>

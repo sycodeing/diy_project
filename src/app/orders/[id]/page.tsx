@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { DesignSummary } from "@/components/design-summary";
+import { MockOrderDetail } from "@/components/mock-orders";
 import { OrderStatus } from "@/components/order-status";
 import { SetupWarning } from "@/components/setup-warning";
 import { createDesignImageUrls } from "@/lib/design-images";
@@ -15,6 +16,25 @@ export default async function OrderDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+
+  if (id.startsWith("mock-")) {
+    return (
+      <AppShell>
+        <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8 sm:px-6">
+          <Link
+            className="text-sm font-bold text-muted hover:text-foreground"
+            href="/orders"
+          >
+            Back to orders
+          </Link>
+          <div className="mt-5">
+            <MockOrderDetail id={id} />
+          </div>
+        </main>
+      </AppShell>
+    );
+  }
+
   const supabase = await createSupabaseServerClient();
 
   if (!supabase) {

@@ -2,6 +2,13 @@
 
 # dependencies
 /node_modules
+/mockup-renderer/.venv
+/mockup-renderer/calibration/
+/mockup-renderer/*.log
+/mockup-renderer/*-output.webp
+/mockup-renderer/smoke-output.webp
+**/__pycache__/
+*.py[cod]
 /.pnp
 .pnp.*
 .yarn/*
@@ -25,6 +32,8 @@
 *.pem
 
 # debug
+/next.out.log
+/next.err.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

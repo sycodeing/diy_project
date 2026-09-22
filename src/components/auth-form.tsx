@@ -1,14 +1,20 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { ArrowRight, Mail, LockKeyhole } from "lucide-react";
+import { ArrowRight, LogIn, Mail, LockKeyhole } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
-export function AuthForm({ nextPath }: { nextPath: string }) {
+export function AuthForm({
+  initialMessage,
+  nextPath,
+}: {
+  initialMessage?: string | null;
+  nextPath: string;
+}) {
   const router = useRouter();
   const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(initialMessage ?? null);
   const [isPending, startTransition] = useTransition();
 
   function submit(formData: FormData) {
@@ -22,10 +28,17 @@ export function AuthForm({ nextPath }: { nextPath: string }) {
 
       const email = String(formData.get("email") ?? "");
       const password = String(formData.get("password") ?? "");
+      const callbackUrl = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
+        nextPath,
+      )}`;
 
       const result =
         mode === "sign-up"
-          ? await supabase.auth.signUp({ email, password })
+          ? await supabase.auth.signUp({
+              email,
+              password,
+              options: { emailRedirectTo: callbackUrl },
+            })
           : await supabase.auth.signInWithPassword({ email, password });
 
       if (result.error) {
@@ -40,6 +53,27 @@ export function AuthForm({ nextPath }: { nextPath: string }) {
 
       router.push(nextPath || "/");
       router.refresh();
+    });
+  }
+
+  function continueWithGoogle() {
+    startTransition(async () => {
+      const supabase = createSupabaseBrowserClient();
+
+      if (!supabase) {
+        setMessage("Missing Supabase environment variables.");
+        return;
+      }
+
+      const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
+        nextPath,
+      )}`;
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo },
+      });
+
+      if (error) setMessage(error.message);
     });
   }
 
@@ -63,6 +97,20 @@ export function AuthForm({ nextPath }: { nextPath: string }) {
             {item === "sign-in" ? "Sign in" : "Create account"}
           </button>
         ))}
+      </div>
+
+      <button
+        className="focus-ring inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg border border-line bg-foreground px-4 font-black text-background transition hover:bg-stone-200 disabled:opacity-60"
+        disabled={isPending}
+        onClick={continueWithGoogle}
+        type="button"
+      >
+        <LogIn size={18} /> Continue with Google
+      </button>
+
+      <div className="my-5 flex items-center gap-3 text-xs font-bold uppercase text-muted">
+        <span className="h-px flex-1 bg-line" /> or use email
+        <span className="h-px flex-1 bg-line" />
       </div>
 
       <form action={submit} className="space-y-4">
@@ -116,4 +164,3 @@ export function AuthForm({ nextPath }: { nextPath: string }) {
     </div>
   );
 }
-

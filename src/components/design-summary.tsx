@@ -1,8 +1,3 @@
-import {
-  COLOR_OPTIONS,
-  STYLE_OPTIONS,
-  getOptionLabel,
-} from "@/lib/product-config";
 import type { DesignPayload, ProductSide } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -14,36 +9,12 @@ export function DesignSummary({
   imageUrls?: Partial<Record<ProductSide, string>>;
 }) {
   return (
-    <div className="grid gap-3 text-sm sm:grid-cols-2">
-      <div className="rounded-lg border border-line bg-black p-4">
-        <p className="mb-3 font-black">Pillow blank</p>
-        <dl className="space-y-2 text-muted">
-          <div className="flex justify-between gap-4">
-            <dt>Color</dt>
-            <dd className="text-right text-foreground">
-              {getOptionLabel(COLOR_OPTIONS, design.selection.color)}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-4">
-            <dt>Cover style</dt>
-            <dd className="text-right text-foreground">
-              {getOptionLabel(STYLE_OPTIONS, design.selection.style)}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-4">
-            <dt>Size</dt>
-            <dd className="text-right text-foreground">{design.selection.size}</dd>
-          </div>
-        </dl>
-      </div>
-      {(["front", "back"] as const).map((side) => (
-        <SideSummary
-          imageUrl={imageUrls[side]}
-          key={side}
-          side={side}
-          sideDesign={design.sides[side]}
-        />
-      ))}
+    <div className="grid gap-3 text-sm">
+      <SideSummary
+        imageUrl={imageUrls.front}
+        side="front"
+        sideDesign={design.sides.front}
+      />
     </div>
   );
 }
@@ -57,6 +28,8 @@ function SideSummary({
   side: ProductSide;
   sideDesign: DesignPayload["sides"][ProductSide];
 }) {
+  const previewUrl = imageUrl ?? sideDesign.imagePreviewUrl;
+
   return (
     <div className="rounded-lg border border-line bg-black p-4">
       <p className="mb-3 font-black capitalize">{side}</p>
@@ -69,12 +42,12 @@ function SideSummary({
         {sideDesign.kind === "none" ? (
           <span>Blank</span>
         ) : sideDesign.kind === "image" ? (
-          imageUrl ? (
+          previewUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               alt={`${side} custom artwork`}
               className="h-full w-full object-cover"
-              src={imageUrl}
+              src={previewUrl}
             />
           ) : (
             <span>Image</span>

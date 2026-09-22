@@ -4,7 +4,9 @@ export function getAppUrl() {
 
 export function getSupabaseBrowserConfig() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const anonKey =
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!url || !anonKey || url.includes("your-project-ref")) {
     return null;
@@ -15,7 +17,9 @@ export function getSupabaseBrowserConfig() {
 
 export function getSupabaseServiceConfig() {
   const browser = getSupabaseBrowserConfig();
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const serviceRoleKey =
+    process.env.SUPABASE_SECRET_KEY ??
+    process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!browser || !serviceRoleKey || serviceRoleKey.includes("your-")) {
     return null;

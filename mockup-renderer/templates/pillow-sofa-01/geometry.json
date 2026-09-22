@@ -1,0 +1,15 @@
+{
+  "template_id": "pillow-sofa-01",
+  "name": "Pillow on sofa",
+  "output_width": 768,
+  "output_height": 768,
+  "print_area": {
+    "type": "quad",
+    "points": [[190, 238], [522, 232], [545, 550], [171, 552]]
+  },
+  "blend": {
+    "shadow_opacity": 0.32,
+    "highlight_opacity": 0.24,
+    "edge_blur": 1.2
+  }
+}

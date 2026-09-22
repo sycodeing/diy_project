@@ -8,10 +8,10 @@ import { getSupabaseBrowserConfig } from "@/lib/env";
 export default async function AuthPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: Promise<{ error?: string; next?: string }>;
 }) {
-  const { next } = await searchParams;
-  const nextPath = next?.startsWith("/") ? next : "/";
+  const { error, next } = await searchParams;
+  const nextPath = next?.startsWith("/") ? next : "/design";
   const user = await getCurrentUser();
 
   if (user) {
@@ -29,13 +29,20 @@ export default async function AuthPage({
             Save proofs. Pay clean. Track production.
           </h1>
           <p className="mt-5 max-w-xl text-lg leading-8 text-muted">
-            Use email and password to keep custom designs, payment history, and
-            order status tied to one studio account.
+            Continue with Google or use email and password. Your draft stays in
+            this browser while you sign in.
           </p>
         </section>
         <section className="flex items-center justify-center">
           {getSupabaseBrowserConfig() ? (
-            <AuthForm nextPath={nextPath} />
+            <AuthForm
+              initialMessage={
+                error === "oauth"
+                  ? "Google sign-in could not be completed. Please try again."
+                  : null
+              }
+              nextPath={nextPath}
+            />
           ) : (
             <SetupWarning />
           )}
@@ -44,4 +51,3 @@ export default async function AuthPage({
     </AppShell>
   );
 }
-

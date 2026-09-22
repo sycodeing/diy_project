@@ -1,0 +1,31 @@
+{
+  "template_id": "pillow-psd-03-grey-sofa",
+  "name": "Grey sofa close-up",
+  "render_mode": "psd_multiply",
+  "output_width": 1254,
+  "output_height": 1254,
+  "print_area": {
+    "type": "quad",
+    "points": [
+      [
+        150,
+        152
+      ],
+      [
+        1127,
+        152
+      ],
+      [
+        1127,
+        1071
+      ],
+      [
+        150,
+        1071
+      ]
+    ]
+  },
+  "blend": {
+    "mask_opacity": 1.0
+  }
+}

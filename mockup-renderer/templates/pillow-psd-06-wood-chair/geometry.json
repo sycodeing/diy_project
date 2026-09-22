@@ -1,0 +1,31 @@
+{
+  "template_id": "pillow-psd-06-wood-chair",
+  "name": "Wood chair scene",
+  "render_mode": "psd_multiply",
+  "output_width": 1254,
+  "output_height": 1254,
+  "print_area": {
+    "type": "quad",
+    "points": [
+      [
+        279,
+        296
+      ],
+      [
+        958,
+        296
+      ],
+      [
+        958,
+        927
+      ],
+      [
+        279,
+        927
+      ]
+    ]
+  },
+  "blend": {
+    "mask_opacity": 1.0
+  }
+}

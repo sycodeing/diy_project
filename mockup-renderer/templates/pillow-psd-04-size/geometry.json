@@ -1,0 +1,31 @@
+{
+  "template_id": "pillow-psd-04-size",
+  "name": "18in / 45cm size view",
+  "render_mode": "psd_multiply",
+  "output_width": 1254,
+  "output_height": 1254,
+  "print_area": {
+    "type": "quad",
+    "points": [
+      [
+        129,
+        179
+      ],
+      [
+        1130,
+        179
+      ],
+      [
+        1130,
+        1135
+      ],
+      [
+        129,
+        1135
+      ]
+    ]
+  },
+  "blend": {
+    "mask_opacity": 1.0
+  }
+}
