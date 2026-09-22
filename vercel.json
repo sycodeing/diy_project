@@ -4,14 +4,7 @@
     "api/mockup.py": {
       "maxDuration": 60,
       "memory": 2048,
-      "includeFiles": "mockup-renderer/templates/**",
-      "excludeFiles": [
-        "mockup-renderer/.venv/**",
-        "mockup-renderer/calibration/**",
-        "mockup-renderer/scripts/**",
-        "mockup-renderer/**/*.log",
-        "mockup-renderer/*-output.webp"
-      ]
+      "includeFiles": "mockup-renderer/templates/**"
     }
   }
 }
