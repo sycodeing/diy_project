@@ -125,6 +125,7 @@ create table if not exists public.admin_roles (
 create or replace function public.touch_updated_at()
 returns trigger
 language plpgsql
+set search_path = ''
 as $$
 begin
   new.updated_at = now();
