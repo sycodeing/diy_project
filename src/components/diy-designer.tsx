@@ -9,7 +9,7 @@ import {
   useState,
   useTransition,
 } from "react";
-import { ArrowRight, Check, Crop, ImageUp, X } from "lucide-react";
+import { ArrowRight, Check, ImageUp, LoaderCircle, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { CheckoutAddressDialog } from "@/components/checkout-address-dialog";
 import {
@@ -114,6 +114,7 @@ export function DiyDesigner({
   const [mockupStatus, setMockupStatus] = useState<
     "idle" | "rendering" | "ready" | "failed"
   >("idle");
+  const [isReadingImage, setIsReadingImage] = useState(false);
   const [isPending, startTransition] = useTransition();
   const mockupObjectUrlsRef = useRef<string[]>([]);
 
@@ -231,14 +232,16 @@ export function DiyDesigner({
       return;
     }
 
+    setIsReadingImage(true);
+    setError(null);
     const reader = new FileReader();
     reader.addEventListener("load", () => {
       if (typeof reader.result !== "string") {
         setError("Could not read this image.");
+        setIsReadingImage(false);
         return;
       }
 
-      setError(null);
       setCropDraft({
         fileName: file.name,
         offsetX: 0,
@@ -246,11 +249,17 @@ export function DiyDesigner({
         sourceUrl: reader.result,
         zoom: 1,
       });
+      setIsReadingImage(false);
+    });
+    reader.addEventListener("error", () => {
+      setError("Could not read this image.");
+      setIsReadingImage(false);
     });
     reader.readAsDataURL(file);
   }
 
   function applyCroppedImage(imagePreviewUrl: string) {
+    setMockupStatus("rendering");
     updateSide("front", {
       kind: "image",
       imagePreviewUrl,
@@ -321,6 +330,12 @@ export function DiyDesigner({
               activeSide={activeSide}
               activeMockupId={activeMockupId}
               design={design}
+              isLoading={isReadingImage || mockupStatus === "rendering"}
+              loadingLabel={
+                isReadingImage
+                  ? "Reading your photo..."
+                  : "Rendering four real-scene previews..."
+              }
               mockupPreviews={mockupPreviews}
               onSelectMockup={setActiveMockupId}
             />
@@ -377,11 +392,15 @@ export function DiyDesigner({
             </p>
             <button
               className="focus-ring inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-accent px-5 font-black text-accent-ink transition hover:bg-foreground active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={isPending}
+              disabled={
+                isPending || isReadingImage || mockupStatus === "rendering"
+              }
               onClick={checkout}
               type="button"
             >
-              {isPending
+              {isReadingImage || mockupStatus === "rendering"
+                ? "Generating preview..."
+                : isPending
                 ? "Continuing..."
                 : authEnabled && !isAuthenticated
                   ? "Sign in to order"
@@ -716,8 +735,12 @@ function PhotoCropper({
                 onClick={confirmCrop}
                 type="button"
               >
-                {isProcessing ? <Crop size={16} /> : <Check size={16} />}
-                Use photo
+                {isProcessing ? (
+                  <LoaderCircle className="animate-spin" size={16} />
+                ) : (
+                  <Check size={16} />
+                )}
+                {isProcessing ? "Preparing..." : "Use photo"}
               </button>
             </div>
           </div>
@@ -794,12 +817,16 @@ function PillowPreview({
   activeSide,
   activeMockupId,
   design,
+  isLoading,
+  loadingLabel,
   mockupPreviews,
   onSelectMockup,
 }: {
   activeSide: ProductSide;
   activeMockupId: string | null;
   design: DesignPayload;
+  isLoading: boolean;
+  loadingLabel: string;
   mockupPreviews: MockupPreview[];
   onSelectMockup: (id: string) => void;
 }) {
@@ -819,6 +846,7 @@ function PillowPreview({
             className="h-full max-h-[620px] w-full object-contain"
             src={activeMockup.url}
           />
+          <PreviewLoadingOverlay label={loadingLabel} visible={isLoading} />
         </div>
         <div
           aria-label="Pillow preview scenes"
@@ -881,6 +909,45 @@ function PillowPreview({
       </div>
       <div className="absolute left-4 top-4 rounded-lg border border-line bg-background/70 px-3 py-2 text-xs font-bold uppercase tracking-[0.16em] text-muted backdrop-blur">
         {activeSide} view
+      </div>
+      <PreviewLoadingOverlay label={loadingLabel} visible={isLoading} />
+    </div>
+  );
+}
+
+function PreviewLoadingOverlay({
+  label,
+  visible,
+}: {
+  label: string;
+  visible: boolean;
+}) {
+  if (!visible) return null;
+
+  return (
+    <div
+      aria-busy="true"
+      aria-live="assertive"
+      className="absolute inset-0 z-20 grid place-items-center bg-black/90 px-6 text-center backdrop-blur-sm"
+      role="status"
+    >
+      <div className="w-full max-w-sm border-y-4 border-accent bg-background px-5 py-7 shadow-2xl shadow-black sm:px-8">
+        <LoaderCircle
+          aria-hidden="true"
+          className="mx-auto animate-spin text-accent"
+          size={48}
+          strokeWidth={3}
+        />
+        <p className="mt-5 text-2xl font-black tracking-normal">
+          Building your preview
+        </p>
+        <p className="mt-2 text-sm font-bold text-muted">{label}</p>
+        <div className="mt-5 h-2 overflow-hidden rounded-full bg-white/10">
+          <span className="block h-full w-full animate-pulse bg-accent" />
+        </div>
+        <p className="mt-3 text-xs font-bold uppercase tracking-[0.16em] text-accent">
+          Keep this page open
+        </p>
       </div>
     </div>
   );
