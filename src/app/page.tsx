@@ -44,7 +44,8 @@ export default async function Home({
               </h1>
               <p className="mt-5 max-w-xl text-base leading-7 text-stone-200 sm:text-lg">
                 Open a generated link or upload your own image. We crop it for
-                the product and render four real-scene previews before you order.
+                a set of two 18in / 45cm pillow covers and render four real-scene
+                previews before you order. Inserts are not included.
               </p>
               <Link
                 className="focus-ring mt-7 inline-flex h-12 items-center gap-2 rounded-lg bg-accent px-5 font-black text-accent-ink transition hover:bg-foreground"
@@ -73,7 +74,7 @@ export default async function Home({
             <WorkflowItem
               icon={<PackageCheck size={22} />}
               index="03"
-              text="Sign in only when you are ready, confirm an eligible address, and place a mock order."
+              text="Sign in only when you are ready, confirm the delivery address, and complete secure payment."
               title="Confirm the order"
             />
           </div>

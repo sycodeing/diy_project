@@ -29,18 +29,14 @@ export default async function AuthPage({
             Save proofs. Pay clean. Track production.
           </h1>
           <p className="mt-5 max-w-xl text-lg leading-8 text-muted">
-            Continue with Google or use email and password. Your draft stays in
-            this browser while you sign in.
+            Use email and password to continue. Your draft stays in this browser
+            while you sign in.
           </p>
         </section>
         <section className="flex items-center justify-center">
           {getSupabaseBrowserConfig() ? (
             <AuthForm
-              initialMessage={
-                error === "oauth"
-                  ? "Google sign-in could not be completed. Please try again."
-                  : null
-              }
+              initialMessage={error ? "Sign-in could not be completed. Please try again." : null}
               nextPath={nextPath}
             />
           ) : (

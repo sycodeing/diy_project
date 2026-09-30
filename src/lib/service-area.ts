@@ -53,6 +53,13 @@ export function validateShippingAddress(address: ShippingAddress) {
   const region = address.region.trim().toUpperCase();
   const allowedCountries = getAllowedCountries();
 
+  if (!address.phone?.trim()) {
+    return {
+      ok: false,
+      message: "A phone number is required for the Temu delivery order.",
+    };
+  }
+
   if (!allowedCountries.includes(country)) {
     return {
       ok: false,

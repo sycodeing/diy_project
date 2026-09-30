@@ -1,11 +1,21 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
-import { MockOrdersList } from "@/components/mock-orders";
-import { OrderStatus } from "@/components/order-status";
+import { CustomerOrderStatus } from "@/components/order-status";
+import { SetupWarning } from "@/components/setup-warning";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { OrderSummary } from "@/lib/types";
 import { formatDate, formatMoney } from "@/lib/utils";
+
+type CustomerOrder = Pick<
+  OrderSummary,
+  | "id"
+  | "order_number"
+  | "amount_cents"
+  | "currency"
+  | "payment_status"
+  | "created_at"
+>;
 
 export default async function OrdersPage() {
   const supabase = await createSupabaseServerClient();
@@ -15,7 +25,7 @@ export default async function OrdersPage() {
       <AppShell>
         <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8 sm:px-6">
           <OrdersHeader />
-          <MockOrdersList />
+          <SetupWarning />
         </main>
       </AppShell>
     );
@@ -32,7 +42,7 @@ export default async function OrdersPage() {
   const { data: orders } = await supabase
     .from("orders")
     .select(
-      "id,order_number,amount_cents,currency,customer_email,payment_status,fulfillment_status,sales_channel,temu_parent_order_sn,temu_order_sn,temu_status,temu_status_label,temu_last_synced_at,temu_raw,design_snapshot,shipping,created_at,updated_at",
+      "id,order_number,amount_cents,currency,payment_status,created_at",
     )
     .order("created_at", { ascending: false });
 
@@ -42,8 +52,8 @@ export default async function OrdersPage() {
         <OrdersHeader />
 
         <div className="space-y-3">
-          {(orders as OrderSummary[] | null)?.length ? (
-            (orders as OrderSummary[]).map((order) => (
+          {(orders as CustomerOrder[] | null)?.length ? (
+            (orders as CustomerOrder[]).map((order) => (
               <Link
                 className="focus-ring block rounded-lg border border-line bg-panel/80 p-4 transition hover:border-accent/70"
                 href={`/orders/${order.id}`}
@@ -55,7 +65,7 @@ export default async function OrdersPage() {
                       {order.order_number}
                     </p>
                     <h2 className="mt-1 text-xl font-black">
-                      Custom Pillow photo proof
+                      Custom Pillow Cover Set photo proof
                     </h2>
                     <p className="mt-1 text-sm text-muted">
                       Ordered {formatDate(order.created_at)}
@@ -65,11 +75,7 @@ export default async function OrdersPage() {
                     {formatMoney(order.amount_cents, order.currency)}
                   </p>
                 </div>
-                <OrderStatus
-                  fulfillmentStatus={order.fulfillment_status}
-                  paymentStatus={order.payment_status}
-                  temuStatus={order.temu_status}
-                />
+                <CustomerOrderStatus paymentStatus={order.payment_status} />
               </Link>
             ))
           ) : (
@@ -83,10 +89,6 @@ export default async function OrdersPage() {
           )}
         </div>
 
-        <section className="mt-10 border-t border-line pt-6">
-          <h2 className="mb-4 text-xl font-black">Local mock orders</h2>
-          <MockOrdersList showEmpty={false} />
-        </section>
       </main>
     </AppShell>
   );
@@ -100,7 +102,7 @@ function OrdersHeader() {
           Order archive
         </p>
         <h1 className="mt-2 text-4xl font-black tracking-normal">
-          Debug and Temu-linked orders
+          Paid and Temu-linked orders
         </h1>
       </div>
       <Link

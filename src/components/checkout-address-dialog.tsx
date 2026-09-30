@@ -78,9 +78,8 @@ export function CheckoutAddressDialog({
           <AddressField
             autoComplete="tel"
             defaultValue={initialAddress.phone}
-            label="Phone (optional)"
+            label="Phone"
             name="phone"
-            required={false}
             type="tel"
           />
           <div className="sm:col-span-2">
@@ -156,7 +155,7 @@ export function CheckoutAddressDialog({
               className="focus-ring inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-accent px-5 font-black text-accent-ink hover:bg-foreground"
               type="submit"
             >
-              <Check size={18} /> Confirm mock order
+              <Check size={18} /> Continue to payment
             </button>
           </div>
         </form>

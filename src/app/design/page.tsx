@@ -49,7 +49,6 @@ export default async function DesignPage({
         autoCheckout={initialParams.checkout === "1"}
         initialParams={initialParams}
         isAuthenticated={Boolean(user)}
-        userEmail={user?.email ?? null}
       />
     </AppShell>
   );

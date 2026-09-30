@@ -49,8 +49,8 @@ export async function getIsAdmin() {
   return Boolean(data);
 }
 
-export async function requireAdmin() {
-  const user = await requireUser("/admin/orders");
+export async function requireAdmin(next = "/admin/orders") {
+  const user = await requireUser(next);
   const isAdmin = await getIsAdmin();
 
   if (!isAdmin) {
@@ -59,4 +59,3 @@ export async function requireAdmin() {
 
   return user;
 }
-

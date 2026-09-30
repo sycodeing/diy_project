@@ -26,19 +26,14 @@ export const PRODUCT_ARTWORK_FRAME: ProductArtworkFrame = {
 };
 
 export const COLOR_OPTIONS = [
-  { value: "soft-mint", label: "Soft mint", hex: "#dbeec6" },
-  { value: "warm-cream", label: "Warm cream", hex: "#f7f1de" },
-  { value: "baby-blue", label: "Baby blue", hex: "#d8ecff" },
-  { value: "blush-pink", label: "Blush pink", hex: "#f8d7dc" },
+  { value: "standard-white", label: "Standard white", hex: "#f5f2ea" },
 ];
 
 export const STYLE_OPTIONS = [
-  { value: "soft-plush", label: "Soft plush cover" },
-  { value: "smooth-peach", label: "Smooth peach skin" },
-  { value: "linen-texture", label: "Linen texture cover" },
+  { value: "polyester-cover", label: "Polyester pillow cover" },
 ];
 
-export const SIZE_OPTIONS = ["18in/45cm", "16in/40cm", "20in/50cm"];
+export const SIZE_OPTIONS = ["18in/45cm"];
 
 export const SHAPE_OPTIONS: Array<{ value: DesignShape; label: string }> = [
   { value: "rectangle", label: "Rectangle" },
@@ -82,7 +77,7 @@ export const DEFAULT_DESIGN: DesignPayload = {
 };
 
 export function getColorHex(color: string) {
-  return COLOR_OPTIONS.find((option) => option.value === color)?.hex ?? "#dbeec6";
+  return COLOR_OPTIONS.find((option) => option.value === color)?.hex ?? "#f5f2ea";
 }
 
 export function getOptionLabel(

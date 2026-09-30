@@ -48,7 +48,7 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
             {isAdmin ? (
               <Link
                 className="focus-ring hidden items-center gap-2 rounded-lg px-3 py-2 text-muted transition hover:bg-white/5 hover:text-foreground sm:inline-flex"
-                href="/admin/orders"
+                href="/admin/marketing"
               >
                 <Shield size={15} />
                 Admin

@@ -9,8 +9,13 @@ import {
 import { getAppUrl } from "@/lib/env";
 import { getStripeClient } from "@/lib/stripe";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { checkoutSchema } from "@/lib/validation";
+import { validateShippingAddress } from "@/lib/service-area";
+import { checkoutRequestSchema } from "@/lib/validation";
 import { createOrderNumber } from "@/lib/utils";
+import {
+  getActiveMarketingLinkFromCookie,
+  recordMarketingEvent,
+} from "@/lib/marketing";
 
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
@@ -23,13 +28,21 @@ export async function POST(request: Request) {
     );
   }
 
-  const parsed = checkoutSchema.safeParse(await request.json());
+  const parsed = checkoutRequestSchema.safeParse(await request.json());
 
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid design payload." }, { status: 400 });
   }
 
-  const design = parsed.data;
+  const { design, shipping } = parsed.data;
+  const shippingValidation = validateShippingAddress(shipping);
+
+  if (!shippingValidation.ok) {
+    return NextResponse.json(
+      { error: shippingValidation.message },
+      { status: 400 },
+    );
+  }
 
   for (const side of ["front", "back"] as const) {
     const sideDesign = design.sides[side];
@@ -90,6 +103,7 @@ export async function POST(request: Request) {
 
   const amountCents = variant.price_cents ?? PRODUCT_PRICE_CENTS;
   const currency = variant.currency ?? PRODUCT_CURRENCY;
+  const marketingLink = await getActiveMarketingLinkFromCookie();
 
   const { data: order, error: orderError } = await supabase
     .from("orders")
@@ -106,6 +120,8 @@ export async function POST(request: Request) {
       temu_status: "NOT_SUBMITTED",
       temu_status_label: "Not submitted to Temu",
       design_snapshot: design,
+      shipping,
+      marketing_link_id: marketingLink?.id ?? null,
     })
     .select("id,order_number")
     .single();
@@ -131,7 +147,7 @@ export async function POST(request: Request) {
           currency,
           product_data: {
             name: productName,
-            description: `Custom pillow order ${order.order_number}`,
+            description: `Two custom 18in / 45cm pillow covers. Inserts not included. Order ${order.order_number}`,
           },
           unit_amount: amountCents,
         },
@@ -142,9 +158,7 @@ export async function POST(request: Request) {
       order_id: order.id,
       design_id: customDesign.id,
       user_id: user.id,
-    },
-    shipping_address_collection: {
-      allowed_countries: ["US", "CN"],
+      ...(marketingLink ? { marketing_link_id: marketingLink.id } : {}),
     },
     success_url: `${appUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${appUrl}/orders/${order.id}`,
@@ -160,6 +174,21 @@ export async function POST(request: Request) {
       { error: "Could not prepare payment session." },
       { status: 500 },
     );
+  }
+
+  if (marketingLink) {
+    const { error: marketingError } = await recordMarketingEvent(
+      marketingLink.id,
+      "checkout_started",
+      { stripeCheckoutSessionId: session.id },
+      order.id,
+    );
+    if (marketingError) {
+      return NextResponse.json(
+        { error: "Checkout was created, but attribution could not be recorded." },
+        { status: 500 },
+      );
+    }
   }
 
   return NextResponse.json({ url: session.url });

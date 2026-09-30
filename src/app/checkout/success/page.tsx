@@ -48,8 +48,8 @@ export default async function CheckoutSuccessPage({
             Payment received
           </h1>
           <p className="mt-3 text-muted">
-            Stripe is confirming the payment. The webhook will move the order
-            into production.
+            Stripe is confirming the payment. Once confirmed, the order will
+            enter the next scheduled Temu payment batch.
           </p>
           <div className="mt-6 flex justify-center gap-3">
             <Link
@@ -64,4 +64,3 @@ export default async function CheckoutSuccessPage({
     </AppShell>
   );
 }
-

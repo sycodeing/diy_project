@@ -47,3 +47,8 @@ export function getTemuSyncSecret() {
 
   return secret && !secret.includes("your-") ? secret : undefined;
 }
+
+export function getMarketingIngestSecret() {
+  const secret = process.env.MARKETING_INGEST_SECRET?.trim();
+  return secret && secret.length >= 32 && !secret.startsWith("your-") ? secret : undefined;
+}

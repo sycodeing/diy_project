@@ -56,6 +56,7 @@ export type PaymentStatus =
 
 export type FulfillmentStatus =
   | "awaiting_payment"
+  | "ordered"
   | "production"
   | "packing"
   | "shipped";
@@ -66,6 +67,45 @@ export type TemuOrderStatus =
   | "CANCELED"
   | "SHIPPED"
   | "UNKNOWN";
+
+export type TemuPurchaseJobStatus =
+  | "configuration_required"
+  | "ready_for_payment"
+  | "in_progress"
+  | "login_required"
+  | "captcha_required"
+  | "payment_challenge"
+  | "address_review_required"
+  | "submit_uncertain"
+  | "temu_bound"
+  | "failed"
+  | "canceled";
+
+export type TemuPurchaseJob = {
+  id: string;
+  order_id: string;
+  status: TemuPurchaseJobStatus;
+  product_url: string | null;
+  goods_id: string | null;
+  sku_id: string | null;
+  quantity: number;
+  expected_amount_cents: number | null;
+  currency: string;
+  address_snapshot: ShippingAddress;
+  address_fingerprint: string;
+  idempotency_key: string;
+  worker_id: string | null;
+  attempt_count: number;
+  claimed_at: string | null;
+  submitted_at: string | null;
+  verified_at: string | null;
+  temu_parent_order_sn: string | null;
+  temu_order_sn: string | null;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};
 
 export type OrderSummary = {
   id: string;
@@ -84,6 +124,7 @@ export type OrderSummary = {
   temu_raw: Json | null;
   design_snapshot: DesignPayload;
   shipping: Json | null;
+  paid_at?: string | null;
   created_at: string;
   updated_at: string;
 };

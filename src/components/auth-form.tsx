@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { ArrowRight, LogIn, Mail, LockKeyhole } from "lucide-react";
+import { ArrowRight, Mail, LockKeyhole } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
@@ -56,27 +56,6 @@ export function AuthForm({
     });
   }
 
-  function continueWithGoogle() {
-    startTransition(async () => {
-      const supabase = createSupabaseBrowserClient();
-
-      if (!supabase) {
-        setMessage("Missing Supabase environment variables.");
-        return;
-      }
-
-      const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
-        nextPath,
-      )}`;
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: { redirectTo },
-      });
-
-      if (error) setMessage(error.message);
-    });
-  }
-
   return (
     <div className="w-full max-w-md rounded-lg border border-line bg-panel/88 p-5 shadow-2xl shadow-black/40">
       <div className="mb-6 flex rounded-lg border border-line bg-black p-1">
@@ -97,20 +76,6 @@ export function AuthForm({
             {item === "sign-in" ? "Sign in" : "Create account"}
           </button>
         ))}
-      </div>
-
-      <button
-        className="focus-ring inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg border border-line bg-foreground px-4 font-black text-background transition hover:bg-stone-200 disabled:opacity-60"
-        disabled={isPending}
-        onClick={continueWithGoogle}
-        type="button"
-      >
-        <LogIn size={18} /> Continue with Google
-      </button>
-
-      <div className="my-5 flex items-center gap-3 text-xs font-bold uppercase text-muted">
-        <span className="h-px flex-1 bg-line" /> or use email
-        <span className="h-px flex-1 bg-line" />
       </div>
 
       <form action={submit} className="space-y-4">

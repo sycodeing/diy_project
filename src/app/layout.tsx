@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Studio Blank DIY",
-  description: "Design, preview, and order custom pillows with Temu order mirroring.",
+  description: "Design, preview, and order a set of two custom 18in / 45cm pillow covers.",
 };
 
 export default function RootLayout({

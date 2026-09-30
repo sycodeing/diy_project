@@ -9,6 +9,9 @@
 /mockup-renderer/smoke-output.webp
 **/__pycache__/
 *.py[cod]
+/x-lead-studio/.data/
+/x-lead-studio/.venv/
+/x-lead-studio/.env
 /.pnp
 .pnp.*
 .yarn/*
@@ -45,6 +48,9 @@ yarn-error.log*
 
 # vercel
 .vercel
+
+# Supabase CLI local link/cache
+/supabase/.temp/
 
 # typescript
 *.tsbuildinfo

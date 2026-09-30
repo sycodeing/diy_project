@@ -9,7 +9,7 @@ import type { OrderSummary } from "@/lib/types";
 import { formatDate, formatMoney } from "@/lib/utils";
 import { updateOrderStatus } from "./actions";
 
-const statusOptions = ["production", "packing", "shipped"] as const;
+const statusOptions = ["ordered", "production", "packing", "shipped"] as const;
 
 export default async function AdminOrdersPage() {
   const supabase = await createSupabaseServerClient();

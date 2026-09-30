@@ -50,7 +50,14 @@ export function normalizeTemuStatus(status: unknown): TemuOrderStatus {
     return "CANCELED";
   }
 
-  if (value === "4" || value === "SHIPPED") {
+  if (
+    value === "4" ||
+    value === "5" ||
+    value === "41" ||
+    value === "51" ||
+    value === "SHIPPED" ||
+    value === "RECEIPTED"
+  ) {
     return "SHIPPED";
   }
 
@@ -76,4 +83,3 @@ export function mapTemuToFulfillmentStatus(
       return "production";
   }
 }
-

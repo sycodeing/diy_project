@@ -22,7 +22,7 @@ import {
   getColorHex,
 } from "@/lib/product-config";
 import { renderMockupPreviewsFromUrl } from "@/lib/mockup-renderer";
-import { createMockOrder, saveMockOrder } from "@/lib/mock-orders";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type {
   DesignPayload,
   DesignPosition,
@@ -87,13 +87,11 @@ export function DiyDesigner({
   autoCheckout = false,
   initialParams = {},
   isAuthenticated = false,
-  userEmail = null,
 }: {
   authEnabled?: boolean;
   autoCheckout?: boolean;
   initialParams?: Record<string, string | undefined>;
   isAuthenticated?: boolean;
-  userEmail?: string | null;
 }) {
   const router = useRouter();
   const activeSide: ProductSide = "front";
@@ -117,6 +115,10 @@ export function DiyDesigner({
   const [isReadingImage, setIsReadingImage] = useState(false);
   const [isPending, startTransition] = useTransition();
   const mockupObjectUrlsRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    void trackMarketingEvent("design_opened");
+  }, []);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -192,6 +194,7 @@ export function DiyDesigner({
             : previews[0]?.id ?? null,
         );
         setMockupStatus("ready");
+        void trackMarketingEvent("preview_ready");
       })
       .catch(() => {
         if (!canceled) {
@@ -295,13 +298,90 @@ export function DiyDesigner({
     });
   }
 
-  function confirmMockOrder(address: ShippingAddress) {
-    window.localStorage.setItem(ADDRESS_STORAGE_KEY, JSON.stringify(address));
-    const order = createMockOrder(design, address, userEmail);
-    saveMockOrder(order);
-    window.localStorage.removeItem(STORAGE_KEY);
+  function confirmOrder(address: ShippingAddress) {
+    setError(null);
     setIsAddressOpen(false);
-    router.push(`/orders/${order.id}`);
+    startTransition(async () => {
+      try {
+        window.localStorage.setItem(ADDRESS_STORAGE_KEY, JSON.stringify(address));
+        const uploadedDesign = await uploadArtwork(design);
+        const response = await fetch("/api/checkout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ design: uploadedDesign, shipping: address }),
+        });
+        const payload = (await response.json()) as {
+          url?: string;
+          error?: string;
+        };
+
+        if (!response.ok || !payload.url) {
+          throw new Error(payload.error ?? "Could not prepare payment.");
+        }
+
+        window.localStorage.removeItem(STORAGE_KEY);
+        window.location.href = payload.url;
+      } catch (checkoutError) {
+        setError(
+          checkoutError instanceof Error
+            ? checkoutError.message
+            : "Checkout failed.",
+        );
+      }
+    });
+  }
+
+  async function uploadArtwork(current: DesignPayload) {
+    const supabase = createSupabaseBrowserClient();
+
+    if (!supabase) {
+      throw new Error("Supabase is required for real orders.");
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
+      router.push(`/auth?next=${encodeURIComponent("/design?checkout=1")}`);
+      throw new Error("Sign in before checkout.");
+    }
+
+    const uploaded = structuredClone(current);
+    const front = uploaded.sides.front;
+
+    if (front.kind !== "image" || !front.imagePreviewUrl) {
+      throw new Error("Upload or open an image before checkout.");
+    }
+
+    if (!front.imagePath) {
+      const imageResponse = await fetch(front.imagePreviewUrl);
+      if (!imageResponse.ok) {
+        throw new Error("Could not prepare the artwork for storage.");
+      }
+
+      const blob = await imageResponse.blob();
+      const extension = blob.type === "image/png" ? "png" : "webp";
+      const path = `${user.id}/${crypto.randomUUID()}/front.${extension}`;
+      const { error: uploadError } = await supabase.storage
+        .from("design-assets")
+        .upload(path, blob, {
+          cacheControl: "3600",
+          contentType: blob.type || "image/webp",
+          upsert: false,
+        });
+
+      if (uploadError) {
+        throw new Error(uploadError.message);
+      }
+
+      front.imagePath = path;
+    }
+
+    delete front.imagePreviewUrl;
+    return uploaded;
   }
 
   return (
@@ -322,6 +402,9 @@ export function DiyDesigner({
                 <p className="text-muted">Base price</p>
                 <p className="text-2xl font-black">
                   {formatMoney(PRODUCT_PRICE_CENTS, PRODUCT_CURRENCY)}
+                </p>
+                <p className="mt-1 text-xs text-muted">
+                  2 covers · 18in / 45cm · inserts not included
                 </p>
               </div>
             </div>
@@ -388,7 +471,7 @@ export function DiyDesigner({
             <p className="text-sm text-muted">
               {authEnabled
                 ? "Preview first. Sign in and enter an eligible address only when you are ready to order."
-                : "Local debug mode skips sign-in, validates the delivery area, and creates a browser-only mock order."}
+                : "Configure Supabase and Stripe to accept real orders."}
             </p>
             <button
               className="focus-ring inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-accent px-5 font-black text-accent-ink transition hover:bg-foreground active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
@@ -422,11 +505,24 @@ export function DiyDesigner({
         <CheckoutAddressDialog
           initialAddress={checkoutAddress}
           onClose={() => setIsAddressOpen(false)}
-          onConfirm={confirmMockOrder}
+          onConfirm={confirmOrder}
         />
       ) : null}
     </main>
   );
+}
+
+async function trackMarketingEvent(eventType: "design_opened" | "preview_ready") {
+  try {
+    await fetch("/api/marketing/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ eventType }),
+      keepalive: true,
+    });
+  } catch {
+    // Attribution must never block the customer from designing or checking out.
+  }
 }
 
 function ContentControls({
@@ -1162,7 +1258,9 @@ function readStoredDesign() {
     const value = window.localStorage.getItem(STORAGE_KEY);
     if (!value) return null;
     const design = JSON.parse(value) as DesignPayload;
-    return design?.selection?.productSlug === "custom-pillow" ? design : null;
+    return design?.selection?.productSlug === "custom-pillow"
+      ? { ...design, selection: DEFAULT_DESIGN.selection }
+      : null;
   } catch {
     window.localStorage.removeItem(STORAGE_KEY);
     return null;

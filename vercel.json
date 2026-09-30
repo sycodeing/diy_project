@@ -6,5 +6,11 @@
       "memory": 2048,
       "includeFiles": "mockup-renderer/templates/**"
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/marketing-retention",
+      "schedule": "30 2 * * *"
+    }
+  ]
 }

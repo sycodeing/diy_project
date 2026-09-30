@@ -37,7 +37,28 @@ export const checkoutSchema = z.object({
   }),
 });
 
-export const adminStatusSchema = z.enum(["production", "packing", "shipped"]);
+export const shippingAddressSchema = z.object({
+  fullName: z.string().trim().min(2).max(120),
+  line1: z.string().trim().min(3).max(180),
+  line2: z.string().trim().max(180).optional(),
+  city: z.string().trim().min(1).max(120),
+  region: z.string().trim().min(1).max(120),
+  postalCode: z.string().trim().min(2).max(32),
+  country: z.string().trim().length(2).transform((value) => value.toUpperCase()),
+  phone: z.string().trim().min(6).max(40),
+});
+
+export const checkoutRequestSchema = z.object({
+  design: checkoutSchema,
+  shipping: shippingAddressSchema,
+});
+
+export const adminStatusSchema = z.enum([
+  "ordered",
+  "production",
+  "packing",
+  "shipped",
+]);
 
 export const temuStatusSchema = z
   .string()
