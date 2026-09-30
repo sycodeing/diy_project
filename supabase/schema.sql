@@ -177,6 +177,33 @@ create table if not exists public.admin_roles (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.order_recipient_pii_vault (
+  id uuid primary key default gen_random_uuid(),
+  order_id uuid unique references public.orders(id) on delete cascade,
+  record_label text not null unique,
+  is_test boolean not null default false,
+  recipient_name_secret_id uuid not null unique,
+  recipient_phone_secret_id uuid not null unique,
+  recipient_address_secret_id uuid not null unique,
+  recipient_email_secret_id uuid not null unique,
+  encryption_scheme text not null default 'Supabase Vault authenticated encryption',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint production_recipient_pii_requires_order
+    check (is_test or order_id is not null)
+);
+
+comment on table public.order_recipient_pii_vault is
+  'Maps an order to recipient PII encrypted in Supabase Vault. Secret plaintext is never stored in this table.';
+comment on column public.order_recipient_pii_vault.recipient_name_secret_id is
+  'Vault secret identifier for the encrypted recipient name.';
+comment on column public.order_recipient_pii_vault.recipient_phone_secret_id is
+  'Vault secret identifier for the encrypted recipient phone number.';
+comment on column public.order_recipient_pii_vault.recipient_address_secret_id is
+  'Vault secret identifier for the encrypted delivery address.';
+comment on column public.order_recipient_pii_vault.recipient_email_secret_id is
+  'Vault secret identifier for the encrypted customer email.';
+
 create or replace function public.touch_updated_at()
 returns trigger
 language plpgsql
@@ -203,6 +230,12 @@ create trigger touch_temu_purchase_jobs_updated_at
 before update on public.temu_purchase_jobs
 for each row execute function public.touch_updated_at();
 
+drop trigger if exists set_order_recipient_pii_vault_updated_at
+  on public.order_recipient_pii_vault;
+create trigger set_order_recipient_pii_vault_updated_at
+before update on public.order_recipient_pii_vault
+for each row execute function public.touch_updated_at();
+
 alter table public.products enable row level security;
 alter table public.product_options enable row level security;
 alter table public.product_variants enable row level security;
@@ -211,6 +244,7 @@ alter table public.orders enable row level security;
 alter table public.order_status_events enable row level security;
 alter table public.temu_purchase_jobs enable row level security;
 alter table public.admin_roles enable row level security;
+alter table public.order_recipient_pii_vault enable row level security;
 
 grant select on table public.products to anon, authenticated;
 grant select on table public.product_options to anon, authenticated;
@@ -220,6 +254,8 @@ grant select, insert, update on table public.orders to authenticated;
 grant select, insert on table public.order_status_events to authenticated;
 grant select, update on table public.temu_purchase_jobs to authenticated;
 grant select on table public.admin_roles to authenticated;
+revoke all on table public.order_recipient_pii_vault from anon, authenticated;
+grant select, insert, update, delete on table public.order_recipient_pii_vault to service_role;
 grant select, insert, update, delete on table
   public.products,
   public.product_options,
@@ -250,15 +286,15 @@ drop policy if exists "Users manage own designs" on public.custom_designs;
 create policy "Users manage own designs"
 on public.custom_designs for all
 to authenticated
-using (auth.uid() = user_id)
-with check (auth.uid() = user_id);
+using ((select auth.uid()) = user_id)
+with check ((select auth.uid()) = user_id);
 
 drop policy if exists "Users view own orders" on public.orders;
 create policy "Users view own orders"
 on public.orders for select
 to authenticated
 using (
-  auth.uid() = user_id
+  (select auth.uid()) = user_id
   or exists (
     select 1 from public.admin_roles
     where admin_roles.user_id = (select auth.uid())
@@ -269,7 +305,7 @@ drop policy if exists "Users create own orders" on public.orders;
 create policy "Users create own orders"
 on public.orders for insert
 to authenticated
-with check (auth.uid() = user_id);
+with check ((select auth.uid()) = user_id);
 
 drop policy if exists "Admins update orders" on public.orders;
 create policy "Admins update orders"
@@ -297,10 +333,10 @@ using (
     select 1 from public.orders
     where orders.id = order_status_events.order_id
     and (
-      orders.user_id = auth.uid()
+      orders.user_id = (select auth.uid())
       or exists (
         select 1 from public.admin_roles
-        where admin_roles.user_id = auth.uid()
+        where admin_roles.user_id = (select auth.uid())
       )
     )
   )
@@ -313,7 +349,7 @@ to authenticated
 with check (
   exists (
     select 1 from public.admin_roles
-    where admin_roles.user_id = auth.uid()
+    where admin_roles.user_id = (select auth.uid())
   )
 );
 
@@ -349,7 +385,7 @@ drop policy if exists "Users view own admin role" on public.admin_roles;
 create policy "Users view own admin role"
 on public.admin_roles for select
 to authenticated
-using (auth.uid() = user_id);
+using ((select auth.uid()) = user_id);
 
 insert into public.products (
   slug,
@@ -441,7 +477,7 @@ on storage.objects for insert
 to authenticated
 with check (
   bucket_id = 'design-assets'
-  and (storage.foldername(name))[1] = auth.uid()::text
+  and (storage.foldername(name))[1] = (select auth.uid())::text
 );
 
 drop policy if exists "Users read own design assets" on storage.objects;
@@ -450,7 +486,7 @@ on storage.objects for select
 to authenticated
 using (
   bucket_id = 'design-assets'
-  and (storage.foldername(name))[1] = auth.uid()::text
+  and (storage.foldername(name))[1] = (select auth.uid())::text
 );
 
 drop policy if exists "Users update own design assets" on storage.objects;
@@ -459,11 +495,11 @@ on storage.objects for update
 to authenticated
 using (
   bucket_id = 'design-assets'
-  and (storage.foldername(name))[1] = auth.uid()::text
+  and (storage.foldername(name))[1] = (select auth.uid())::text
 )
 with check (
   bucket_id = 'design-assets'
-  and (storage.foldername(name))[1] = auth.uid()::text
+  and (storage.foldername(name))[1] = (select auth.uid())::text
 );
 
 drop policy if exists "Users delete own design assets" on storage.objects;
@@ -472,7 +508,7 @@ on storage.objects for delete
 to authenticated
 using (
   bucket_id = 'design-assets'
-  and (storage.foldername(name))[1] = auth.uid()::text
+  and (storage.foldername(name))[1] = (select auth.uid())::text
 );
 
 drop policy if exists "Avatar images are public" on storage.objects;
@@ -487,7 +523,7 @@ on storage.objects for insert
 to authenticated
 with check (
   bucket_id = 'avatars'
-  and (storage.foldername(name))[1] = auth.uid()::text
+  and (storage.foldername(name))[1] = (select auth.uid())::text
 );
 
 drop policy if exists "Users update own avatar" on storage.objects;
@@ -496,11 +532,11 @@ on storage.objects for update
 to authenticated
 using (
   bucket_id = 'avatars'
-  and (storage.foldername(name))[1] = auth.uid()::text
+  and (storage.foldername(name))[1] = (select auth.uid())::text
 )
 with check (
   bucket_id = 'avatars'
-  and (storage.foldername(name))[1] = auth.uid()::text
+  and (storage.foldername(name))[1] = (select auth.uid())::text
 );
 
 drop policy if exists "Users delete own avatar" on storage.objects;
@@ -509,7 +545,7 @@ on storage.objects for delete
 to authenticated
 using (
   bucket_id = 'avatars'
-  and (storage.foldername(name))[1] = auth.uid()::text
+  and (storage.foldername(name))[1] = (select auth.uid())::text
 );
 
 create table if not exists public.marketing_links (
