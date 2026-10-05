@@ -9,6 +9,7 @@ import {
 import { getAppUrl, getStripeConfig } from "@/lib/env";
 import { getStripeClient } from "@/lib/stripe";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { validateShippingAddress } from "@/lib/service-area";
 import { checkoutRequestSchema } from "@/lib/validation";
 import { createOrderNumber } from "@/lib/utils";
@@ -19,9 +20,10 @@ import {
 
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
+  const serviceSupabase = getSupabaseServiceClient();
   const stripe = getStripeClient();
 
-  if (!supabase || !stripe) {
+  if (!supabase || !serviceSupabase || !stripe) {
     return NextResponse.json(
       { error: "Supabase or Stripe environment variables are missing." },
       { status: 503 },
@@ -176,12 +178,15 @@ export async function POST(request: Request) {
     { idempotencyKey: `checkout-session:${order.id}` },
   );
 
-  const { error: updateError } = await supabase
+  const { data: updatedOrder, error: updateError } = await serviceSupabase
     .from("orders")
     .update({ stripe_checkout_session_id: session.id })
-    .eq("id", order.id);
+    .eq("id", order.id)
+    .eq("user_id", user.id)
+    .select("id")
+    .maybeSingle();
 
-  if (updateError || !session.url) {
+  if (updateError || !updatedOrder || !session.url) {
     if (session.status === "open") {
       await stripe.checkout.sessions.expire(session.id).catch(() => undefined);
     }
