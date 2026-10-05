@@ -31,6 +31,8 @@ export function getSupabaseServiceConfig() {
 export function getStripeConfig() {
   const secretKey = process.env.STRIPE_SECRET_KEY;
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  const automaticTaxEnabled =
+    process.env.STRIPE_AUTOMATIC_TAX_ENABLED?.trim().toLowerCase() === "true";
 
   return {
     secretKey:
@@ -39,6 +41,7 @@ export function getStripeConfig() {
       webhookSecret && !webhookSecret.includes("your-secret")
         ? webhookSecret
         : undefined,
+    automaticTaxEnabled,
   };
 }
 

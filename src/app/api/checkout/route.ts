@@ -6,7 +6,7 @@ import {
   COLOR_OPTIONS,
   STYLE_OPTIONS,
 } from "@/lib/product-config";
-import { getAppUrl } from "@/lib/env";
+import { getAppUrl, getStripeConfig } from "@/lib/env";
 import { getStripeClient } from "@/lib/stripe";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { validateShippingAddress } from "@/lib/service-area";
@@ -131,6 +131,7 @@ export async function POST(request: Request) {
   }
 
   const appUrl = getAppUrl();
+  const { automaticTaxEnabled } = getStripeConfig();
   const productName = `${product.name} / ${getOptionLabel(
     COLOR_OPTIONS,
     design.selection.color,
@@ -138,31 +139,42 @@ export async function POST(request: Request) {
     design.selection.size
   }`;
 
-  const session = await stripe.checkout.sessions.create({
-    mode: "payment",
-    customer_email: user.email,
-    line_items: [
-      {
-        price_data: {
-          currency,
-          product_data: {
-            name: productName,
-            description: `Two custom 18in / 45cm pillow covers. Inserts not included. Order ${order.order_number}`,
+  const session = await stripe.checkout.sessions.create(
+    {
+      mode: "payment",
+      client_reference_id: order.id,
+      customer_creation: "always",
+      customer_email: user.email,
+      automatic_tax: { enabled: automaticTaxEnabled },
+      ...(automaticTaxEnabled
+        ? { billing_address_collection: "required" as const }
+        : {}),
+      line_items: [
+        {
+          price_data: {
+            currency,
+            product_data: {
+              name: productName,
+              description: `Two custom 18in / 45cm pillow covers. Inserts not included. Order ${order.order_number}`,
+              tax_code: "txcd_99999999",
+            },
+            tax_behavior: "exclusive",
+            unit_amount: amountCents,
           },
-          unit_amount: amountCents,
+          quantity: 1,
         },
-        quantity: 1,
+      ],
+      metadata: {
+        order_id: order.id,
+        design_id: customDesign.id,
+        user_id: user.id,
+        ...(marketingLink ? { marketing_link_id: marketingLink.id } : {}),
       },
-    ],
-    metadata: {
-      order_id: order.id,
-      design_id: customDesign.id,
-      user_id: user.id,
-      ...(marketingLink ? { marketing_link_id: marketingLink.id } : {}),
+      success_url: `${appUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${appUrl}/orders/${order.id}`,
     },
-    success_url: `${appUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${appUrl}/orders/${order.id}`,
-  });
+    { idempotencyKey: `checkout-session:${order.id}` },
+  );
 
   const { error: updateError } = await supabase
     .from("orders")
@@ -170,6 +182,9 @@ export async function POST(request: Request) {
     .eq("id", order.id);
 
   if (updateError || !session.url) {
+    if (session.status === "open") {
+      await stripe.checkout.sessions.expire(session.id).catch(() => undefined);
+    }
     return NextResponse.json(
       { error: "Could not prepare payment session." },
       { status: 500 },
@@ -184,10 +199,10 @@ export async function POST(request: Request) {
       order.id,
     );
     if (marketingError) {
-      return NextResponse.json(
-        { error: "Checkout was created, but attribution could not be recorded." },
-        { status: 500 },
-      );
+      console.error("Checkout attribution could not be recorded", {
+        orderId: order.id,
+        stripeCheckoutSessionId: session.id,
+      });
     }
   }
 

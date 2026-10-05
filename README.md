@@ -105,6 +105,11 @@ SUPABASE_SECRET_KEY=...
 
 Apply every SQL file in `supabase/migrations` before enabling live checkout.
 
+Stripe Checkout classifies the pillow covers as general tangible goods. Keep
+`STRIPE_AUTOMATIC_TAX_ENABLED=false` until the Stripe Tax head-office address
+and every legally required tax registration are configured; Stripe Tax does
+not register the business with tax authorities automatically.
+
 ## Temu manual purchase desk
 
 Paid orders are added to `/admin/temu-purchases`. The page shows the target

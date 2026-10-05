@@ -87,7 +87,9 @@ async function markOrderPaid({
 
   const { data: order, error: orderReadError } = await supabase
     .from("orders")
-    .select("id,shipping,currency,paid_at,fulfillment_status,marketing_link_id")
+    .select(
+      "id,amount_cents,currency,shipping,paid_at,fulfillment_status,marketing_link_id,stripe_checkout_session_id",
+    )
     .eq("id", orderId)
     .maybeSingle();
 
@@ -95,6 +97,18 @@ async function markOrderPaid({
     return {
       ok: false as const,
       error: orderReadError?.message ?? "Paid order is missing its shipping address.",
+    };
+  }
+
+  if (
+    order.stripe_checkout_session_id !== session.id ||
+    session.client_reference_id !== order.id ||
+    session.currency?.toLowerCase() !== order.currency.toLowerCase() ||
+    session.amount_subtotal !== order.amount_cents
+  ) {
+    return {
+      ok: false as const,
+      error: "Stripe Checkout Session does not match the stored order.",
     };
   }
 
