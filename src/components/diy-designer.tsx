@@ -21,7 +21,10 @@ import {
   SHAPE_OPTIONS,
   getColorHex,
 } from "@/lib/product-config";
-import { renderMockupPreviewsFromUrl } from "@/lib/mockup-renderer";
+import {
+  MOCKUP_TEMPLATES,
+  renderMockupPreviewsFromUrl,
+} from "@/lib/mockup-renderer";
 import type { MarketingPreview } from "@/lib/marketing";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type {
@@ -456,10 +459,7 @@ export function DiyDesigner({
               activeSide={activeSide}
               activeMockupId={activeMockupId}
               design={design}
-              isLoading={
-                isReadingImage ||
-                (mockupStatus === "rendering" && mockupPreviews.length === 0)
-              }
+              isLoading={isReadingImage || mockupStatus === "rendering"}
               loadingLabel={
                 isReadingImage
                   ? "Reading your photo..."
@@ -965,16 +965,27 @@ function PillowPreview({
   const activeMockup =
     mockupPreviews.find((preview) => preview.id === activeMockupId) ??
     mockupPreviews[0];
+  const fallbackImageUrl = side.kind === "image" ? side.imagePreviewUrl : undefined;
+  const previewTiles = MOCKUP_TEMPLATES.map((template) => ({
+    ...template,
+    preview: mockupPreviews.find((preview) => preview.id === template.id),
+  }));
+  const mainImage = activeMockup?.url ?? fallbackImageUrl;
 
-  if (activeMockup) {
+  if (mainImage) {
     return (
       <div className="grid gap-3">
-        <div className="relative grid min-h-[320px] place-items-center overflow-hidden rounded-xl border border-line bg-surface sm:min-h-[440px]">
+        <div
+          aria-busy={isLoading}
+          className="relative grid min-h-[320px] place-items-center overflow-hidden rounded-xl border border-line bg-surface sm:min-h-[440px]"
+        >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            alt={`Rendered pillow preview: ${activeMockup.label}`}
+            alt={activeMockup
+              ? `Rendered pillow preview: ${activeMockup.label}`
+              : "Uploaded artwork while room previews are rendering"}
             className="h-full max-h-[620px] w-full object-contain"
-            src={activeMockup.url}
+            src={mainImage}
           />
           <PreviewLoadingOverlay label={loadingLabel} visible={isLoading} />
         </div>
@@ -982,26 +993,38 @@ function PillowPreview({
           aria-label="Pillow preview scenes"
           className="grid grid-cols-2 gap-2 sm:grid-cols-4"
         >
-          {mockupPreviews.map((preview) => (
+          {previewTiles.map(({ id, label, preview }) => (
             <button
-              aria-pressed={preview.id === activeMockup.id}
+              aria-label={preview ? label : `${label} is rendering`}
+              aria-pressed={preview?.id === activeMockup?.id}
               className={cn(
-                "focus-ring grid min-w-0 gap-2 rounded-lg border bg-panel p-2 text-left transition",
-                preview.id === activeMockup.id
+                "focus-ring relative grid min-w-0 gap-2 rounded-lg border bg-panel p-2 text-left transition",
+                preview?.id === activeMockup?.id
                   ? "border-2 border-accent text-foreground"
-                  : "border-line text-muted hover:border-accent/50 hover:text-foreground",
+                  : preview
+                    ? "border-line text-muted hover:border-accent/50 hover:text-foreground"
+                    : "cursor-wait border-line text-muted",
               )}
-              key={preview.id}
-              onClick={() => onSelectMockup(preview.id)}
+              disabled={!preview}
+              key={id}
+              onClick={() => onSelectMockup(id)}
               type="button"
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 alt=""
-                className="aspect-square w-full rounded object-cover"
-                src={preview.url}
+                className={cn(
+                  "aspect-square w-full rounded object-cover",
+                  !preview && "opacity-60",
+                )}
+                src={preview?.url ?? fallbackImageUrl ?? mainImage}
               />
-              <span className="truncate text-xs font-bold">{preview.label}</span>
+              <span className="truncate text-xs font-bold">{label}</span>
+              {!preview ? (
+                <span className="absolute inset-x-2 top-2 rounded bg-background/85 px-2 py-1 text-center text-[0.65rem] font-black uppercase tracking-wide text-foreground backdrop-blur-sm">
+                  Rendering…
+                </span>
+              ) : null}
             </button>
           ))}
         </div>
@@ -1054,26 +1077,18 @@ function PreviewLoadingOverlay({
     <div
       aria-busy="true"
       aria-live="assertive"
-      className="absolute inset-0 z-20 grid place-items-center bg-white/90 px-6 text-center backdrop-blur-sm"
+      className="pointer-events-none absolute inset-x-4 bottom-4 z-20 flex justify-center text-center"
       role="status"
     >
-      <div className="w-full max-w-sm rounded-2xl border border-line bg-panel px-5 py-7 shadow-2xl shadow-slate-900/15 sm:px-8">
+      <div className="w-full max-w-sm rounded-xl border border-line bg-panel/95 px-4 py-3 shadow-xl shadow-slate-900/15 backdrop-blur-sm">
         <LoaderCircle
           aria-hidden="true"
           className="mx-auto animate-spin text-accent"
-          size={48}
+          size={24}
           strokeWidth={3}
         />
-        <p className="mt-5 text-2xl font-black tracking-normal">
-          Building your preview
-        </p>
-        <p className="mt-2 text-sm font-bold text-muted">{label}</p>
-        <div className="mt-5 h-2 overflow-hidden rounded-full bg-surface">
-          <span className="block h-full w-full animate-pulse bg-accent" />
-        </div>
-        <p className="mt-3 text-xs font-bold uppercase tracking-[0.16em] text-accent">
-          Keep this page open
-        </p>
+        <p className="mt-2 text-sm font-black">Building your previews</p>
+        <p className="mt-1 text-xs font-bold text-muted">{label}</p>
       </div>
     </div>
   );
