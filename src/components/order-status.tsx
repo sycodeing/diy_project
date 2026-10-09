@@ -1,4 +1,4 @@
-import { Box, Check, Factory, PackageCheck, ShoppingBag, Truck } from "lucide-react";
+import { Box, Check, Factory, PackageCheck, ShoppingBag, Truck, CircleCheck } from "lucide-react";
 import { getTemuStatusLabel } from "@/lib/temu";
 import type {
   FulfillmentStatus,
@@ -12,11 +12,12 @@ const stages: Array<{
   label: string;
   icon: React.ComponentType<{ size?: number; className?: string }>;
 }> = [
-  { key: "awaiting_payment", label: "Payment", icon: Check },
-  { key: "ordered", label: "Ordered", icon: ShoppingBag },
-  { key: "production", label: "Production", icon: Factory },
-  { key: "packing", label: "Packing", icon: Box },
-  { key: "shipped", label: "Shipped", icon: Truck },
+  { key: "awaiting_payment", label: "待付款", icon: Check },
+  { key: "ordered", label: "待发货", icon: ShoppingBag },
+  { key: "production", label: "生产中", icon: Factory },
+  { key: "packing", label: "打包中", icon: Box },
+  { key: "shipped", label: "已发货", icon: Truck },
+  { key: "delivered", label: "已送达", icon: CircleCheck },
 ];
 
 export function OrderStatus({
@@ -35,15 +36,22 @@ export function OrderStatus({
       <div className="mb-3 flex flex-col gap-2 text-sm text-muted sm:flex-row sm:items-center sm:justify-between">
         <span className="inline-flex items-center gap-2">
           <PackageCheck size={16} />
-          Payment: {paymentStatus.replaceAll("_", " ")}
+          付款状态：
+          {paymentStatus === "paid"
+            ? "已付款"
+            : paymentStatus === "pending_payment"
+              ? "待付款"
+              : paymentStatus === "failed"
+                ? "付款失败"
+                : "已取消"}
         </span>
         {temuStatus ? (
-          <span className="rounded-lg border border-line bg-black px-2 py-1 text-xs font-bold text-foreground">
+          <span className="rounded-lg border border-line bg-surface px-2 py-1 text-xs font-bold text-foreground">
             Temu: {getTemuStatusLabel(temuStatus)}
           </span>
         ) : null}
       </div>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
         {stages.map((stage, index) => {
           const Icon = stage.icon;
           const active = index <= currentIndex;
@@ -54,7 +62,7 @@ export function OrderStatus({
                 "rounded-lg border p-3 text-center text-xs font-bold",
                 active
                   ? "border-accent bg-accent/10 text-foreground"
-                  : "border-line bg-black text-muted",
+                  : "border-line bg-panel text-muted",
               )}
               key={stage.key}
             >
@@ -69,13 +77,21 @@ export function OrderStatus({
 }
 
 export function CustomerOrderStatus({
+  fulfillmentStatus,
   paymentStatus,
 }: {
+  fulfillmentStatus: FulfillmentStatus;
   paymentStatus: PaymentStatus;
 }) {
   const isPaid = paymentStatus === "paid";
-  const label = isPaid
-    ? "已下单"
+  const delivered = fulfillmentStatus === "delivered";
+  const shipped = fulfillmentStatus === "shipped";
+  const label = delivered
+    ? "已送达"
+    : shipped
+      ? "已发货"
+      : isPaid
+        ? "待发货"
     : paymentStatus === "pending_payment"
       ? "等待付款"
       : "付款未完成";
@@ -95,7 +111,11 @@ export function CustomerOrderStatus({
       </div>
       {isPaid ? (
         <p className="mt-3 text-sm text-muted">
-          订单已经受理。内部采购与履约进度不会改变这里显示的状态。
+          {delivered
+            ? "订单已送达，感谢您的购买。"
+            : shipped
+              ? "订单已发出，请留意物流更新。"
+              : "订单已确认，正在等待发货。"}
         </p>
       ) : null}
     </div>

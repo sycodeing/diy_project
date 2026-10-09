@@ -26,15 +26,26 @@ export type DesignSide = {
 };
 
 export type ProductSelection = {
-  productSlug: "custom-pillow";
+  productSlug: string;
   color: string;
   style: string;
   size: string;
+  [option: string]: string;
+};
+
+export type ProductSnapshot = {
+  slug: string;
+  name: string;
+  category: string;
+  sku: string;
+  quantity: number;
+  options: Record<string, string>;
 };
 
 export type DesignPayload = {
   selection: ProductSelection;
   sides: Record<ProductSide, DesignSide>;
+  productSnapshot?: ProductSnapshot;
 };
 
 export type ShippingAddress = {
@@ -59,7 +70,8 @@ export type FulfillmentStatus =
   | "ordered"
   | "production"
   | "packing"
-  | "shipped";
+  | "shipped"
+  | "delivered";
 
 export type TemuOrderStatus =
   | "NOT_SUBMITTED"

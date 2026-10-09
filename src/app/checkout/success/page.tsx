@@ -8,9 +8,9 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 export default async function CheckoutSuccessPage({
   searchParams,
 }: {
-  searchParams: Promise<{ session_id?: string }>;
+  searchParams: Promise<{ session_id?: string; paypal_order_id?: string }>;
 }) {
-  const { session_id: sessionId } = await searchParams;
+  const { session_id: sessionId, paypal_order_id: paypalOrderId } = await searchParams;
   const supabase = await createSupabaseServerClient();
 
   if (!supabase) {
@@ -34,10 +34,22 @@ export default async function CheckoutSuccessPage({
   const { data: order } = sessionId
     ? await supabase
         .from("orders")
-        .select("id,order_number")
+        .select("id,order_number,payment_status")
         .eq("stripe_checkout_session_id", sessionId)
+        .eq("user_id", user.id)
+        .maybeSingle()
+    : paypalOrderId
+    ? await supabase
+        .from("orders")
+        .select("id,order_number,payment_status")
+        .eq("paypal_order_id", paypalOrderId)
+        .eq("user_id", user.id)
         .maybeSingle()
     : { data: null };
+
+  if (order?.payment_status === "paid") {
+    redirect(`/orders/${order.id}`);
+  }
 
   return (
     <AppShell>
@@ -45,11 +57,12 @@ export default async function CheckoutSuccessPage({
         <section className="w-full rounded-lg border border-line bg-panel/85 p-8 text-center">
           <CheckCircle2 className="mx-auto text-accent" size={48} />
           <h1 className="mt-5 text-4xl font-black tracking-normal">
-            Payment received
+            Confirming your payment
           </h1>
           <p className="mt-3 text-muted">
-            Stripe is confirming the payment. Once confirmed, the order will
-            enter the next scheduled Temu payment batch.
+            {paypalOrderId
+              ? "PayPal is still confirming this payment. This page will update once it is verified."
+              : "Stripe is still confirming this payment. This page will update once it is verified."}
           </p>
           <div className="mt-6 flex justify-center gap-3">
             <Link

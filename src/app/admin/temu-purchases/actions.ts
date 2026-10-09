@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -14,7 +15,7 @@ import type { FulfillmentStatus, TemuOrderStatus } from "@/lib/types";
 import { adminStatusSchema } from "@/lib/validation";
 
 const jobIdSchema = z.string().uuid();
-const orderNumberSchema = z.string().trim().min(4).max(120);
+const orderNumberSchema = z.string().trim().min(1).max(120);
 
 export async function refreshTemuJobConfiguration(formData: FormData) {
   await requireAdmin();
@@ -84,11 +85,22 @@ export async function bindManualTemuOrder(formData: FormData) {
   if (!supabase) throw new Error("Supabase is not configured.");
 
   const jobId = jobIdSchema.parse(String(formData.get("jobId") ?? ""));
-  const parentOrderSn = orderNumberSchema.parse(
+  const parentOrderResult = orderNumberSchema.safeParse(
     String(formData.get("temuParentOrderSn") ?? ""),
   );
+  if (!parentOrderResult.success) {
+    redirect("/admin/temu-purchases?bindError=parent");
+  }
+  const parentOrderSn = parentOrderResult.data;
   const rawOrderSn = String(formData.get("temuOrderSn") ?? "").trim();
-  const orderSn = rawOrderSn ? orderNumberSchema.parse(rawOrderSn) : null;
+  let orderSn: string | null = null;
+  if (rawOrderSn) {
+    const orderResult = orderNumberSchema.safeParse(rawOrderSn);
+    if (!orderResult.success) {
+      redirect("/admin/temu-purchases?bindError=suborder");
+    }
+    orderSn = orderResult.data;
+  }
 
   const { data: job, error: readError } = await supabase
     .from("temu_purchase_jobs")
@@ -195,7 +207,9 @@ export async function advanceManualFulfillmentStatus(formData: FormData) {
   }
 
   const temuStatus: TemuOrderStatus =
-    requestedStatus === "shipped" ? "SHIPPED" : "UN_SHIPPING";
+    requestedStatus === "shipped" || requestedStatus === "delivered"
+      ? "SHIPPED"
+      : "UN_SHIPPING";
   const now = new Date().toISOString();
   const { data: updatedOrder, error: updateError } = await supabase
     .from("orders")

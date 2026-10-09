@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { DesignSummary } from "@/components/design-summary";
 import { CustomerOrderStatus } from "@/components/order-status";
+import { OrderProductSummary } from "@/components/order-product-summary";
 import { SetupWarning } from "@/components/setup-warning";
 import { createDesignImageUrls } from "@/lib/design-images";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -16,6 +17,7 @@ type CustomerOrderDetail = Pick<
   | "amount_cents"
   | "currency"
   | "payment_status"
+  | "fulfillment_status"
   | "design_snapshot"
   | "created_at"
 >;
@@ -50,7 +52,7 @@ export default async function OrderDetailPage({
   const { data: order } = await supabase
     .from("orders")
     .select(
-      "id,order_number,amount_cents,currency,payment_status,design_snapshot,created_at",
+      "id,order_number,amount_cents,currency,payment_status,fulfillment_status,design_snapshot,created_at",
     )
     .eq("id", id)
     .maybeSingle();
@@ -64,6 +66,12 @@ export default async function OrderDetailPage({
     supabase,
     typedOrder.design_snapshot,
   );
+  const productSlug = typedOrder.design_snapshot.selection.productSlug;
+  const { data: product } = await supabase
+    .from("products")
+    .select("name")
+    .eq("slug", productSlug)
+    .maybeSingle();
   return (
     <AppShell>
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8 sm:px-6">
@@ -77,9 +85,13 @@ export default async function OrderDetailPage({
               <p className="font-mono text-sm text-accent">
                 {typedOrder.order_number}
               </p>
-              <h1 className="mt-2 text-4xl font-black tracking-normal">
-                Custom Pillow Cover Set order
-              </h1>
+              <h1 className="sr-only">Order {typedOrder.order_number}</h1>
+              <div className="mt-2">
+                <OrderProductSummary
+                  design={typedOrder.design_snapshot}
+                  fallbackName={product?.name ?? "Product"}
+                />
+              </div>
               <p className="mt-2 text-sm text-muted">
                 Created {formatDate(typedOrder.created_at)}
               </p>
@@ -89,7 +101,10 @@ export default async function OrderDetailPage({
             </p>
           </div>
 
-          <CustomerOrderStatus paymentStatus={typedOrder.payment_status} />
+          <CustomerOrderStatus
+            fulfillmentStatus={typedOrder.fulfillment_status}
+            paymentStatus={typedOrder.payment_status}
+          />
 
           <div className="mt-6">
             <DesignSummary

@@ -28,9 +28,28 @@ export function AuthForm({
 
       const email = String(formData.get("email") ?? "");
       const password = String(formData.get("password") ?? "");
-      const callbackUrl = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
-        nextPath,
-      )}`;
+      const callbackOrigin =
+        process.env.NEXT_PUBLIC_AUTH_REDIRECT_URL?.trim() || window.location.origin;
+      let callbackUrl: string;
+      try {
+        const callback = new URL("/auth/callback", callbackOrigin);
+        callback.searchParams.set("next", nextPath);
+        callbackUrl = callback.toString();
+      } catch {
+        setMessage("The email confirmation address is not configured correctly.");
+        return;
+      }
+
+      if (
+        mode === "sign-up" &&
+        ["localhost", "127.0.0.1", "::1"].includes(new URL(callbackUrl).hostname) &&
+        !process.env.NEXT_PUBLIC_AUTH_REDIRECT_URL
+      ) {
+        setMessage(
+          "Open the hosted Preview website before creating an account. A localhost confirmation link cannot be opened from another device.",
+        );
+        return;
+      }
 
       const result =
         mode === "sign-up"
@@ -57,13 +76,13 @@ export function AuthForm({
   }
 
   return (
-    <div className="w-full max-w-md rounded-lg border border-line bg-panel/88 p-5 shadow-2xl shadow-black/40">
-      <div className="mb-6 flex rounded-lg border border-line bg-black p-1">
+    <div className="w-full max-w-md rounded-2xl border border-line bg-panel p-5 shadow-[0_18px_48px_rgba(23,33,31,0.1)]">
+      <div className="mb-6 flex rounded-lg border border-line bg-surface p-1">
         {(["sign-in", "sign-up"] as const).map((item) => (
           <button
             className={`focus-ring flex-1 rounded-md px-3 py-2 text-sm font-bold transition ${
               mode === item
-                ? "bg-foreground text-background"
+                ? "bg-panel text-foreground shadow-sm"
                 : "text-muted hover:text-foreground"
             }`}
             key={item}
@@ -85,7 +104,7 @@ export function AuthForm({
             Email
           </span>
           <input
-            className="focus-ring h-12 w-full rounded-lg border border-line bg-black px-3 text-foreground placeholder:text-stone-600"
+            className="focus-ring h-12 w-full rounded-lg border border-line bg-panel px-3 text-foreground placeholder:text-muted"
             name="email"
             placeholder="you@example.com"
             required
@@ -98,7 +117,7 @@ export function AuthForm({
             Password
           </span>
           <input
-            className="focus-ring h-12 w-full rounded-lg border border-line bg-black px-3 text-foreground placeholder:text-stone-600"
+            className="focus-ring h-12 w-full rounded-lg border border-line bg-panel px-3 text-foreground placeholder:text-muted"
             minLength={6}
             name="password"
             placeholder="At least 6 characters"
@@ -107,14 +126,18 @@ export function AuthForm({
           />
         </label>
 
+        <p className="text-xs leading-5 text-muted">
+          登录状态会保存在此设备，最长 7 天；在公用设备上请记得退出登录。
+        </p>
+
         {message ? (
-          <p className="rounded-lg border border-line bg-black p-3 text-sm text-accent">
+          <p className="rounded-lg border border-accent/20 bg-accent-soft p-3 text-sm text-accent-strong">
             {message}
           </p>
         ) : null}
 
         <button
-          className="focus-ring inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 font-black text-accent-ink transition hover:bg-foreground active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
+          className="focus-ring inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 font-black text-accent-ink transition hover:bg-accent-strong active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
           disabled={isPending}
           type="submit"
         >

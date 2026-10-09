@@ -51,6 +51,7 @@ export const shippingAddressSchema = z.object({
 export const checkoutRequestSchema = z.object({
   design: checkoutSchema,
   shipping: shippingAddressSchema,
+  paymentProvider: z.enum(["stripe", "paypal"]).default("stripe"),
 });
 
 export const adminStatusSchema = z.enum([
@@ -58,6 +59,7 @@ export const adminStatusSchema = z.enum([
   "production",
   "packing",
   "shipped",
+  "delivered",
 ]);
 
 export const temuStatusSchema = z

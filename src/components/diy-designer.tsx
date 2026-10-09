@@ -87,11 +87,17 @@ export function DiyDesigner({
   autoCheckout = false,
   initialParams = {},
   isAuthenticated = false,
+  paypalEnabled = false,
+  userId = null,
+  defaultShippingAddress = null,
 }: {
   authEnabled?: boolean;
   autoCheckout?: boolean;
   initialParams?: Record<string, string | undefined>;
   isAuthenticated?: boolean;
+  paypalEnabled?: boolean;
+  userId?: string | null;
+  defaultShippingAddress?: ShippingAddress | null;
 }) {
   const router = useRouter();
   const activeSide: ProductSide = "front";
@@ -136,12 +142,17 @@ export function DiyDesigner({
   }, [design, hasLoadedDraft]);
 
   useEffect(() => {
-    if (!autoCheckout || (authEnabled && !isAuthenticated)) return;
+    if (!autoCheckout) return;
+    if (authEnabled && !isAuthenticated) {
+      const returnTo = getCheckoutReturnTo();
+      router.replace(`/auth?next=${encodeURIComponent(returnTo)}`);
+      return;
+    }
     queueMicrotask(() => {
-      setCheckoutAddress(readStoredAddress());
+      setCheckoutAddress(readStoredAddress(getAddressStorageKey(userId), defaultShippingAddress));
       setIsAddressOpen(true);
     });
-  }, [authEnabled, autoCheckout, isAuthenticated]);
+  }, [authEnabled, autoCheckout, defaultShippingAddress, isAuthenticated, router, userId]);
 
   useEffect(() => {
     return () => {
@@ -282,11 +293,12 @@ export function DiyDesigner({
         }
 
         if (authEnabled && !isAuthenticated) {
-          router.push(`/auth?next=${encodeURIComponent("/design?checkout=1")}`);
+          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(design));
+          router.push(`/auth?next=${encodeURIComponent(getCheckoutReturnTo())}`);
           return;
         }
 
-        setCheckoutAddress(readStoredAddress());
+        setCheckoutAddress(readStoredAddress(getAddressStorageKey(userId), defaultShippingAddress));
         setIsAddressOpen(true);
       } catch (checkoutError) {
         setError(
@@ -298,17 +310,17 @@ export function DiyDesigner({
     });
   }
 
-  function confirmOrder(address: ShippingAddress) {
+  function confirmOrder(address: ShippingAddress, paymentProvider: "stripe" | "paypal") {
     setError(null);
     setIsAddressOpen(false);
     startTransition(async () => {
       try {
-        window.localStorage.setItem(ADDRESS_STORAGE_KEY, JSON.stringify(address));
+        window.localStorage.setItem(getAddressStorageKey(userId), JSON.stringify(address));
         const uploadedDesign = await uploadArtwork(design);
         const response = await fetch("/api/checkout", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ design: uploadedDesign, shipping: address }),
+          body: JSON.stringify({ design: uploadedDesign, shipping: address, paymentProvider }),
         });
         const payload = (await response.json()) as {
           url?: string;
@@ -345,7 +357,7 @@ export function DiyDesigner({
 
     if (userError || !user) {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
-      router.push(`/auth?next=${encodeURIComponent("/design?checkout=1")}`);
+      router.push(`/auth?next=${encodeURIComponent(getCheckoutReturnTo())}`);
       throw new Error("Sign in before checkout.");
     }
 
@@ -388,17 +400,15 @@ export function DiyDesigner({
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 pb-6 pt-6 sm:px-6 lg:min-h-[calc(100dvh-4rem)]">
       <section className="grid flex-1 gap-5 lg:grid-rows-[1fr_auto]">
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
-          <div className="rounded-lg border border-line bg-panel/75 p-4 shadow-2xl shadow-black/30 sm:p-6">
+          <div className="rounded-2xl border border-line bg-panel p-4 shadow-[0_18px_48px_rgba(23,33,31,0.08)] sm:p-6">
             <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
               <div>
-                <p className="text-xs font-black uppercase tracking-[0.18em] text-accent">
-                  Live product preview
-                </p>
-                <h1 className="mt-2 max-w-2xl text-4xl font-black leading-[0.95] tracking-normal sm:text-6xl">
-                  Build the pillow before it exists.
+                <h1 className="max-w-2xl text-3xl font-black leading-tight tracking-[-0.035em] sm:text-4xl">
+                  {design.sides.front.imagePreviewUrl ? "Preview your custom pillow" : "Upload a photo to begin"}
                 </h1>
+                <p className="mt-2 text-sm text-muted">Follow the steps below. You can review the result before ordering.</p>
               </div>
-              <div className="rounded-lg border border-line bg-black px-4 py-3 text-sm">
+              <div className="rounded-xl border border-line bg-surface px-4 py-3 text-sm">
                 <p className="text-muted">Base price</p>
                 <p className="text-2xl font-black">
                   {formatMoney(PRODUCT_PRICE_CENTS, PRODUCT_CURRENCY)}
@@ -408,6 +418,14 @@ export function DiyDesigner({
                 </p>
               </div>
             </div>
+
+            <div className="mb-4 grid grid-cols-3 overflow-hidden rounded-xl border border-line bg-surface text-xs font-bold sm:text-sm" aria-label="Order steps">
+              <span className={cn("flex min-h-11 items-center justify-center gap-2 px-2", !design.sides.front.imagePreviewUrl ? "bg-accent text-accent-ink" : "text-accent-strong")}><span className="grid size-6 place-items-center rounded-full border border-current/20 bg-white/20">1</span> Upload</span>
+              <span className={cn("flex min-h-11 items-center justify-center gap-2 px-2", design.sides.front.imagePreviewUrl ? "bg-accent text-accent-ink" : "text-muted")}><span className="grid size-6 place-items-center rounded-full border border-current/20 bg-panel">2</span> Preview</span>
+              <span className="flex min-h-11 items-center justify-center gap-2 px-2 text-muted"><span className="grid size-6 place-items-center rounded-full border border-line bg-panel">3</span> Order</span>
+            </div>
+
+            <ContentControls chooseImage={chooseImage} design={design} />
 
             <PillowPreview
               activeSide={activeSide}
@@ -423,46 +441,31 @@ export function DiyDesigner({
               onSelectMockup={setActiveMockupId}
             />
 
-            <p className="mt-3 text-sm text-muted">
+            <p className="mt-3 text-sm text-muted" role="status" aria-live="polite">
               {mockupStatus === "ready"
-                ? `${mockupPreviews.length} real scene previews rendered from the mockup service.`
+                ? `${mockupPreviews.length} room previews are ready.`
                 : mockupStatus === "rendering"
-                  ? "Rendering real scene preview..."
-                  : mockupStatus === "failed"
-                    ? "Mockup service is not available. Showing layout preview."
-                    : "Upload or open a generated link to render the scene preview."}
+                  ? "Creating your room previews..."
+                : mockupStatus === "failed"
+                    ? "Room previews are unavailable. You can still review the layout."
+                    : "Choose a photo to create room previews."}
             </p>
           </div>
 
-          <aside className="hidden rounded-lg border border-line bg-black/70 p-5 lg:block">
-            <div>
-              <p className="text-sm font-bold">Debug proof</p>
-              <p className="mt-2 text-sm text-muted">
-                Open a generated link or upload a replacement photo. The
-                visible editor no longer exposes product options.
-              </p>
+          <aside className="h-fit rounded-2xl border border-line bg-panel p-5 shadow-sm lg:sticky lg:top-20">
+            <p className="text-lg font-black">Your order</p>
+            <p className="mt-2 text-sm leading-6 text-muted">A set of two 18in / 45cm pillow covers. Inserts are not included.</p>
+            <div className="mt-5 flex items-center justify-between border-t border-line pt-4 text-sm">
+              <span className="text-muted">Total</span>
+              <span className="text-xl font-black">{formatMoney(PRODUCT_PRICE_CENTS, PRODUCT_CURRENCY)}</span>
             </div>
-
-            <div className="mt-6 space-y-3 border-t border-line pt-6 text-sm text-muted">
-              <p>Source: {design.sides.front.imagePreviewUrl ? "ready" : "missing"}</p>
-              <p>
-                We save a local proof and mirror Temu order data when it is
-                available.
-              </p>
-            </div>
-            <DebugLinks />
+            <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-sm text-accent-strong">{design.sides.front.imagePreviewUrl ? "Photo added. Review the preview, then continue." : "Start by adding your photo."}</p>
           </aside>
         </div>
 
-        <div className="-mx-4 border-t border-line bg-background/95 px-4 py-4 sm:-mx-6 sm:px-6 lg:mx-0 lg:rounded-lg lg:border lg:bg-panel/85 lg:p-5">
-          <ContentControls chooseImage={chooseImage} design={design} />
-
-          <div className="mt-4 lg:hidden">
-            <DebugLinks />
-          </div>
-
+        <div className="-mx-4 border-t border-line bg-panel px-4 py-4 sm:-mx-6 sm:px-6 lg:mx-0 lg:rounded-xl lg:border lg:p-5">
           {error ? (
-            <p className="mt-4 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">
+            <p className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-danger" role="alert">
               {error}
             </p>
           ) : null}
@@ -474,20 +477,22 @@ export function DiyDesigner({
                 : "Configure Supabase and Stripe to accept real orders."}
             </p>
             <button
-              className="focus-ring inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-accent px-5 font-black text-accent-ink transition hover:bg-foreground active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
+              className="focus-ring inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-accent px-5 font-black text-accent-ink shadow-sm shadow-teal-900/15 transition hover:bg-accent-strong active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
               disabled={
-                isPending || isReadingImage || mockupStatus === "rendering"
+                !design.sides.front.imagePreviewUrl || isPending || isReadingImage || mockupStatus === "rendering"
               }
               onClick={checkout}
               type="button"
             >
               {isReadingImage || mockupStatus === "rendering"
-                ? "Generating preview..."
+                ? "Creating previews..."
                 : isPending
                 ? "Continuing..."
+                : !design.sides.front.imagePreviewUrl
+                  ? "Upload a photo first"
                 : authEnabled && !isAuthenticated
-                  ? "Sign in to order"
-                  : "Continue to address"}
+                  ? "Sign in to continue"
+                : "Continue to delivery"}
               <ArrowRight size={18} />
             </button>
           </div>
@@ -506,6 +511,7 @@ export function DiyDesigner({
           initialAddress={checkoutAddress}
           onClose={() => setIsAddressOpen(false)}
           onConfirm={confirmOrder}
+          paypalEnabled={paypalEnabled}
         />
       ) : null}
     </main>
@@ -543,7 +549,7 @@ function ContentControls({
               "focus-ring inline-flex h-12 cursor-pointer items-center justify-center gap-2 rounded-lg border px-3 text-sm font-bold transition active:translate-y-px",
               side.kind === "image"
                 ? "border-accent bg-accent/10 text-foreground"
-                : "border-line bg-black text-muted hover:text-foreground",
+                : "border-line bg-panel text-muted hover:bg-surface hover:text-foreground",
             )}
           >
             <ImageUp size={16} />
@@ -555,10 +561,10 @@ function ContentControls({
               type="file"
             />
           </label>
-          <div className="rounded-lg border border-line bg-black px-3 py-2 text-sm text-muted">
+          <div className="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-muted">
             {side.imagePreviewUrl
               ? "Photo loaded. Use the upload button to replace it."
-              : "Upload a photo or open a debug link with an image parameter."}
+              : "JPG, PNG or WebP. Your photo is used to prepare the preview."}
           </div>
         </div>
       </ControlGroup>
@@ -749,8 +755,8 @@ function PhotoCropper({
         : "aspect-[4/3] rounded-lg";
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/80 px-4 py-6 backdrop-blur">
-      <section className="w-full max-w-3xl rounded-lg border border-line bg-panel p-4 shadow-2xl shadow-black/50 sm:p-5">
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 px-4 py-6 backdrop-blur-sm">
+      <section className="w-full max-w-3xl rounded-2xl border border-line bg-panel p-4 shadow-2xl shadow-slate-900/20 sm:p-5">
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
             <p className="text-xs font-black uppercase tracking-[0.18em] text-accent">
@@ -762,7 +768,7 @@ function PhotoCropper({
           </div>
           <button
             aria-label="Close cropper"
-            className="focus-ring grid size-10 place-items-center rounded-lg border border-line bg-black text-muted transition hover:text-foreground"
+            className="focus-ring grid size-10 place-items-center rounded-lg border border-line bg-surface text-muted transition hover:text-foreground"
             onClick={onCancel}
             type="button"
           >
@@ -773,7 +779,7 @@ function PhotoCropper({
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_230px]">
           <div
             className={cn(
-              "relative cursor-grab touch-none select-none overflow-hidden border border-line bg-black active:cursor-grabbing",
+              "relative cursor-grab touch-none select-none overflow-hidden border border-line bg-surface active:cursor-grabbing",
               frameClass,
             )}
             onPointerCancel={onPointerUp}
@@ -793,7 +799,7 @@ function PhotoCropper({
           </div>
 
           <div className="space-y-4">
-            <div className="rounded-lg border border-line bg-black p-3 text-sm">
+            <div className="rounded-lg border border-line bg-surface p-3 text-sm">
               <p className="font-bold">{draft.fileName}</p>
               <p className="mt-1 text-muted">
                 {PRODUCT_ARTWORK_FRAME.outputWidth} x{" "}
@@ -811,14 +817,14 @@ function PhotoCropper({
             />
 
             {cropError ? (
-              <p className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">
+              <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-danger">
                 {cropError}
               </p>
             ) : null}
 
             <div className="grid grid-cols-2 gap-2">
               <button
-                className="focus-ring inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line bg-black px-3 text-sm font-bold text-foreground transition hover:bg-white/10"
+                className="focus-ring inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line bg-panel px-3 text-sm font-bold text-foreground transition hover:bg-surface"
                 onClick={onCancel}
                 type="button"
               >
@@ -935,7 +941,7 @@ function PillowPreview({
   if (activeMockup) {
     return (
       <div className="grid gap-3">
-        <div className="relative grid min-h-[420px] place-items-center overflow-hidden rounded-lg border border-line bg-black sm:min-h-[540px]">
+        <div className="relative grid min-h-[320px] place-items-center overflow-hidden rounded-xl border border-line bg-surface sm:min-h-[440px]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             alt={`Rendered pillow preview: ${activeMockup.label}`}
@@ -952,10 +958,10 @@ function PillowPreview({
             <button
               aria-pressed={preview.id === activeMockup.id}
               className={cn(
-                "focus-ring grid min-w-0 gap-2 rounded-lg border bg-black p-2 text-left transition",
+                "focus-ring grid min-w-0 gap-2 rounded-lg border bg-panel p-2 text-left transition",
                 preview.id === activeMockup.id
-                  ? "border-accent text-foreground"
-                  : "border-line text-muted hover:border-white/35 hover:text-foreground",
+                  ? "border-2 border-accent text-foreground"
+                  : "border-line text-muted hover:border-accent/50 hover:text-foreground",
               )}
               key={preview.id}
               onClick={() => onSelectMockup(preview.id)}
@@ -976,11 +982,7 @@ function PillowPreview({
   }
 
   return (
-    <div className="relative grid min-h-[420px] place-items-center overflow-hidden rounded-lg border border-line bg-black sm:min-h-[540px]">
-      <div className="absolute inset-0 opacity-50">
-        <div className="absolute left-8 top-10 h-40 w-40 rounded-full bg-accent/20 blur-3xl" />
-        <div className="absolute bottom-6 right-10 h-48 w-48 rounded-full bg-white/10 blur-3xl" />
-      </div>
+    <div className="relative grid min-h-[320px] place-items-center overflow-hidden rounded-xl border border-line bg-surface sm:min-h-[440px]">
       <div className="relative w-full max-w-[360px] px-10 py-8 sm:max-w-[460px]">
         <div className="absolute left-[12%] right-[12%] top-4 h-0.5 bg-foreground/90">
           <span className="absolute -left-1 top-1/2 size-2 -translate-y-1/2 rotate-45 border-b-2 border-l-2 border-foreground" />
@@ -1024,10 +1026,10 @@ function PreviewLoadingOverlay({
     <div
       aria-busy="true"
       aria-live="assertive"
-      className="absolute inset-0 z-20 grid place-items-center bg-black/90 px-6 text-center backdrop-blur-sm"
+      className="absolute inset-0 z-20 grid place-items-center bg-white/90 px-6 text-center backdrop-blur-sm"
       role="status"
     >
-      <div className="w-full max-w-sm border-y-4 border-accent bg-background px-5 py-7 shadow-2xl shadow-black sm:px-8">
+      <div className="w-full max-w-sm rounded-2xl border border-line bg-panel px-5 py-7 shadow-2xl shadow-slate-900/15 sm:px-8">
         <LoaderCircle
           aria-hidden="true"
           className="mx-auto animate-spin text-accent"
@@ -1038,7 +1040,7 @@ function PreviewLoadingOverlay({
           Building your preview
         </p>
         <p className="mt-2 text-sm font-bold text-muted">{label}</p>
-        <div className="mt-5 h-2 overflow-hidden rounded-full bg-white/10">
+        <div className="mt-5 h-2 overflow-hidden rounded-full bg-surface">
           <span className="block h-full w-full animate-pulse bg-accent" />
         </div>
         <p className="mt-3 text-xs font-bold uppercase tracking-[0.16em] text-accent">
@@ -1267,13 +1269,35 @@ function readStoredDesign() {
   }
 }
 
-function readStoredAddress() {
+function getAddressStorageKey(userId: string | null) {
+  return `${ADDRESS_STORAGE_KEY}:${userId ?? "guest"}`;
+}
+
+function getCheckoutReturnTo() {
+  const url = new URL(window.location.href);
+  url.searchParams.set("checkout", "1");
+  return `${url.pathname}${url.search}`;
+}
+
+function readStoredAddress(
+  storageKey: string,
+  fallback: ShippingAddress | null,
+) {
   try {
-    const value = window.localStorage.getItem(ADDRESS_STORAGE_KEY);
-    return value ? (JSON.parse(value) as ShippingAddress) : EMPTY_ADDRESS;
+    const value = window.localStorage.getItem(storageKey);
+    const address = value ? (JSON.parse(value) as ShippingAddress) : null;
+    const isComplete = address && [
+      address.fullName,
+      address.line1,
+      address.city,
+      address.region,
+      address.postalCode,
+      address.country,
+    ].every((part) => typeof part === "string" && part.trim().length > 0);
+    return isComplete ? address : fallback ?? EMPTY_ADDRESS;
   } catch {
-    window.localStorage.removeItem(ADDRESS_STORAGE_KEY);
-    return EMPTY_ADDRESS;
+    window.localStorage.removeItem(storageKey);
+    return fallback ?? EMPTY_ADDRESS;
   }
 }
 
@@ -1291,38 +1315,4 @@ function pickParam<T extends string>(
   fallback: T,
 ) {
   return value && allowed.includes(value as T) ? (value as T) : fallback;
-}
-
-function DebugLinks() {
-  const examples = [
-    {
-      label: "Debug link A",
-      href: "/design?image=/debug/pillow-sample.png&position=full_panel&shape=rectangle",
-    },
-    {
-      label: "Debug link B",
-      href: "/design?image=/debug/pillow-sample.png&position=center_panel&shape=circle",
-    },
-    {
-      label: "Debug link C",
-      href: "/design?image=/debug/pillow-sample.png&position=top_banner&shape=rectangle",
-    },
-  ];
-
-  return (
-    <div className="mt-6 border-t border-line pt-6">
-      <p className="mb-3 text-sm font-black">Debug links</p>
-      <div className="space-y-2">
-        {examples.map((example) => (
-          <a
-            className="focus-ring block rounded-lg border border-line bg-white/5 px-3 py-2 text-sm font-bold text-foreground transition hover:border-accent"
-            href={example.href}
-            key={example.href}
-          >
-            {example.label}
-          </a>
-        ))}
-      </div>
-    </div>
-  );
 }

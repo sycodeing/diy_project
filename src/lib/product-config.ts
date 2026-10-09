@@ -64,7 +64,7 @@ export const DEFAULT_DESIGN: DesignPayload = {
   sides: {
     front: {
       kind: "image",
-      imagePreviewUrl: "/debug/pillow-sample.png",
+      imagePreviewUrl: "/design-samples/pastel-color-pattern.jpg",
       shape: "rectangle",
       position: "full_panel",
     },

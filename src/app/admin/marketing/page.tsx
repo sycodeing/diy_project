@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
 export default async function MarketingPage({ searchParams }: { searchParams: Search }) {
   const supabase = await createSupabaseServerClient();
   if (!supabase) {
-    return <AppShell><main className="mx-auto w-full max-w-3xl px-4 py-10"><SetupWarning /></main></AppShell>;
+    return <AppShell admin><main className="mx-auto w-full max-w-3xl px-4 py-10"><SetupWarning /></main></AppShell>;
   }
   await requireAdmin("/admin/marketing");
   const filters = await searchParams;
@@ -48,11 +48,11 @@ export default async function MarketingPage({ searchParams }: { searchParams: Se
   }
 
   return (
-    <AppShell>
+    <AppShell admin>
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
-          <div><p className="text-xs font-black uppercase tracking-[0.18em] text-accent">Admin / attribution</p><h1 className="mt-2 text-4xl font-black">Marketing funnel</h1></div>
-          <Link className="focus-ring rounded-lg border border-line px-4 py-2 font-bold hover:bg-white/5" href={`/api/admin/marketing/export?${exportParams}`}>Export CSV</Link>
+          <div><h1 className="text-4xl font-black">营销数据</h1></div>
+          <Link className="focus-ring rounded-lg border border-line px-4 py-2 font-bold hover:bg-surface" href={`/api/admin/marketing/export?${exportParams}`}>导出 CSV</Link>
         </div>
 
         <form className="mt-6 grid gap-3 rounded-lg border border-line bg-panel/80 p-4 sm:grid-cols-2 lg:grid-cols-6">
@@ -64,7 +64,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Se
           <button className="focus-ring mt-auto h-11 rounded-lg bg-accent px-4 font-black text-accent-ink" type="submit">Apply</button>
         </form>
 
-        {error ? <p className="mt-6 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-red-200">{error.message}</p> : null}
+        {error ? <p className="mt-6 rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">{error.message}</p> : null}
 
         <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Metric label="Generated" value={summary.stageCounts.link_generated} />
@@ -111,7 +111,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Se
 }
 
 function FilterInput({ label, name, type = "text", value }: { label: string; name: string; type?: string; value: string }) {
-  return <label className="block"><span className="mb-2 block text-xs font-bold text-muted">{label}</span><input className="focus-ring h-11 w-full rounded-lg border border-line bg-black px-3" defaultValue={value} name={name} type={type} /></label>;
+  return <label className="block"><span className="mb-2 block text-xs font-bold text-muted">{label}</span><input className="focus-ring h-11 w-full rounded-lg border border-line bg-white px-3 text-foreground" defaultValue={value} name={name} type={type} /></label>;
 }
 
 function Metric({ label, value }: { label: string; value: number | string }) {

@@ -18,7 +18,8 @@ begin
     'ordered',
     'production',
     'packing',
-    'shipped'
+    'shipped',
+    'delivered'
   );
 exception when duplicate_object then null;
 end $$;
@@ -92,6 +93,7 @@ create table if not exists public.orders (
   amount_cents integer not null check (amount_cents > 0),
   currency text not null default 'usd',
   payment_status payment_status not null default 'pending_payment',
+  payment_provider text not null default 'stripe' check (payment_provider in ('stripe', 'paypal')),
   fulfillment_status fulfillment_status not null default 'awaiting_payment',
   sales_channel text not null default 'direct',
   temu_parent_order_sn text,
@@ -104,6 +106,8 @@ create table if not exists public.orders (
   stripe_checkout_session_id text unique,
   stripe_payment_intent_id text,
   stripe_customer_id text,
+  paypal_order_id text unique,
+  paypal_capture_id text unique,
   shipping jsonb,
   paid_at timestamptz,
   created_at timestamptz not null default now(),

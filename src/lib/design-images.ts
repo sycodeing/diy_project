@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { DesignPayload, ProductSide } from "@/lib/types";
+import { getSupabaseServiceClient } from "@/lib/supabase/service";
 
 export async function createDesignImageUrls(
   supabase: SupabaseClient,
@@ -26,3 +27,10 @@ export async function createDesignImageUrls(
   return urls;
 }
 
+/** Only call after requireAdmin() has succeeded. */
+export async function createAdminDesignImageUrls(
+  design: DesignPayload,
+): Promise<Partial<Record<ProductSide, string>>> {
+  const serviceClient = getSupabaseServiceClient();
+  return serviceClient ? createDesignImageUrls(serviceClient, design) : {};
+}

@@ -2,6 +2,7 @@
 
 import { createBrowserClient } from "@supabase/ssr";
 import { getSupabaseBrowserConfig } from "@/lib/env";
+import { AUTH_COOKIE_OPTIONS } from "@/lib/supabase/cookie-options";
 
 export function createSupabaseBrowserClient() {
   const config = getSupabaseBrowserConfig();
@@ -10,6 +11,7 @@ export function createSupabaseBrowserClient() {
     return null;
   }
 
-  return createBrowserClient(config.url, config.anonKey);
+  return createBrowserClient(config.url, config.anonKey, {
+    cookieOptions: AUTH_COOKIE_OPTIONS,
+  });
 }
-

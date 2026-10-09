@@ -8,13 +8,21 @@ export function DesignSummary({
   design: DesignPayload;
   imageUrls?: Partial<Record<ProductSide, string>>;
 }) {
+  const sides: ProductSide[] =
+    design.selection.productSlug === "custom-pillow"
+      ? ["front"]
+      : ["front", "back"];
+
   return (
-    <div className="grid gap-3 text-sm">
-      <SideSummary
-        imageUrl={imageUrls.front}
-        side="front"
-        sideDesign={design.sides.front}
-      />
+    <div className="grid gap-3 text-sm sm:grid-cols-2">
+      {sides.map((side) => (
+        <SideSummary
+          imageUrl={imageUrls[side]}
+          key={side}
+          side={side}
+          sideDesign={design.sides[side]}
+        />
+      ))}
     </div>
   );
 }
@@ -31,11 +39,11 @@ function SideSummary({
   const previewUrl = imageUrl ?? sideDesign.imagePreviewUrl;
 
   return (
-    <div className="rounded-lg border border-line bg-black p-4">
+    <div className="rounded-lg border border-line bg-panel p-4">
       <p className="mb-3 font-black capitalize">{side}</p>
       <div
         className={cn(
-          "grid min-h-28 place-items-center overflow-hidden border border-line bg-foreground p-3 text-center font-black uppercase text-background",
+          "grid aspect-square w-full max-w-64 place-items-center overflow-hidden border border-line bg-surface p-3 text-center font-black uppercase text-foreground",
           sideDesign.shape === "circle" ? "aspect-square rounded-full" : "rounded-lg",
         )}
       >
@@ -46,7 +54,7 @@ function SideSummary({
             // eslint-disable-next-line @next/next/no-img-element
             <img
               alt={`${side} custom artwork`}
-              className="h-full w-full object-cover"
+              className="h-full w-full object-contain"
               src={previewUrl}
             />
           ) : (

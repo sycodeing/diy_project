@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, ImageUp, PackageCheck, Sparkles } from "lucide-react";
+import { ArrowRight, ImageUp, PackageCheck, ShieldCheck } from "lucide-react";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 
@@ -10,102 +10,121 @@ export default async function Home({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
+  const authCode = firstParam(params.code);
+  const tokenHash = firstParam(params.token_hash);
+  if (authCode || tokenHash) {
+    const callbackParams = new URLSearchParams();
+    if (authCode) callbackParams.set("code", authCode);
+    if (tokenHash) callbackParams.set("token_hash", tokenHash);
+    const authType = firstParam(params.type);
+    const nextPath = firstParam(params.next);
+    if (authType) callbackParams.set("type", authType);
+    if (nextPath) callbackParams.set("next", nextPath);
+    redirect(`/auth/callback?${callbackParams.toString()}`);
+  }
+
   const image = firstParam(params.image ?? params.imageUrl ?? params.img);
 
   if (image) {
     const designParams = new URLSearchParams({ image });
     const shape = firstParam(params.shape);
     const position = firstParam(params.position);
+    const checkout = firstParam(params.checkout);
     if (shape) designParams.set("shape", shape);
     if (position) designParams.set("position", position);
+    if (checkout === "1") designParams.set("checkout", "1");
     redirect(`/design?${designParams.toString()}`);
   }
 
   return (
     <AppShell>
       <main>
-        <section className="relative min-h-[72dvh] overflow-hidden border-b border-line">
-          <Image
-            alt="Custom floral pillow on a wooden chair"
-            className="object-cover object-center"
-            fill
-            priority
-            sizes="100vw"
-            src="/showcase/wood-chair.webp"
-          />
-          <div className="absolute inset-0 bg-gradient-to-r from-black via-black/70 to-black/10" />
-          <div className="relative mx-auto flex min-h-[72dvh] w-full max-w-7xl items-end px-4 pb-12 pt-28 sm:px-6 sm:pb-16">
-            <div className="max-w-3xl">
-              <p className="text-xs font-black uppercase tracking-[0.18em] text-accent">
-                Photo-to-product studio
-              </p>
-              <h1 className="mt-4 text-5xl font-black leading-[0.95] tracking-normal sm:text-7xl">
-                Custom Pillow Studio
-              </h1>
-              <p className="mt-5 max-w-xl text-base leading-7 text-stone-200 sm:text-lg">
-                Open a generated link or upload your own image. We crop it for
-                a set of two 18in / 45cm pillow covers and render four real-scene
-                previews before you order. Inserts are not included.
-              </p>
+        <section className="mx-auto grid min-h-[calc(100dvh-4rem)] w-full max-w-7xl items-center gap-10 px-4 py-12 sm:px-6 lg:grid-cols-[0.88fr_1.12fr] lg:py-16">
+          <div className="max-w-xl">
+            <p className="text-sm font-bold text-accent">Custom pillow covers, made from your photo</p>
+            <h1 className="mt-4 text-5xl font-black leading-[0.98] tracking-[-0.045em] sm:text-6xl">
+              Turn one photo into a pillow you can preview first.
+            </h1>
+            <p className="mt-5 max-w-lg text-lg leading-8 text-muted">
+              Upload, crop, review four real-room previews, then order your set of two covers.
+            </p>
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Link
-                className="focus-ring mt-7 inline-flex h-12 items-center gap-2 rounded-lg bg-accent px-5 font-black text-accent-ink transition hover:bg-foreground"
-                href="/design"
+                className="focus-ring inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-accent px-6 font-bold text-accent-ink shadow-lg shadow-teal-900/15 transition hover:bg-accent-strong active:translate-y-px"
+                href="/products"
               >
-                Start designing <ArrowRight size={18} />
+                Upload your photo <ArrowRight size={18} />
               </Link>
+              <Link
+                className="focus-ring inline-flex h-12 items-center justify-center rounded-lg border border-line bg-panel px-6 font-bold text-foreground transition hover:bg-surface active:translate-y-px"
+                href="/design?image=%2Fdesign-samples%2Fpastel-color-pattern.jpg"
+              >
+                Try a sample
+              </Link>
+            </div>
+          </div>
+
+          <div className="relative">
+            <div className="absolute -inset-4 -z-10 rounded-[2rem] bg-accent-soft/70 blur-2xl" />
+            <div className="overflow-hidden rounded-2xl border border-line bg-panel p-3 shadow-[0_28px_80px_rgba(23,33,31,0.12)]">
+              <Image
+                alt="Custom floral pillow displayed on a wooden chair"
+                className="aspect-[4/3] w-full rounded-xl object-cover"
+                height={1254}
+                priority
+                sizes="(min-width: 1024px) 56vw, 100vw"
+                src="/showcase/wood-chair.webp"
+                width={1254}
+              />
+              <div className="flex flex-wrap items-center justify-between gap-3 px-2 pb-1 pt-4 text-sm">
+                <span className="font-bold">Your image, shown in a real setting</span>
+                <span className="text-muted">Set of 2 · 18in / 45cm</span>
+              </div>
             </div>
           </div>
         </section>
 
-        <section className="border-b border-line bg-panel/55">
-          <div className="mx-auto grid w-full max-w-7xl gap-8 px-4 py-12 sm:px-6 md:grid-cols-3">
+        <section className="border-y border-line bg-panel">
+          <div className="mx-auto grid w-full max-w-7xl gap-0 px-4 sm:px-6 md:grid-cols-3">
             <WorkflowItem
-              icon={<Sparkles size={22} />}
-              index="01"
-              text="A link can carry an image into the editor and immediately start the first preview."
-              title="Open the design"
+              icon={<ImageUp size={21} />}
+              text="Choose a photo from your device."
+              title="Upload"
             />
             <WorkflowItem
-              icon={<ImageUp size={22} />}
-              index="02"
-              text="Replace it with your own photo, drag and zoom the square crop, then compare four scenes."
-              title="Make it yours"
+              icon={<ShieldCheck size={21} />}
+              text="Crop it and compare four room views."
+              title="Preview"
             />
             <WorkflowItem
               icon={<PackageCheck size={22} />}
-              index="03"
-              text="Sign in only when you are ready, confirm the delivery address, and complete secure payment."
-              title="Confirm the order"
+              text="Enter delivery details and pay securely."
+              title="Order"
             />
           </div>
         </section>
 
-        <section className="mx-auto grid w-full max-w-7xl gap-5 px-4 py-12 sm:px-6 lg:grid-cols-2">
+        <section className="mx-auto grid w-full max-w-7xl items-center gap-8 px-4 py-16 sm:px-6 lg:grid-cols-[1.1fr_0.9fr] lg:py-24">
           <Image
             alt="Floral pillow close-up on a grey sofa"
-            className="aspect-square w-full rounded-lg border border-line object-cover"
+            className="aspect-[4/3] w-full rounded-2xl border border-line object-cover shadow-[0_20px_60px_rgba(23,33,31,0.1)]"
             height={1254}
             sizes="(min-width: 1024px) 50vw, 100vw"
             src="/showcase/grey-sofa.webp"
             width={1254}
           />
-          <div className="flex flex-col justify-center py-6 lg:px-10">
-            <p className="text-xs font-black uppercase tracking-[0.18em] text-accent">
-              Preview before production
-            </p>
-            <h2 className="mt-3 text-4xl font-black tracking-normal sm:text-5xl">
-              One image. Four useful views.
+          <div className="lg:pl-8">
+            <h2 className="text-4xl font-black tracking-[-0.035em] sm:text-5xl">
+              See the result before you buy.
             </h2>
-            <p className="mt-5 max-w-xl leading-7 text-muted">
-              The scene previews preserve the pillow shape, folds, lighting and
-              foreground occlusion. Your factory file remains the clean square
-              artwork rather than the lifestyle mockup.
+            <p className="mt-5 max-w-xl text-lg leading-8 text-muted">
+              Your production file stays clean while the previews show realistic folds, lighting, and scale.
             </p>
             <Link
-              className="focus-ring mt-7 inline-flex items-center gap-2 font-black text-foreground hover:text-accent"
-              href="/design?image=/debug/pillow-sample.png"
+              className="focus-ring mt-7 inline-flex items-center gap-2 font-bold text-accent hover:text-accent-strong"
+              href="/products"
             >
-              Try the sample image <ArrowRight size={17} />
+              Create your preview <ArrowRight size={17} />
             </Link>
           </div>
         </section>
@@ -116,23 +135,22 @@ export default async function Home({
 
 function WorkflowItem({
   icon,
-  index,
   text,
   title,
 }: {
   icon: React.ReactNode;
-  index: string;
   text: string;
   title: string;
 }) {
   return (
-    <div className="border-t border-line pt-5">
-      <div className="flex items-center justify-between text-accent">
+    <div className="flex gap-4 border-line py-7 md:border-r md:px-7 md:first:pl-0 md:last:border-r-0 md:last:pr-0">
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent">
         {icon}
-        <span className="font-mono text-xs">{index}</span>
+      </span>
+      <div>
+        <h2 className="font-black">{title}</h2>
+        <p className="mt-1 text-sm leading-6 text-muted">{text}</p>
       </div>
-      <h2 className="mt-5 text-2xl font-black">{title}</h2>
-      <p className="mt-3 leading-7 text-muted">{text}</p>
     </div>
   );
 }

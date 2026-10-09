@@ -36,6 +36,7 @@ export const INTERNAL_FULFILLMENT_LABELS: Record<FulfillmentStatus, string> = {
   production: "Temu 已下单",
   packing: "商家备货中",
   shipped: "已发货",
+  delivered: "已送达",
 };
 
 const NEXT_FULFILLMENT_STATUS: Partial<
@@ -44,6 +45,7 @@ const NEXT_FULFILLMENT_STATUS: Partial<
   ordered: "production",
   production: "packing",
   packing: "shipped",
+  shipped: "delivered",
 };
 
 export function getNextFulfillmentStatus(status: FulfillmentStatus) {

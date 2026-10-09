@@ -1,5 +1,32 @@
-export function getAppUrl() {
-  return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+export function getAppUrl(requestUrl?: string) {
+  const configuredUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  const isLocalUrl = (value: string) => {
+    try {
+      return ["localhost", "127.0.0.1", "::1"].includes(new URL(value).hostname);
+    } catch {
+      return true;
+    }
+  };
+
+  // Vercel preview URLs must follow the deployment that initiated checkout;
+  // a local .env value must never send a remote buyer back to their own device.
+  if (process.env.VERCEL_ENV === "preview" && process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+
+  if (configuredUrl && !isLocalUrl(configuredUrl)) return configuredUrl;
+
+  if (requestUrl) {
+    try {
+      return new URL(requestUrl).origin;
+    } catch {
+      // Fall through to the configured development default.
+    }
+  }
+
+  if (configuredUrl) return configuredUrl;
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  return "http://localhost:3000";
 }
 
 export function getSupabaseBrowserConfig() {
@@ -43,6 +70,25 @@ export function getStripeConfig() {
         : undefined,
     automaticTaxEnabled,
   };
+}
+
+export function getPayPalConfig() {
+  const clientId = process.env.PAYPAL_CLIENT_ID;
+  const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
+  const webhookId = process.env.PAYPAL_WEBHOOK_ID;
+  const environment = process.env.PAYPAL_ENVIRONMENT?.trim().toLowerCase();
+
+  return {
+    clientId:
+      clientId && !clientId.startsWith("your-") ? clientId : undefined,
+    clientSecret:
+      clientSecret && !clientSecret.startsWith("your-")
+        ? clientSecret
+        : undefined,
+    webhookId:
+      webhookId && !webhookId.startsWith("your-") ? webhookId : undefined,
+    environment: environment === "live" ? "live" : "sandbox",
+  } as const;
 }
 
 export function getTemuSyncSecret() {

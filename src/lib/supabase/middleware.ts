@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseBrowserConfig } from "@/lib/env";
+import { AUTH_COOKIE_OPTIONS } from "@/lib/supabase/cookie-options";
 
 export async function updateSession(request: NextRequest) {
   const config = getSupabaseBrowserConfig();
@@ -11,6 +12,7 @@ export async function updateSession(request: NextRequest) {
   }
 
   const supabase = createServerClient(config.url, config.anonKey, {
+    cookieOptions: AUTH_COOKIE_OPTIONS,
     cookies: {
       getAll() {
         return request.cookies.getAll();
@@ -30,4 +32,3 @@ export async function updateSession(request: NextRequest) {
   await supabase.auth.getUser();
   return response;
 }
-

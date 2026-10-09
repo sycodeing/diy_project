@@ -135,7 +135,7 @@ export function ProfileForm({
     <section className="w-full max-w-2xl border-t border-line pt-6">
       <div className="grid gap-8 sm:grid-cols-[180px_minmax(0,1fr)]">
         <div>
-          <div className="grid aspect-square place-items-center overflow-hidden rounded-lg border border-line bg-black">
+          <div className="grid aspect-square place-items-center overflow-hidden rounded-lg border border-line bg-surface">
             {avatarUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img alt="Profile avatar" className="h-full w-full object-cover" src={avatarUrl} />
@@ -143,7 +143,7 @@ export function ProfileForm({
               <UserRound className="text-muted" size={52} />
             )}
           </div>
-          <label className="focus-ring mt-3 inline-flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-line bg-white/5 text-sm font-bold hover:bg-white/10">
+          <label className="focus-ring mt-3 inline-flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-line bg-panel text-sm font-bold hover:bg-surface">
             <ImageUp size={16} /> Change avatar
             <input
               accept="image/jpeg,image/png,image/webp"
@@ -158,7 +158,7 @@ export function ProfileForm({
           <label className="block">
             <span className="mb-2 block text-sm font-bold text-muted">Nickname</span>
             <input
-              className="focus-ring h-12 w-full rounded-lg border border-line bg-black px-3 text-foreground"
+              className="focus-ring h-12 w-full rounded-lg border border-line bg-panel px-3 text-foreground"
               maxLength={40}
               onChange={(event) => setNickname(event.target.value)}
               value={nickname}
@@ -179,7 +179,7 @@ export function ProfileForm({
           ) : null}
 
           {message ? (
-            <p className="rounded-lg border border-line bg-black p-3 text-sm text-accent">
+            <p className="rounded-lg border border-accent/20 bg-accent-soft p-3 text-sm text-accent-strong">
               {message}
             </p>
           ) : null}

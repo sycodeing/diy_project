@@ -13,7 +13,7 @@ import { CopyButton, CopyField } from "@/components/copy-field";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { SetupWarning } from "@/components/setup-warning";
 import { requireAdmin } from "@/lib/auth";
-import { createDesignImageUrls } from "@/lib/design-images";
+import { createAdminDesignImageUrls } from "@/lib/design-images";
 import {
   COLOR_OPTIONS,
   getOptionLabel,
@@ -30,6 +30,8 @@ import {
 import type {
   FulfillmentStatus,
   OrderSummary,
+  ProductSide,
+  ShippingAddress,
   TemuPurchaseJob,
 } from "@/lib/types";
 import { cn, formatDate } from "@/lib/utils";
@@ -45,13 +47,25 @@ const fulfillmentStages: FulfillmentStatus[] = [
   "production",
   "packing",
   "shipped",
+  "delivered",
 ];
 
-export default async function TemuPurchasesPage() {
+export default async function TemuPurchasesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ bindError?: string }>;
+}) {
+  const { bindError } = await searchParams;
+  const bindErrorMessage =
+    bindError === "parent"
+      ? "请输入 Temu 父订单号后再绑定。"
+      : bindError === "suborder"
+        ? "子订单号过长或格式无效，请检查后重试。"
+        : null;
   const supabase = await createSupabaseServerClient();
   if (!supabase) {
     return (
-      <AppShell>
+      <AppShell admin>
         <main className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6">
           <SetupWarning />
         </main>
@@ -81,7 +95,7 @@ export default async function TemuPurchasesPage() {
         async (order) =>
           [
             order.id,
-            await createDesignImageUrls(supabase, order.design_snapshot),
+            await createAdminDesignImageUrls(order.design_snapshot),
           ] as const,
       ),
     ),
@@ -93,13 +107,10 @@ export default async function TemuPurchasesPage() {
   const boundJobs = typedJobs.filter((job) => job.status === "temu_bound");
 
   return (
-    <AppShell>
+    <AppShell admin>
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.18em] text-accent">
-              Manual purchase desk
-            </p>
             <h1 className="mt-2 text-4xl font-black tracking-normal">
               人工下单工作台
             </h1>
@@ -114,6 +125,15 @@ export default async function TemuPurchasesPage() {
             查看全部订单
           </Link>
         </div>
+
+        {bindErrorMessage ? (
+          <p
+            className="mt-5 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-800"
+            role="alert"
+          >
+            {bindErrorMessage}
+          </p>
+        ) : null}
 
         <section className="mt-6 grid gap-3 sm:grid-cols-3">
           <SummaryCard
@@ -139,10 +159,21 @@ export default async function TemuPurchasesPage() {
               const order = ordersById.get(job.order_id);
               const design = order?.design_snapshot;
               const artworkUrls = artworkByOrderId.get(job.order_id) ?? {};
-              const artworkUrl = artworkUrls.front ?? artworkUrls.back;
+              const artworkSides: ProductSide[] =
+                design?.selection.productSlug === "custom-pillow"
+                  ? ["front"]
+                  : ["front", "back"];
+              const downloadSide =
+                artworkSides.find((side) => artworkUrls[side]) ??
+                artworkSides[0];
+              const artworkUrl = artworkUrls[downloadSide];
+              const imageDownloadUrl = `/api/admin/orders/${job.order_id}/artwork?side=${downloadSide}`;
               const productUrl =
                 job.product_url ?? TEMU_PROCUREMENT_PRODUCT.productUrl;
-              const address = job.address_snapshot;
+              const address = mergeShippingAddresses(
+                job.address_snapshot,
+                order?.shipping,
+              );
               const fullAddress = [
                 address.fullName,
                 address.phone,
@@ -169,7 +200,9 @@ export default async function TemuPurchasesPage() {
                 `数量：${job.quantity}`,
                 `Goods ID：${job.goods_id ?? TEMU_PROCUREMENT_PRODUCT.goodsId}`,
                 `商品链接：${productUrl ?? ""}`,
-                artworkUrl ? `定制图：${artworkUrl}` : "定制图：请在订单详情核对",
+                artworkUrl
+                  ? "定制图：请下载 DIY 图片后上传到 Temu"
+                  : "定制图：缺少图片，请先核对订单",
                 "",
                 "收件信息：",
                 fullAddress,
@@ -183,9 +216,9 @@ export default async function TemuPurchasesPage() {
                   className="overflow-hidden rounded-xl border border-line bg-panel/90"
                   key={job.id}
                 >
-                  <div className="flex flex-col gap-3 border-b border-line bg-black/70 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-col gap-3 border-b border-line bg-surface px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded border border-line bg-black px-2 py-1 text-xs font-black text-accent">
+                      <span className="rounded-md border border-accent/25 bg-accent-soft px-2.5 py-1 text-xs font-black text-accent-strong">
                         {TEMU_PURCHASE_STATUS_LABELS[job.status]}
                       </span>
                       <span className="inline-flex items-center gap-1 text-xs text-muted">
@@ -208,7 +241,7 @@ export default async function TemuPurchasesPage() {
                           {order?.order_number ?? job.order_id}
                         </Link>
                         <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <h2 className="text-xl font-black">
+                          <h2 className="text-base font-bold text-muted">
                             {order?.customer_email ?? "未知客户"}
                           </h2>
                           <CopyButton
@@ -218,20 +251,43 @@ export default async function TemuPurchasesPage() {
                         </div>
                       </div>
 
-                      <div className="grid gap-4 rounded-lg border border-line bg-black p-4 lg:grid-cols-[160px_minmax(0,1fr)]">
-                        <div className="overflow-hidden rounded-lg border border-line bg-foreground">
-                          {artworkUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              alt="客户定制原图"
-                              className="aspect-square h-full w-full object-cover"
-                              src={artworkUrl}
-                            />
-                          ) : (
-                            <div className="grid aspect-square place-items-center px-3 text-center text-xs font-bold text-background">
-                              暂无可用定制图
+                      <div
+                        className={`grid gap-4 rounded-lg border border-line bg-surface p-4 ${
+                          artworkSides.length === 1
+                            ? "lg:grid-cols-[160px_minmax(0,1fr)]"
+                            : "lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]"
+                        }`}
+                      >
+                        <div
+                          className={`grid gap-3 ${
+                            artworkSides.length === 1
+                              ? "w-full max-w-40"
+                              : "grid-cols-2"
+                          }`}
+                        >
+                          {artworkSides.map((side) => (
+                            <div className="min-w-0" key={side}>
+                              <p className="mb-2 text-xs font-bold text-muted">
+                                {side === "front" ? "定制图" : "背面图稿"}
+                              </p>
+                              <div className="grid aspect-square place-items-center overflow-hidden rounded-lg border border-line bg-white p-2">
+                                {artworkUrls[side] ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    alt={`${side === "front" ? "正面" : "背面"}定制图`}
+                                    className="h-full w-full object-contain"
+                                    src={artworkUrls[side]}
+                                  />
+                                ) : (
+                                  <span className="px-2 text-center text-xs font-medium text-muted">
+                                    {design?.sides[side].kind === "none"
+                                      ? "此面未添加图案"
+                                      : "暂无可用图稿"}
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                          )}
+                          ))}
                         </div>
                         <div className="min-w-0">
                           <p className="text-[11px] font-black uppercase tracking-[0.12em] text-muted">
@@ -266,13 +322,11 @@ export default async function TemuPurchasesPage() {
                             ) : null}
                             {artworkUrl ? (
                               <a
-                                className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-line px-3 text-sm font-bold text-foreground"
+                                className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-bold text-foreground"
                                 download
-                                href={artworkUrl}
-                                rel="noreferrer"
-                                target="_blank"
+                                href={imageDownloadUrl}
                               >
-                                打开定制原图 <ImageDown size={15} />
+                                下载 DIY 图片 <ImageDown size={15} />
                               </a>
                             ) : null}
                           </div>
@@ -280,7 +334,7 @@ export default async function TemuPurchasesPage() {
                       </div>
 
                       {job.last_error_message ? (
-                        <p className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-100">
+                        <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
                           {job.last_error_code
                             ? `${job.last_error_code}: `
                             : ""}
@@ -288,15 +342,15 @@ export default async function TemuPurchasesPage() {
                         </p>
                       ) : null}
                       {job.status === "submit_uncertain" ? (
-                        <p className="rounded-lg border border-amber-400/40 bg-amber-400/10 p-3 text-sm text-amber-100">
+                        <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                           请先检查 Temu
                           买家订单记录，确认是否已经生成订单，严禁直接重复下单。
                         </p>
                       ) : null}
 
                       {job.status === "temu_bound" ? (
-                        <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4 text-sm">
-                          <p className="mb-2 font-black text-emerald-200">
+                        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm">
+                          <p className="mb-2 font-black text-emerald-800">
                             Temu 订单已录入
                           </p>
                           <CopyField
@@ -317,8 +371,9 @@ export default async function TemuPurchasesPage() {
                           <label className="text-sm font-bold">
                             Temu 父订单号
                             <input
-                              className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-black px-3 font-mono text-sm"
+                              className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3 font-mono text-sm"
                               name="temuParentOrderSn"
+                              maxLength={120}
                               placeholder="PO-..."
                               required
                             />
@@ -326,8 +381,9 @@ export default async function TemuPurchasesPage() {
                           <label className="text-sm font-bold">
                             Temu 子订单号（可选）
                             <input
-                              className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-black px-3 font-mono text-sm"
+                              className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3 font-mono text-sm"
                               name="temuOrderSn"
+                              maxLength={120}
                               placeholder="211-..."
                             />
                           </label>
@@ -341,7 +397,7 @@ export default async function TemuPurchasesPage() {
                     </div>
 
                     <aside className="space-y-4">
-                      <div className="rounded-lg border border-line bg-black p-4 text-sm">
+                      <div className="rounded-lg border border-line bg-white p-4 text-sm">
                         <div className="flex items-center justify-between gap-3">
                           <p className="font-black">收件信息</p>
                           <CopyButton label="复制完整地址" value={fullAddress} />
@@ -361,7 +417,7 @@ export default async function TemuPurchasesPage() {
                       </div>
 
                       {order ? (
-                        <div className="rounded-lg border border-line bg-black p-4">
+                        <div className="rounded-lg border border-line bg-white p-4">
                           <div className="flex items-center justify-between gap-3">
                             <div>
                               <p className="text-xs font-black uppercase tracking-[0.12em] text-muted">
@@ -375,7 +431,7 @@ export default async function TemuPurchasesPage() {
                                 }
                               </p>
                             </div>
-                            {order.fulfillment_status === "shipped" ? (
+                            {order.fulfillment_status === "shipped" || order.fulfillment_status === "delivered" ? (
                               <CheckCircle2
                                 className="text-emerald-400"
                                 size={25}
@@ -386,7 +442,7 @@ export default async function TemuPurchasesPage() {
                             current={order.fulfillment_status}
                           />
                           <p className="mt-3 text-xs leading-5 text-muted">
-                            用户端始终显示“已下单”，这里只记录真实采购与履约进度。
+                            用户端只显示待发货、已发货或已送达；生产与采购细节仅供后台跟进。
                           </p>
                           {nextStatus &&
                           (nextStatus !== "production" ||
@@ -469,7 +525,7 @@ function FulfillmentProgress({ current }: { current: FulfillmentStatus }) {
   const currentIndex = fulfillmentStages.indexOf(current);
 
   return (
-    <div className="mt-4 grid grid-cols-4 gap-1">
+    <div className="mt-4 grid grid-cols-5 gap-1">
       {fulfillmentStages.map((status, index) => (
         <div key={status}>
           <div
@@ -503,4 +559,27 @@ function SummaryCard({
       <p className="mt-1 text-2xl font-black">{value}</p>
     </div>
   );
+}
+
+function mergeShippingAddresses(
+  purchaseAddress: ShippingAddress | null | undefined,
+  orderShipping: OrderSummary["shipping"] | undefined,
+): ShippingAddress {
+  const fallback: Partial<ShippingAddress> =
+    orderShipping && typeof orderShipping === "object" && !Array.isArray(orderShipping)
+      ? (orderShipping as Partial<ShippingAddress>)
+      : {};
+  const primary: Partial<ShippingAddress> = purchaseAddress ?? {};
+  const pick = (key: keyof ShippingAddress) => primary[key] || fallback[key] || "";
+
+  return {
+    fullName: pick("fullName"),
+    phone: pick("phone"),
+    line1: pick("line1"),
+    line2: pick("line2"),
+    city: pick("city"),
+    region: pick("region"),
+    postalCode: pick("postalCode"),
+    country: pick("country"),
+  };
 }

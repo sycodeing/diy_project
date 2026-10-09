@@ -1,13 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  --background: #050505;
-  --foreground: #f7f7f2;
-  --muted: #a8a29e;
-  --panel: #101010;
-  --line: #292524;
-  --accent: #d9ff3f;
-  --accent-ink: #111111;
+  --background: #f6f8f7;
+  --foreground: #17211f;
+  --muted: #5f6f6b;
+  --panel: #ffffff;
+  --surface: #edf2f0;
+  --line: #d8e1de;
+  --accent: #0f766e;
+  --accent-strong: #0b5f59;
+  --accent-soft: #dff3ef;
+  --accent-ink: #ffffff;
+  --danger: #b42318;
+  --danger-soft: #fef3f2;
 }
 
 @theme inline {
@@ -15,9 +20,14 @@
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-panel: var(--panel);
+  --color-surface: var(--surface);
   --color-line: var(--line);
   --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-soft: var(--accent-soft);
   --color-accent-ink: var(--accent-ink);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
   --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
 }
@@ -43,9 +53,29 @@ select {
 
 .grain {
   background-image:
-    linear-gradient(rgb(255 255 255 / 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(255 255 255 / 0.035) 1px, transparent 1px);
-  background-size: 28px 28px;
+    radial-gradient(circle at 12% 0%, rgb(15 118 110 / 0.07), transparent 32rem),
+    radial-gradient(circle at 92% 22%, rgb(15 118 110 / 0.045), transparent 24rem);
+}
+
+.admin-theme {
+  --background: #f4f6fa;
+  --foreground: #1d2939;
+  --muted: #667085;
+  --panel: #ffffff;
+  --surface: #edf1f7;
+  --line: #d8dfeb;
+  --accent: #3f5f98;
+  --accent-strong: #304b7b;
+  --accent-soft: #e8eef9;
+  --accent-ink: #ffffff;
+  --danger: #b42318;
+  --danger-soft: #fef3f2;
+}
+
+.admin-theme.grain {
+  background-image:
+    radial-gradient(circle at 10% 0%, rgb(63 95 152 / 0.08), transparent 34rem),
+    radial-gradient(circle at 94% 16%, rgb(63 95 152 / 0.045), transparent 26rem);
 }
 
 .focus-ring {
@@ -55,6 +85,12 @@ select {
 
 .focus-ring:focus-visible {
   outline-color: var(--accent);
+}
+
+input,
+select,
+textarea {
+  color-scheme: light;
 }
 
 @media (prefers-reduced-motion: reduce) {

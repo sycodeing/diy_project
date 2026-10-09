@@ -6,8 +6,9 @@ import {
   COLOR_OPTIONS,
   STYLE_OPTIONS,
 } from "@/lib/product-config";
-import { getAppUrl, getStripeConfig } from "@/lib/env";
+import { getAppUrl, getPayPalConfig, getStripeConfig } from "@/lib/env";
 import { getStripeClient } from "@/lib/stripe";
+import { createPayPalOrder } from "@/lib/paypal";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { validateShippingAddress } from "@/lib/service-area";
@@ -22,10 +23,11 @@ export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
   const serviceSupabase = getSupabaseServiceClient();
   const stripe = getStripeClient();
+  const paypalConfig = getPayPalConfig();
 
-  if (!supabase || !serviceSupabase || !stripe) {
+  if (!supabase || !serviceSupabase) {
     return NextResponse.json(
-      { error: "Supabase or Stripe environment variables are missing." },
+      { error: "Supabase environment variables are missing." },
       { status: 503 },
     );
   }
@@ -36,7 +38,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid design payload." }, { status: 400 });
   }
 
-  const { design, shipping } = parsed.data;
+  const { design, shipping, paymentProvider } = parsed.data;
+  if (paymentProvider === "stripe" && !stripe) {
+    return NextResponse.json({ error: "Stripe is not configured." }, { status: 503 });
+  }
+  if (paymentProvider === "paypal" && (!paypalConfig.clientId || !paypalConfig.clientSecret)) {
+    return NextResponse.json({ error: "PayPal is not configured." }, { status: 503 });
+  }
+  if (paymentProvider === "paypal" && getStripeConfig().automaticTaxEnabled) {
+    return NextResponse.json(
+      { error: "PayPal checkout is unavailable while Stripe automatic tax is enabled." },
+      { status: 503 },
+    );
+  }
   const shippingValidation = validateShippingAddress(shipping);
 
   if (!shippingValidation.ok) {
@@ -66,7 +80,7 @@ export async function POST(request: Request) {
 
   const { data: product, error: productError } = await supabase
     .from("products")
-    .select("id,name,base_price_cents,currency")
+    .select("id,name,category,description,base_price_cents,currency")
     .eq("slug", design.selection.productSlug)
     .single();
 
@@ -117,11 +131,22 @@ export async function POST(request: Request) {
       amount_cents: amountCents,
       currency,
       payment_status: "pending_payment",
+      payment_provider: paymentProvider,
       fulfillment_status: "awaiting_payment",
       sales_channel: "direct",
       temu_status: "NOT_SUBMITTED",
       temu_status_label: "Not submitted to Temu",
-      design_snapshot: design,
+      design_snapshot: {
+        ...design,
+        productSnapshot: {
+          slug: design.selection.productSlug,
+          name: product.name,
+          category: product.category,
+          sku: variant.sku,
+          quantity: 1,
+          options: getProductOptions(design.selection),
+        },
+      },
       shipping,
       marketing_link_id: marketingLink?.id ?? null,
     })
@@ -132,16 +157,57 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Could not create order." }, { status: 500 });
   }
 
-  const appUrl = getAppUrl();
+  const appUrl = getAppUrl(request.url);
   const { automaticTaxEnabled } = getStripeConfig();
-  const productName = `${product.name} / ${getOptionLabel(
-    COLOR_OPTIONS,
-    design.selection.color,
-  )} / ${getOptionLabel(STYLE_OPTIONS, design.selection.style)} / ${
-    design.selection.size
-  }`;
+  const productOptions = getProductOptions(design.selection);
+  const productName = [product.name, ...Object.values(productOptions)].join(" / ");
 
-  const session = await stripe.checkout.sessions.create(
+  if (paymentProvider === "paypal") {
+    try {
+      const paypalOrder = await createPayPalOrder({
+        amountCents,
+        appUrl,
+        currency,
+        orderId: order.id,
+        orderNumber: order.order_number,
+        productName,
+        shipping,
+      });
+
+      const { error: updateError } = await serviceSupabase
+        .from("orders")
+        .update({ paypal_order_id: paypalOrder.id })
+        .eq("id", order.id)
+        .eq("user_id", user.id);
+
+      if (updateError) {
+        console.error("PayPal order could not be linked to local order", { orderId: order.id });
+        return NextResponse.json({ error: "Could not prepare PayPal payment." }, { status: 500 });
+      }
+
+      if (marketingLink) {
+        const { error: marketingError } = await recordMarketingEvent(
+          marketingLink.id,
+          "checkout_started",
+          { paymentProvider: "paypal", paypalOrderId: paypalOrder.id },
+          order.id,
+        );
+        if (marketingError) {
+          console.error("PayPal checkout attribution could not be recorded", { orderId: order.id });
+        }
+      }
+
+      return NextResponse.json({ url: paypalOrder.approvalUrl });
+    } catch (error) {
+      console.error("PayPal order creation failed", {
+        orderId: order.id,
+        error: error instanceof Error ? error.message : "Unknown PayPal error",
+      });
+      return NextResponse.json({ error: "Could not prepare PayPal payment. Please try again." }, { status: 502 });
+    }
+  }
+
+  const session = await stripe!.checkout.sessions.create(
     {
       mode: "payment",
       client_reference_id: order.id,
@@ -157,7 +223,7 @@ export async function POST(request: Request) {
             currency,
             product_data: {
               name: productName,
-              description: `Two custom 18in / 45cm pillow covers. Inserts not included. Order ${order.order_number}`,
+              description: `${product.description ?? "Custom product"}. Order ${order.order_number}`,
               tax_code: "txcd_99999999",
             },
             tax_behavior: "exclusive",
@@ -188,7 +254,7 @@ export async function POST(request: Request) {
 
   if (updateError || !updatedOrder || !session.url) {
     if (session.status === "open") {
-      await stripe.checkout.sessions.expire(session.id).catch(() => undefined);
+      await stripe!.checkout.sessions.expire(session.id).catch(() => undefined);
     }
     return NextResponse.json(
       { error: "Could not prepare payment session." },
@@ -212,4 +278,20 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json({ url: session.url });
+}
+
+function getProductOptions(selection: Record<string, string>) {
+  return Object.fromEntries(
+    Object.entries(selection)
+      .filter(([key]) => key !== "productSlug")
+      .map(([key, value]) => {
+        const label = key.replace(/([A-Z])/g, " $1").replace(/^./, (char) => char.toUpperCase());
+        const displayValue = key === "color"
+          ? getOptionLabel(COLOR_OPTIONS, value)
+          : key === "style"
+            ? getOptionLabel(STYLE_OPTIONS, value)
+            : value;
+        return [label, displayValue];
+      }),
+  );
 }
