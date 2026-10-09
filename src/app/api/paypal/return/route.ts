@@ -40,7 +40,6 @@ export async function GET(request: Request) {
       amountCents: capture.amountCents,
       captureId: capture.id,
       currency: capture.currency,
-      eventId: `capture:${capture.id}`,
       paypalOrderId,
       supabase: serviceSupabase,
     });

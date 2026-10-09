@@ -95,7 +95,6 @@ export async function POST(request: Request) {
         amountCents: event.amountCents,
         captureId: event.captureId,
         currency: event.currency,
-        eventId: event.eventId,
         paypalOrderId: event.paypalOrderId,
         supabase,
       });
@@ -162,7 +161,6 @@ async function processApprovedOrder(
       amountCents: capture.amountCents,
       captureId: capture.id,
       currency: capture.currency,
-      eventId: event.eventId,
       paypalOrderId: event.paypalOrderId,
       supabase,
     });

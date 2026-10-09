@@ -237,14 +237,12 @@ export async function completePayPalPayment({
   amountCents,
   captureId,
   currency,
-  eventId,
   paypalOrderId,
   supabase,
 }: {
   amountCents: number;
   captureId: string;
   currency: string;
-  eventId: string;
   paypalOrderId: string;
   supabase: SupabaseService;
 }) {
@@ -297,7 +295,7 @@ export async function completePayPalPayment({
       order_id: order.id,
       status: "ordered",
       note: "PayPal payment confirmed. Temu purchase queued for the next payment batch.",
-      external_event_id: `paypal:${eventId}`,
+      external_event_id: `paypal:capture:${captureId}`,
     },
     { onConflict: "external_event_id", ignoreDuplicates: true },
   );
