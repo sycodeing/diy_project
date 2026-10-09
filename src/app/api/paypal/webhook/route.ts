@@ -1,106 +1,191 @@
 import { NextResponse } from "next/server";
 import {
   capturePayPalOrder,
-  getCompletedCapture,
-  getCompletedPayPalCapture,
+  getPayPalCapture,
+  getPayPalOrder,
   verifyPayPalWebhook,
-  type PayPalCapture,
-  type PayPalOrderResponse,
 } from "@/lib/paypal";
-import { completePayPalPayment } from "@/lib/paypal-payment";
+import {
+  applyPayPalLifecycleEvent,
+  beginPayPalPaymentEvent,
+  completePayPalPayment,
+  findPayPalOrderForEvent,
+  finishPayPalPaymentEvent,
+} from "@/lib/paypal-payment";
+import {
+  parsePayPalWebhookEvent,
+  type ParsedPayPalWebhookEvent,
+} from "@/lib/paypal-webhook";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  let event: Record<string, unknown>;
+  let rawEvent: Record<string, unknown>;
   try {
-    event = (await request.json()) as Record<string, unknown>;
+    rawEvent = (await request.json()) as Record<string, unknown>;
   } catch {
     return NextResponse.json({ error: "Invalid webhook body." }, { status: 400 });
   }
 
   let signatureValid = false;
   try {
-    signatureValid = await verifyPayPalWebhook(request, event);
+    signatureValid = await verifyPayPalWebhook(request, rawEvent);
   } catch {
     return NextResponse.json({ error: "Could not verify PayPal webhook." }, { status: 502 });
   }
-  if (!signatureValid) return NextResponse.json({ error: "Invalid PayPal signature." }, { status: 400 });
+  if (!signatureValid) {
+    return NextResponse.json({ error: "Invalid PayPal signature." }, { status: 400 });
+  }
+
+  const event = parsePayPalWebhookEvent(rawEvent);
+  if (!event) {
+    return NextResponse.json({ received: true, ignored: true });
+  }
 
   const supabase = getSupabaseServiceClient();
-  if (!supabase) return NextResponse.json({ error: "Order storage is not configured." }, { status: 503 });
-
-  // Capture from the server as soon as PayPal reports buyer approval. This
-  // makes completion independent of whether the browser can reach return_url.
-  if (event.event_type === "CHECKOUT.ORDER.APPROVED") {
-    const approvedOrder = event.resource as PayPalOrderResponse | undefined;
-    const paypalOrderId = typeof approvedOrder?.id === "string" ? approvedOrder.id : null;
-    if (!paypalOrderId) return NextResponse.json({ error: "Approved PayPal order is incomplete." }, { status: 400 });
-
-    const { data: order, error } = await supabase
-      .from("orders")
-      .select("id,payment_status")
-      .eq("paypal_order_id", paypalOrderId)
-      .maybeSingle();
-    if (error || !order) {
-      console.error("Approved PayPal order is not linked to a local order", { paypalOrderId, error: error?.message });
-      return NextResponse.json({ error: "Approved PayPal order is not linked to an order." }, { status: 503 });
-    }
-    if (order.payment_status === "paid") return NextResponse.json({ received: true });
-
-    try {
-      const capturedOrder = await capturePayPalOrder(paypalOrderId, order.id);
-      const capture = getCompletedCapture(capturedOrder);
-      if (!capture) throw new Error("PayPal capture is not completed.");
-
-      const result = await completePayPalPayment({
-        amountCents: capture.amountCents,
-        captureId: capture.id,
-        currency: capture.currency,
-        eventId: `capture:${capture.id}`,
-        paypalOrderId,
-        supabase,
-      });
-      if (!result.ok) throw new Error(result.error);
-      return NextResponse.json({ received: true, captured: true });
-    } catch (error) {
-      console.error("PayPal approval webhook could not capture the order", {
-        paypalOrderId,
-        error: error instanceof Error ? error.message : "Unknown PayPal error",
-      });
-      return NextResponse.json({ error: "Could not capture approved PayPal order." }, { status: 500 });
-    }
+  if (!supabase) {
+    return NextResponse.json({ error: "Order storage is not configured." }, { status: 503 });
   }
 
-  if (event.event_type !== "PAYMENT.CAPTURE.COMPLETED") {
-    return NextResponse.json({ received: true });
+  const linkedOrder = await findPayPalOrderForEvent(event, supabase);
+  if (!linkedOrder.ok) {
+    console.error("PayPal webhook could not look up its local order", {
+      paypalEventId: event.eventId,
+      eventType: event.eventType,
+      error: linkedOrder.error,
+    });
+    return NextResponse.json({ error: "Could not look up PayPal order." }, { status: 500 });
+  }
+  if (!linkedOrder.order) {
+    console.warn("Verified PayPal webhook is not linked to a local order", {
+      paypalEventId: event.eventId,
+      eventType: event.eventType,
+      paypalOrderId: event.paypalOrderId,
+      captureId: event.captureId,
+      disputeId: event.disputeId,
+    });
+    return NextResponse.json({ received: true, unmatched: true });
   }
 
-  const resource = event.resource as PayPalCapture | undefined;
-  const capture = getCompletedPayPalCapture(resource);
-  const paypalOrderId = resource?.supplementary_data?.related_ids?.order_id;
-  const eventId = typeof event.id === "string" ? event.id : null;
-  if (!capture || !paypalOrderId || !eventId) {
-    return NextResponse.json({ error: "PayPal capture event is incomplete." }, { status: 400 });
-  }
-
-  const result = await completePayPalPayment({
-    amountCents: capture.amountCents,
-    captureId: capture.id,
-    currency: capture.currency,
-    eventId: `capture:${capture.id}`,
-    paypalOrderId,
+  const started = await beginPayPalPaymentEvent({
+    event,
+    orderId: linkedOrder.order.id,
     supabase,
   });
-  if (!result.ok) {
-    console.error("PayPal payment webhook could not update the order", {
-      paypalOrderId,
-      paypalEventId: eventId,
-      error: result.error,
+  if (!started.ok) {
+    console.error("PayPal webhook audit could not start", {
+      paypalEventId: event.eventId,
+      error: started.error,
     });
-    return NextResponse.json({ error: "Could not update paid order." }, { status: 500 });
+    return NextResponse.json({ error: "Could not record PayPal event." }, { status: 500 });
+  }
+  if (!started.proceed) {
+    return NextResponse.json({ received: true, duplicate: true });
   }
 
-  return NextResponse.json({ received: true });
+  try {
+    if (event.eventType === "CHECKOUT.ORDER.APPROVED") {
+      await processApprovedOrder(event, linkedOrder.order, supabase);
+    } else if (event.eventType === "PAYMENT.CAPTURE.COMPLETED") {
+      if (!event.paypalOrderId || !event.captureId || event.amountCents === null || !event.currency) {
+        throw new Error("PayPal capture event is incomplete.");
+      }
+      const completed = await completePayPalPayment({
+        amountCents: event.amountCents,
+        captureId: event.captureId,
+        currency: event.currency,
+        eventId: event.eventId,
+        paypalOrderId: event.paypalOrderId,
+        supabase,
+      });
+      if (!completed.ok) throw new Error(completed.error);
+    } else {
+      const applied = await applyPayPalLifecycleEvent({
+        event,
+        orderId: linkedOrder.order.id,
+        supabase,
+      });
+      if (!applied.ok) throw new Error(applied.error);
+    }
+
+    const finished = await finishPayPalPaymentEvent({
+      eventId: event.eventId,
+      supabase,
+    });
+    if (!finished.ok) throw new Error(finished.error);
+    return NextResponse.json({ received: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown PayPal processing error.";
+    const failed = await finishPayPalPaymentEvent({
+      error: message,
+      eventId: event.eventId,
+      supabase,
+    });
+    console.error("PayPal webhook could not update its local order", {
+      paypalEventId: event.eventId,
+      eventType: event.eventType,
+      error: message,
+      auditError: failed.ok ? null : failed.error,
+    });
+    return NextResponse.json({ error: "Could not process PayPal event." }, { status: 500 });
+  }
+}
+
+async function processApprovedOrder(
+  event: ParsedPayPalWebhookEvent,
+  order: { id: string; payment_status: string },
+  supabase: NonNullable<ReturnType<typeof getSupabaseServiceClient>>,
+) {
+  if (!event.paypalOrderId) throw new Error("Approved PayPal order is incomplete.");
+  if (["paid", "partially_refunded", "refunded", "reversed", "disputed"].includes(order.payment_status)) {
+    return;
+  }
+
+  let capturedOrder;
+  try {
+    capturedOrder = await capturePayPalOrder(event.paypalOrderId, order.id);
+  } catch (captureError) {
+    // PayPal request IDs make capture idempotent, but an earlier successful
+    // response can still be lost. Reconcile the order before asking PayPal to retry.
+    try {
+      capturedOrder = await getPayPalOrder(event.paypalOrderId);
+    } catch {
+      throw captureError;
+    }
+  }
+
+  const capture = getPayPalCapture(capturedOrder);
+  if (!capture) throw new Error("PayPal capture response is incomplete.");
+  if (capture.status === "COMPLETED") {
+    const completed = await completePayPalPayment({
+      amountCents: capture.amountCents,
+      captureId: capture.id,
+      currency: capture.currency,
+      eventId: event.eventId,
+      paypalOrderId: event.paypalOrderId,
+      supabase,
+    });
+    if (!completed.ok) throw new Error(completed.error);
+    return;
+  }
+  if (capture.status !== "PENDING") {
+    throw new Error(`PayPal capture returned ${capture.status}.`);
+  }
+
+  const pendingEvent: ParsedPayPalWebhookEvent = {
+    ...event,
+    eventType: "PAYMENT.CAPTURE.PENDING",
+    resourceId: capture.id,
+    resourceStatus: capture.status,
+    captureId: capture.id,
+    amountCents: capture.amountCents,
+    currency: capture.currency,
+  };
+  const applied = await applyPayPalLifecycleEvent({
+    event: pendingEvent,
+    orderId: order.id,
+    supabase,
+  });
+  if (!applied.ok) throw new Error(applied.error);
 }

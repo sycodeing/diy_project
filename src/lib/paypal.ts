@@ -154,6 +154,12 @@ export async function capturePayPalOrder(paypalOrderId: string, orderId: string)
   );
 }
 
+export async function getPayPalOrder(paypalOrderId: string) {
+  return paypalFetch<PayPalOrderResponse>(
+    `/v2/checkout/orders/${encodeURIComponent(paypalOrderId)}`,
+  );
+}
+
 export async function verifyPayPalWebhook(
   request: Request,
   event: Record<string, unknown>,
@@ -207,6 +213,19 @@ export async function verifyPayPalWebhook(
 
 export function getCompletedCapture(order: PayPalOrderResponse) {
   return getCompletedPayPalCapture(order.purchase_units?.[0]?.payments?.captures?.[0]);
+}
+
+export function getPayPalCapture(order: PayPalOrderResponse) {
+  const capture = order.purchase_units?.[0]?.payments?.captures?.[0];
+  if (!capture?.id || !capture.amount || !capture.status) return null;
+  const amount = Number(capture.amount.value);
+  if (!Number.isFinite(amount) || amount < 0) return null;
+  return {
+    id: capture.id,
+    status: capture.status.toUpperCase(),
+    currency: capture.amount.currency_code.toLowerCase(),
+    amountCents: Math.round(amount * 100),
+  };
 }
 
 export function getCompletedPayPalCapture(capture?: PayPalCapture) {

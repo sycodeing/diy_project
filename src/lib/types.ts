@@ -61,9 +61,14 @@ export type ShippingAddress = {
 
 export type PaymentStatus =
   | "pending_payment"
+  | "payment_pending"
   | "paid"
   | "failed"
-  | "canceled";
+  | "canceled"
+  | "partially_refunded"
+  | "refunded"
+  | "reversed"
+  | "disputed";
 
 export type FulfillmentStatus =
   | "awaiting_payment"

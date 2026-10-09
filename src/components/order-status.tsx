@@ -20,6 +20,18 @@ const stages: Array<{
   { key: "delivered", label: "已送达", icon: CircleCheck },
 ];
 
+const paymentStatusLabels: Record<PaymentStatus, string> = {
+  pending_payment: "待付款",
+  payment_pending: "付款处理中",
+  paid: "已付款",
+  failed: "付款失败",
+  canceled: "已取消",
+  partially_refunded: "部分退款",
+  refunded: "已退款",
+  reversed: "付款已撤销",
+  disputed: "付款争议处理中",
+};
+
 export function OrderStatus({
   fulfillmentStatus,
   paymentStatus,
@@ -36,14 +48,7 @@ export function OrderStatus({
       <div className="mb-3 flex flex-col gap-2 text-sm text-muted sm:flex-row sm:items-center sm:justify-between">
         <span className="inline-flex items-center gap-2">
           <PackageCheck size={16} />
-          付款状态：
-          {paymentStatus === "paid"
-            ? "已付款"
-            : paymentStatus === "pending_payment"
-              ? "待付款"
-              : paymentStatus === "failed"
-                ? "付款失败"
-                : "已取消"}
+          付款状态：{paymentStatusLabels[paymentStatus]}
         </span>
         {temuStatus ? (
           <span className="rounded-lg border border-line bg-surface px-2 py-1 text-xs font-bold text-foreground">
@@ -86,15 +91,40 @@ export function CustomerOrderStatus({
   const isPaid = paymentStatus === "paid";
   const delivered = fulfillmentStatus === "delivered";
   const shipped = fulfillmentStatus === "shipped";
-  const label = delivered
+  const paymentOverride = paymentStatus === "payment_pending"
+    ? "付款处理中"
+    : paymentStatus === "partially_refunded"
+      ? "部分退款"
+      : paymentStatus === "refunded"
+        ? "已退款"
+        : paymentStatus === "reversed"
+          ? "付款已撤销"
+          : paymentStatus === "disputed"
+            ? "付款争议处理中"
+            : paymentStatus === "failed"
+              ? "付款失败"
+              : paymentStatus === "canceled"
+                ? "付款已取消"
+                : null;
+  const label = paymentOverride ?? (delivered
     ? "已送达"
     : shipped
       ? "已发货"
       : isPaid
         ? "待发货"
-    : paymentStatus === "pending_payment"
-      ? "等待付款"
-      : "付款未完成";
+        : "等待付款");
+
+  const paymentMessage = paymentStatus === "payment_pending"
+    ? "PayPal 正在处理付款，确认完成前不会进入制作和发货。"
+    : paymentStatus === "partially_refunded"
+      ? "订单已有部分退款，请留意 PayPal 通知；我们会人工核对后续处理。"
+      : paymentStatus === "refunded"
+        ? "该订单款项已退款，到账时间以 PayPal 或发卡行处理为准。"
+        : paymentStatus === "reversed"
+          ? "PayPal 已撤销该笔付款，我们会暂停尚未开始的履约。"
+          : paymentStatus === "disputed"
+            ? "该笔付款正在 PayPal 争议处理中，我们会同步跟进。"
+            : null;
 
   return (
     <div className="rounded-lg border border-accent/50 bg-accent/10 p-4">
@@ -109,7 +139,9 @@ export function CustomerOrderStatus({
           <p className="mt-1 text-lg font-black text-foreground">{label}</p>
         </div>
       </div>
-      {isPaid ? (
+      {paymentMessage ? (
+        <p className="mt-3 text-sm text-muted">{paymentMessage}</p>
+      ) : isPaid ? (
         <p className="mt-3 text-sm text-muted">
           {delivered
             ? "订单已送达，感谢您的购买。"
