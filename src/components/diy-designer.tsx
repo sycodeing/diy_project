@@ -22,6 +22,7 @@ import {
   getColorHex,
 } from "@/lib/product-config";
 import { renderMockupPreviewsFromUrl } from "@/lib/mockup-renderer";
+import type { MarketingPreview } from "@/lib/marketing";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type {
   DesignPayload,
@@ -35,6 +36,7 @@ import { cn, formatMoney } from "@/lib/utils";
 const STORAGE_KEY = "studio-blank-design";
 const ADDRESS_STORAGE_KEY = "studio-blank-shipping-address";
 const CROP_OUTPUT_TYPE = "image/webp";
+const EMPTY_MOCKUP_PREVIEWS: MarketingPreview[] = [];
 
 const EMPTY_ADDRESS: ShippingAddress = {
   fullName: "",
@@ -85,6 +87,8 @@ type MockupPreview = {
 export function DiyDesigner({
   authEnabled = false,
   autoCheckout = false,
+  cachedMockupPreviews = EMPTY_MOCKUP_PREVIEWS,
+  cachedMockupSourceImageUrl = null,
   initialParams = {},
   isAuthenticated = false,
   paypalEnabled = false,
@@ -93,6 +97,8 @@ export function DiyDesigner({
 }: {
   authEnabled?: boolean;
   autoCheckout?: boolean;
+  cachedMockupPreviews?: MarketingPreview[];
+  cachedMockupSourceImageUrl?: string | null;
   initialParams?: Record<string, string | undefined>;
   isAuthenticated?: boolean;
   paypalEnabled?: boolean;
@@ -113,8 +119,8 @@ export function DiyDesigner({
   const [checkoutAddress, setCheckoutAddress] =
     useState<ShippingAddress>(EMPTY_ADDRESS);
   const [isAddressOpen, setIsAddressOpen] = useState(false);
-  const [mockupPreviews, setMockupPreviews] = useState<MockupPreview[]>([]);
-  const [activeMockupId, setActiveMockupId] = useState<string | null>(null);
+  const [mockupPreviews, setMockupPreviews] = useState<MockupPreview[]>(cachedMockupPreviews);
+  const [activeMockupId, setActiveMockupId] = useState<string | null>(cachedMockupPreviews[0]?.id ?? null);
   const [mockupStatus, setMockupStatus] = useState<
     "idle" | "rendering" | "ready" | "failed"
   >("idle");
@@ -179,48 +185,67 @@ export function DiyDesigner({
       };
     }
 
+    if (
+      artworkUrl === cachedMockupSourceImageUrl &&
+      cachedMockupPreviews.length > 0
+    ) {
+      queueMicrotask(() => {
+        if (canceled) return;
+        setMockupPreviews(cachedMockupPreviews);
+        setActiveMockupId((current) =>
+          cachedMockupPreviews.some((preview) => preview.id === current)
+            ? current
+            : cachedMockupPreviews[0].id,
+        );
+        setMockupStatus("ready");
+      });
+      return () => {
+        canceled = true;
+      };
+    }
+
+    revokeObjectUrls(mockupObjectUrlsRef.current);
+    mockupObjectUrlsRef.current = [];
+
     queueMicrotask(() => {
       if (!canceled) {
+        setMockupPreviews([]);
+        setActiveMockupId(null);
         setMockupStatus("rendering");
       }
     });
 
-    renderMockupPreviewsFromUrl(artworkUrl)
-      .then((renderedPreviews) => {
+    renderMockupPreviewsFromUrl(artworkUrl, (preview) => {
+      if (canceled) return;
+      const nextPreview = {
+        id: preview.id,
+        label: preview.label,
+        url: URL.createObjectURL(preview.blob),
+      };
+      mockupObjectUrlsRef.current.push(nextPreview.url);
+      setMockupPreviews((current) => {
+        const withoutDuplicate = current.filter((item) => item.id !== nextPreview.id);
+        return [...withoutDuplicate, nextPreview];
+      });
+      setActiveMockupId((current) => current ?? nextPreview.id);
+    })
+      .then(() => {
         if (canceled) {
           return;
         }
-
-        const previews = renderedPreviews.map((preview) => ({
-          id: preview.id,
-          label: preview.label,
-          url: URL.createObjectURL(preview.blob),
-        }));
-        revokeObjectUrls(mockupObjectUrlsRef.current);
-        mockupObjectUrlsRef.current = previews.map((preview) => preview.url);
-        setMockupPreviews(previews);
-        setActiveMockupId((current) =>
-          previews.some((preview) => preview.id === current)
-            ? current
-            : previews[0]?.id ?? null,
-        );
         setMockupStatus("ready");
         void trackMarketingEvent("preview_ready");
       })
       .catch(() => {
         if (!canceled) {
-          revokeObjectUrls(mockupObjectUrlsRef.current);
-          mockupObjectUrlsRef.current = [];
-          setMockupPreviews([]);
-          setActiveMockupId(null);
-          setMockupStatus("failed");
+          setMockupStatus(mockupObjectUrlsRef.current.length ? "ready" : "failed");
         }
       });
 
     return () => {
       canceled = true;
     };
-  }, [design.sides.front.imagePreviewUrl]);
+  }, [cachedMockupPreviews, cachedMockupSourceImageUrl, design.sides.front.imagePreviewUrl]);
 
   function updateSide(
     side: ProductSide,
@@ -431,7 +456,10 @@ export function DiyDesigner({
               activeSide={activeSide}
               activeMockupId={activeMockupId}
               design={design}
-              isLoading={isReadingImage || mockupStatus === "rendering"}
+              isLoading={
+                isReadingImage ||
+                (mockupStatus === "rendering" && mockupPreviews.length === 0)
+              }
               loadingLabel={
                 isReadingImage
                   ? "Reading your photo..."

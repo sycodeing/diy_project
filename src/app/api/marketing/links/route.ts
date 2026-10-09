@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getAppUrl, getMarketingIngestSecret } from "@/lib/env";
 import { hashMarketingToken, safeHexEqual } from "@/lib/marketing";
+import { prepareMarketingPreviewCache } from "@/lib/marketing-preview-cache";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 
 export const runtime = "nodejs";
@@ -88,7 +89,7 @@ async function createLink(
 
   const { data: existing } = await supabase
     .from("marketing_links")
-    .select("id,token_hash,expires_at")
+    .select("id,token_hash,expires_at,source_hash,source_image_url")
     .eq("idempotency_key", idempotencyKey)
     .maybeSingle();
   const token = createHmac("sha256", secret)
@@ -101,7 +102,13 @@ async function createLink(
         { status: 409 },
       );
     }
-    return linkResponse(token, existing.expires_at, true);
+    const cacheReady = await prepareMarketingPreviewCache(
+      existing.source_image_url ?? payload.sourceImageUrl,
+      existing.source_hash,
+      existing.expires_at,
+      supabase,
+    );
+    return linkResponse(token, existing.expires_at, true, cacheReady);
   }
 
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -123,21 +130,41 @@ async function createLink(
   if (error || !data) {
     const { data: raced } = await supabase
       .from("marketing_links")
-      .select("expires_at")
+      .select("expires_at,source_hash,source_image_url")
       .eq("idempotency_key", idempotencyKey)
       .maybeSingle();
-    if (raced) return linkResponse(token, raced.expires_at, true);
+    if (raced) {
+      const cacheReady = await prepareMarketingPreviewCache(
+        raced.source_image_url ?? payload.sourceImageUrl,
+        raced.source_hash,
+        raced.expires_at,
+        supabase,
+      );
+      return linkResponse(token, raced.expires_at, true, cacheReady);
+    }
     return NextResponse.json({ error: "Could not create marketing link." }, { status: 500 });
   }
 
   // The deterministic HMAC token is returned but never persisted in plaintext.
-  return linkResponse(token, data.expires_at, false);
+  const cacheReady = await prepareMarketingPreviewCache(
+    payload.sourceImageUrl,
+    payload.sourceHash.toLowerCase(),
+    data.expires_at,
+    supabase,
+  );
+  return linkResponse(token, data.expires_at, false, cacheReady);
 }
 
-function linkResponse(token: string, expiresAt: string, reused: boolean) {
+function linkResponse(
+  token: string,
+  expiresAt: string,
+  reused: boolean,
+  previewCacheReady: boolean,
+) {
   return NextResponse.json({
     url: `${getAppUrl()}/go/${token}`,
     expiresAt,
     reused,
+    previewCacheReady,
   });
 }

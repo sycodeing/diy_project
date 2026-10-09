@@ -7,7 +7,16 @@ export const MOCKUP_TEMPLATES = [
   { id: "pillow-psd-01", label: "Sofa room" },
 ] as const;
 
-export async function renderMockupPreviewsFromUrl(imageUrl: string) {
+export type RenderedMockupPreview = {
+  id: string;
+  label: string;
+  blob: Blob;
+};
+
+export async function renderMockupPreviewsFromUrl(
+  imageUrl: string,
+  onPreview?: (preview: RenderedMockupPreview) => void,
+) {
   const artworkUrl = /^https?:\/\//i.test(imageUrl)
     ? `/api/artwork?url=${encodeURIComponent(imageUrl)}`
     : imageUrl;
@@ -20,27 +29,40 @@ export async function renderMockupPreviewsFromUrl(imageUrl: string) {
   const artwork = await artworkResponse.blob();
   const rendererEndpoint = getRendererEndpoint();
 
-  return Promise.all(
-    MOCKUP_TEMPLATES.map(async (template) => {
-      const formData = new FormData();
-      formData.append("template_id", template.id);
-      formData.append("artwork", artwork, "artwork.webp");
+  const renderTemplate = async (template: (typeof MOCKUP_TEMPLATES)[number]) => {
+    const formData = new FormData();
+    formData.append("template_id", template.id);
+    formData.append("artwork", artwork, "artwork.webp");
 
-      const mockupResponse = await fetch(rendererEndpoint, {
-        body: formData,
-        method: "POST",
-      });
+    const mockupResponse = await fetch(rendererEndpoint, {
+      body: formData,
+      method: "POST",
+    });
 
-      if (!mockupResponse.ok) {
-        throw new Error(`Mockup renderer failed for ${template.id}.`);
-      }
+    if (!mockupResponse.ok) {
+      throw new Error(`Mockup renderer failed for ${template.id}.`);
+    }
 
-      return {
-        ...template,
-        blob: await mockupResponse.blob(),
-      };
-    }),
+    const preview = {
+      ...template,
+      blob: await mockupResponse.blob(),
+    };
+    onPreview?.(preview);
+    return preview;
+  };
+
+  // Prioritize the main scene so the customer sees a realistic result quickly.
+  const [firstResult] = await Promise.allSettled([renderTemplate(MOCKUP_TEMPLATES[0])]);
+  const restResults = await Promise.allSettled(
+    MOCKUP_TEMPLATES.slice(1).map(renderTemplate),
   );
+  const previews = [firstResult, ...restResults].flatMap((result) =>
+    result.status === "fulfilled" ? [result.value] : [],
+  );
+  if (previews.length === 0) {
+    throw new Error("Could not render a pillow preview.");
+  }
+  return previews;
 }
 
 function getRendererEndpoint() {
