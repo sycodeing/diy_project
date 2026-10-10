@@ -53,6 +53,9 @@ export function parsePayPalWebhookEvent(
   const isCheckoutEvent = eventType.startsWith("CHECKOUT.");
   const isCaptureEvent = eventType.startsWith("PAYMENT.CAPTURE.");
   const isRefundEvent = eventType === "PAYMENT.CAPTURE.REFUNDED";
+  const linkedCaptureId = isRefundEvent
+    ? relatedResourceId(resource?.links, "captures")
+    : null;
 
   return {
     eventId,
@@ -67,6 +70,7 @@ export function parsePayPalWebhookEvent(
       (isCheckoutEvent ? asString(resource?.id) : null),
     captureId:
       asString(relatedIds?.capture_id) ??
+      linkedCaptureId ??
       (isCaptureEvent && !isRefundEvent ? asString(resource?.id) : null) ??
       asString(disputedTransaction?.seller_transaction_id),
     disputeId: eventType.startsWith("CUSTOMER.DISPUTE.")
@@ -182,6 +186,25 @@ function readAmount(value: unknown) {
 
 function firstRecord(value: unknown) {
   return Array.isArray(value) ? asRecord(value[0]) : null;
+}
+
+function relatedResourceId(value: unknown, collection: string) {
+  if (!Array.isArray(value)) return null;
+  for (const item of value) {
+    const link = asRecord(item);
+    if (asString(link?.rel)?.toLowerCase() !== "up") continue;
+    const href = asString(link?.href);
+    if (!href) continue;
+    try {
+      const segments = new URL(href).pathname.split("/").filter(Boolean);
+      const collectionIndex = segments.lastIndexOf(collection);
+      const id = collectionIndex >= 0 ? segments[collectionIndex + 1] : null;
+      if (id) return decodeURIComponent(id);
+    } catch {
+      // Ignore malformed third-party links and continue checking the payload.
+    }
+  }
+  return null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

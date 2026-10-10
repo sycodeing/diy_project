@@ -47,6 +47,34 @@ test("parses capture and refund correlation identifiers", () => {
   assert.equal(refunded?.amountCents, 500);
 });
 
+test("parses refund capture IDs from the PayPal refund resource up link", () => {
+  const refunded = parsePayPalWebhookEvent({
+    id: "WH-refund-dashboard",
+    event_type: "PAYMENT.CAPTURE.REFUNDED",
+    resource_type: "refund",
+    resource: {
+      id: "REFUND-2",
+      status: "COMPLETED",
+      amount: { value: "5.00", currency_code: "USD" },
+      links: [
+        {
+          href: "https://api-m.sandbox.paypal.com/v2/payments/refunds/REFUND-2",
+          rel: "self",
+          method: "GET",
+        },
+        {
+          href: "https://api-m.sandbox.paypal.com/v2/payments/captures/CAPTURE-2",
+          rel: "up",
+          method: "GET",
+        },
+      ],
+    },
+  });
+  assert.equal(refunded?.captureId, "CAPTURE-2");
+  assert.equal(refunded?.resourceId, "REFUND-2");
+  assert.equal(refunded?.amountCents, 500);
+});
+
 test("parses dispute correlation and outcome", () => {
   const event = parsePayPalWebhookEvent({
     id: "WH-dispute",
