@@ -6,8 +6,7 @@ import type {
 } from "@/lib/types";
 
 export const PRODUCT_SLUG = "custom-pillow" as const;
-// Temporary live-payment verification price. Restore to 1999 after testing.
-export const PRODUCT_PRICE_CENTS = 100;
+export const PRODUCT_PRICE_CENTS = 1999;
 export const PRODUCT_CURRENCY = "usd";
 
 type ProductArtworkFrame = {

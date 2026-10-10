@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { getStripeConfig } from "@/lib/env";
+import { notifyFirstPurchase } from "@/lib/first-purchase-alert";
 import { createShippingFingerprint, normalizeShippingAddress } from "@/lib/shipping";
 import { getStripeClient } from "@/lib/stripe";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
@@ -88,7 +89,7 @@ async function markOrderPaid({
   const { data: order, error: orderReadError } = await supabase
     .from("orders")
     .select(
-      "id,amount_cents,currency,shipping,paid_at,fulfillment_status,marketing_link_id,stripe_checkout_session_id",
+      "id,order_number,amount_cents,currency,shipping,paid_at,fulfillment_status,marketing_link_id,stripe_checkout_session_id",
     )
     .eq("id", orderId)
     .maybeSingle();
@@ -189,6 +190,24 @@ async function markOrderPaid({
     if (marketingError) {
       return { ok: false as const, error: marketingError.message };
     }
+  }
+
+  const alert = await notifyFirstPurchase({
+    amountCents: order.amount_cents,
+    currency: order.currency,
+    orderId: order.id,
+    orderNumber: order.order_number,
+    paymentProvider: "stripe",
+    supabase,
+  });
+  if (!alert.ok) {
+    console.error("First-purchase email could not be sent", {
+      orderId: order.id,
+      paymentProvider: "stripe",
+      error: alert.error,
+    });
+  } else if (alert.status === "not-configured") {
+    console.warn("First-purchase email is not configured");
   }
 
   return { ok: true as const };

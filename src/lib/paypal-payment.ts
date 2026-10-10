@@ -1,4 +1,5 @@
 import { createShippingFingerprint, normalizeShippingAddress } from "@/lib/shipping";
+import { notifyFirstPurchase } from "@/lib/first-purchase-alert";
 import { TEMU_PROCUREMENT_PRODUCT } from "@/lib/temu-procurement";
 import {
   nextPayPalPaymentStatus,
@@ -394,6 +395,24 @@ export async function completePayPalPayment({
       { onConflict: "marketing_link_id,event_type", ignoreDuplicates: true },
     );
     if (marketingError) return { ok: false as const, error: marketingError.message };
+  }
+
+  const alert = await notifyFirstPurchase({
+    amountCents: order.amount_cents,
+    currency: order.currency,
+    orderId: order.id,
+    orderNumber: order.order_number,
+    paymentProvider: "paypal",
+    supabase,
+  });
+  if (!alert.ok) {
+    console.error("First-purchase email could not be sent", {
+      orderId: order.id,
+      paymentProvider: "paypal",
+      error: alert.error,
+    });
+  } else if (alert.status === "not-configured") {
+    console.warn("First-purchase email is not configured");
   }
 
   return { ok: true as const, orderId: order.id, orderNumber: order.order_number };
