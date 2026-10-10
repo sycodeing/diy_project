@@ -3,10 +3,15 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import {
   capturePayPalOrder,
-  getCompletedCapture,
+  getPayPalCapture,
   getTerminalPayPalCaptureIssue,
 } from "@/lib/paypal";
-import { completePayPalPayment, failPayPalCapture } from "@/lib/paypal-payment";
+import {
+  claimPayPalCapture,
+  completePayPalPayment,
+  failPayPalCapture,
+  releasePayPalCaptureClaim,
+} from "@/lib/paypal-payment";
 
 export const runtime = "nodejs";
 
@@ -35,10 +40,37 @@ export async function GET(request: Request) {
     return NextResponse.redirect(new URL(`/orders/${order.id}`, url));
   }
 
+  const claim = await claimPayPalCapture({ orderId: order.id, supabase: serviceSupabase });
+  if (!claim.ok) {
+    console.error("PayPal return capture could not be claimed", {
+      orderId: order.id,
+      error: claim.error,
+    });
+    return NextResponse.redirect(new URL(`/orders/${order.id}?payment=not-confirmed`, url));
+  }
+  if (!claim.claimed) {
+    const paymentStatus = await waitForPaymentResolution(serviceSupabase, order.id);
+    const paymentResult = paymentStatus === "paid"
+      ? null
+      : paymentStatus === "failed"
+        ? "failed"
+        : "processing";
+    return NextResponse.redirect(new URL(
+      `/orders/${order.id}${paymentResult ? `?payment=${paymentResult}` : ""}`,
+      url,
+    ));
+  }
+
   try {
     const captureOrder = await capturePayPalOrder(paypalOrderId, order.id);
-    const capture = getCompletedCapture(captureOrder);
-    if (!capture) throw new Error("PayPal has not completed this capture.");
+    const capture = getPayPalCapture(captureOrder);
+    if (!capture) throw new Error("PayPal returned an incomplete capture.");
+    if (capture.status === "PENDING") {
+      return NextResponse.redirect(new URL(`/orders/${order.id}?payment=processing`, url));
+    }
+    if (capture.status !== "COMPLETED") {
+      throw new Error(`PayPal capture returned ${capture.status}.`);
+    }
 
     const result = await completePayPalPayment({
       amountCents: capture.amountCents,
@@ -63,6 +95,16 @@ export async function GET(request: Request) {
         return NextResponse.redirect(new URL(`/orders/${order.id}?payment=failed`, url));
       }
     }
+    const released = await releasePayPalCaptureClaim({
+      orderId: order.id,
+      supabase: serviceSupabase,
+    });
+    if (!released.ok) {
+      console.error("PayPal return capture claim could not be released", {
+        orderId: order.id,
+        error: released.error,
+      });
+    }
     console.error("PayPal return capture could not be confirmed", {
       orderId: order.id,
       error: error instanceof Error ? error.message : "Unknown PayPal error",
@@ -77,4 +119,20 @@ export async function GET(request: Request) {
     }
     return NextResponse.redirect(new URL(`/orders/${order.id}?payment=not-confirmed`, url));
   }
+}
+
+async function waitForPaymentResolution(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServiceClient>>,
+  orderId: string,
+) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const { data } = await supabase
+      .from("orders")
+      .select("payment_status")
+      .eq("id", orderId)
+      .maybeSingle();
+    if (data?.payment_status !== "payment_pending") return data?.payment_status ?? null;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return "payment_pending";
 }

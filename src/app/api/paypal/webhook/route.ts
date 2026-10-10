@@ -9,10 +9,12 @@ import {
 import {
   applyPayPalLifecycleEvent,
   beginPayPalPaymentEvent,
+  claimPayPalCapture,
   completePayPalPayment,
   failPayPalCapture,
   findPayPalOrderForEvent,
   finishPayPalPaymentEvent,
+  releasePayPalCaptureClaim,
 } from "@/lib/paypal-payment";
 import {
   parsePayPalWebhookEvent,
@@ -143,6 +145,10 @@ async function processApprovedOrder(
     return;
   }
 
+  const claim = await claimPayPalCapture({ orderId: order.id, supabase });
+  if (!claim.ok) throw new Error(claim.error);
+  if (!claim.claimed) return;
+
   let capturedOrder;
   try {
     capturedOrder = await capturePayPalOrder(event.paypalOrderId, order.id);
@@ -163,12 +169,16 @@ async function processApprovedOrder(
     try {
       capturedOrder = await getPayPalOrder(event.paypalOrderId);
     } catch {
+      await releasePayPalCaptureClaim({ orderId: order.id, supabase });
       throw captureError;
     }
   }
 
   const capture = getPayPalCapture(capturedOrder);
-  if (!capture) throw new Error("PayPal capture response is incomplete.");
+  if (!capture) {
+    await releasePayPalCaptureClaim({ orderId: order.id, supabase });
+    throw new Error("PayPal capture response is incomplete.");
+  }
   if (capture.status === "COMPLETED") {
     const completed = await completePayPalPayment({
       amountCents: capture.amountCents,
@@ -181,6 +191,7 @@ async function processApprovedOrder(
     return;
   }
   if (capture.status !== "PENDING") {
+    await releasePayPalCaptureClaim({ orderId: order.id, supabase });
     throw new Error(`PayPal capture returned ${capture.status}.`);
   }
 

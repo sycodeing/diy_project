@@ -20,6 +20,43 @@ const PAYMENT_REVIEW_STATUSES = new Set<PaymentStatus>([
   "disputed",
 ]);
 
+export async function claimPayPalCapture({
+  orderId,
+  supabase,
+}: {
+  orderId: string;
+  supabase: SupabaseService;
+}) {
+  const { data, error } = await supabase
+    .from("orders")
+    .update({ payment_status: "payment_pending" })
+    .eq("id", orderId)
+    .eq("payment_provider", "paypal")
+    .eq("payment_status", "pending_payment")
+    .select("id")
+    .maybeSingle();
+  if (error) return { ok: false as const, error: error.message };
+  return { ok: true as const, claimed: Boolean(data) };
+}
+
+export async function releasePayPalCaptureClaim({
+  orderId,
+  supabase,
+}: {
+  orderId: string;
+  supabase: SupabaseService;
+}) {
+  const { error } = await supabase
+    .from("orders")
+    .update({ payment_status: "pending_payment" })
+    .eq("id", orderId)
+    .eq("payment_provider", "paypal")
+    .eq("payment_status", "payment_pending");
+  return error
+    ? { ok: false as const, error: error.message }
+    : { ok: true as const };
+}
+
 export async function findPayPalOrderForEvent(
   event: ParsedPayPalWebhookEvent,
   supabase: SupabaseService,
