@@ -167,6 +167,13 @@ export async function createPayPalOrder({
 
 export async function capturePayPalOrder(paypalOrderId: string, orderId: string) {
   const { captureMockCode } = getPayPalConfig();
+  if (captureMockCode) {
+    throw new PayPalApiError(
+      `PayPal sandbox capture simulated ${captureMockCode}.`,
+      captureMockCode === "INTERNAL_SERVER_ERROR" ? 500 : 422,
+      captureMockCode,
+    );
+  }
   return paypalFetch<PayPalOrderResponse>(
     `/v2/checkout/orders/${encodeURIComponent(paypalOrderId)}/capture`,
     {
@@ -174,13 +181,6 @@ export async function capturePayPalOrder(paypalOrderId: string, orderId: string)
       headers: {
         Prefer: "return=representation",
         "PayPal-Request-Id": requestId(orderId, "p"),
-        ...(captureMockCode
-          ? {
-              "PayPal-Mock-Response": JSON.stringify({
-                mock_application_codes: captureMockCode,
-              }),
-            }
-          : {}),
       },
       body: "{}",
     },

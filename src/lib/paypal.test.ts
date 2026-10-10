@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { getPayPalConfig } from "@/lib/env";
-import { getTerminalPayPalCaptureIssue, PayPalApiError } from "@/lib/paypal";
+import {
+  capturePayPalOrder,
+  getTerminalPayPalCaptureIssue,
+  PayPalApiError,
+} from "@/lib/paypal";
 
 test("enables allowlisted capture mocks only in the PayPal sandbox", () => {
   const previousEnvironment = process.env.PAYPAL_ENVIRONMENT;
@@ -44,4 +48,34 @@ test("classifies only permanent capture declines as terminal", () => {
     ),
     null,
   );
+});
+
+test("simulates sandbox capture failures before contacting PayPal", async () => {
+  const previousEnvironment = process.env.PAYPAL_ENVIRONMENT;
+  const previousMockCode = process.env.PAYPAL_SANDBOX_CAPTURE_MOCK_CODE;
+  const previousFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  try {
+    process.env.PAYPAL_ENVIRONMENT = "sandbox";
+    process.env.PAYPAL_SANDBOX_CAPTURE_MOCK_CODE = "INSTRUMENT_DECLINED";
+    globalThis.fetch = async () => {
+      fetchCalls += 1;
+      throw new Error("PayPal should not be contacted during a local capture simulation.");
+    };
+
+    await assert.rejects(
+      capturePayPalOrder("paypal-order", "local-order"),
+      (error: unknown) =>
+        error instanceof PayPalApiError &&
+        error.status === 422 &&
+        error.issue === "INSTRUMENT_DECLINED",
+    );
+    assert.equal(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousEnvironment === undefined) delete process.env.PAYPAL_ENVIRONMENT;
+    else process.env.PAYPAL_ENVIRONMENT = previousEnvironment;
+    if (previousMockCode === undefined) delete process.env.PAYPAL_SANDBOX_CAPTURE_MOCK_CODE;
+    else process.env.PAYPAL_SANDBOX_CAPTURE_MOCK_CODE = previousMockCode;
+  }
 });
