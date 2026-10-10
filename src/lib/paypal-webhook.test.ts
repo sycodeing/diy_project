@@ -4,6 +4,7 @@ import {
   PAYPAL_HANDLED_EVENT_TYPES,
   nextPayPalPaymentStatus,
   parsePayPalWebhookEvent,
+  requiresPaymentAttention,
 } from "./paypal-webhook.ts";
 
 test("accepts every configured one-time checkout lifecycle event", () => {
@@ -65,6 +66,58 @@ test("parses dispute correlation and outcome", () => {
   assert.equal(event?.captureId, "CAPTURE-1");
   assert.equal(event?.disputeId, "PP-D-1");
   assert.equal(event?.disputeOutcome, "RESOLVED_SELLER_FAVOUR");
+});
+
+test("parses approval reversal order IDs from PayPal's resource.order_id shape", () => {
+  const event = parsePayPalWebhookEvent({
+    id: "WH-approval-reversed",
+    event_type: "CHECKOUT.PAYMENT-APPROVAL.REVERSED",
+    resource: {
+      order_id: "ORDER-REVERSED-1",
+      purchase_units: [{ custom_id: "LOCAL-ORDER-1" }],
+    },
+  });
+  assert.equal(event?.paypalOrderId, "ORDER-REVERSED-1");
+  assert.equal(
+    nextPayPalPaymentStatus({ current: "pending_payment", event: event! }),
+    "canceled",
+  );
+});
+
+test("maps payment failures, reversals, and disputes to safe fulfillment states", () => {
+  const cases = [
+    ["PAYMENT.CAPTURE.PENDING", "payment_pending", false],
+    ["PAYMENT.CAPTURE.DENIED", "failed", false],
+    ["CHECKOUT.ORDER.DECLINED", "failed", false],
+    ["CHECKOUT.PAYMENT-APPROVAL.REVERSED", "canceled", false],
+    ["PAYMENT.CAPTURE.REVERSED", "reversed", true],
+    ["CUSTOMER.DISPUTE.CREATED", "disputed", true],
+    ["CUSTOMER.DISPUTE.UPDATED", "disputed", true],
+  ] as const;
+
+  for (const [eventType, expectedStatus, attentionRequired] of cases) {
+    const event = parsePayPalWebhookEvent({
+      id: `WH-${eventType}`,
+      event_type: eventType,
+      resource: { id: "RESOURCE-1" },
+    });
+    assert.ok(event);
+    const status = nextPayPalPaymentStatus({ current: "pending_payment", event });
+    assert.equal(status, expectedStatus);
+    assert.equal(requiresPaymentAttention(status, event), attentionRequired);
+  }
+});
+
+test("resolves buyer-favor disputes as reversed and keeps fulfillment blocked", () => {
+  const event = parsePayPalWebhookEvent({
+    id: "WH-resolved-buyer",
+    event_type: "CUSTOMER.DISPUTE.RESOLVED",
+    resource: { dispute_outcome: { outcome_code: "RESOLVED_BUYER_FAVOUR" } },
+  });
+  assert.ok(event);
+  const status = nextPayPalPaymentStatus({ current: "disputed", event });
+  assert.equal(status, "reversed");
+  assert.equal(requiresPaymentAttention(status, event), true);
 });
 
 test("does not downgrade paid orders for late pending or denied events", () => {

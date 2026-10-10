@@ -63,6 +63,7 @@ export function parsePayPalWebhookEvent(
     resourceStatus: asString(resource?.status),
     paypalOrderId:
       asString(relatedIds?.order_id) ??
+      asString(resource?.order_id) ??
       (isCheckoutEvent ? asString(resource?.id) : null),
     captureId:
       asString(relatedIds?.capture_id) ??
