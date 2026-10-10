@@ -6,8 +6,8 @@ import {
 } from "@/components/policy-page";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy | Studio Blank",
-  description: "How Studio Blank collects, uses, and shares customer information.",
+  title: "Privacy Policy | theBestDiy",
+  description: "How theBestDiy collects, uses, and shares customer information.",
 };
 
 export default function PrivacyPage() {

@@ -34,7 +34,7 @@ export async function AppShell({
             </span>
             <span className="leading-none">
               <span className="block whitespace-nowrap text-xs font-black uppercase tracking-[0.14em] sm:text-sm sm:tracking-[0.18em]">
-                Studio Blank
+                theBestDiy
               </span>
               <span className="hidden text-xs text-muted sm:block">
                 {admin ? "管理后台" : "Custom pillow studio"}

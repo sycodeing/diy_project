@@ -4,8 +4,8 @@ import { PolicyPage, PolicySection } from "@/components/policy-page";
 import { getSupportContacts } from "@/lib/public-site";
 
 export const metadata: Metadata = {
-  title: "Contact | Studio Blank",
-  description: "Contact Studio Blank about an order, payment, design file, or delivery.",
+  title: "Contact | theBestDiy",
+  description: "Contact theBestDiy about an order, payment, design file, or delivery.",
 };
 
 export default function ContactPage() {

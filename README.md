@@ -1,4 +1,4 @@
-# Studio Blank DIY
+# theBestDiy
 
 A Vercel-ready custom pillow preview and ordering MVP built with Next.js,
 Supabase, and a lightweight Python mockup renderer.

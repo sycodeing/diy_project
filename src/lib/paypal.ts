@@ -4,6 +4,25 @@ import type { ShippingAddress } from "@/lib/types";
 
 type PayPalLink = { href: string; rel: string };
 type PayPalAmount = { currency_code: string; value: string };
+type PayPalErrorDetail = { issue?: string; description?: string };
+
+export class PayPalApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly issue: string | null,
+  ) {
+    super(message);
+    this.name = "PayPalApiError";
+  }
+}
+
+export function getTerminalPayPalCaptureIssue(error: unknown) {
+  if (!(error instanceof PayPalApiError)) return null;
+  return error.issue === "INSTRUMENT_DECLINED" || error.issue === "TRANSACTION_REFUSED"
+    ? error.issue
+    : null;
+}
 export type PayPalCapture = {
   id?: string;
   status?: string;
@@ -61,10 +80,16 @@ async function paypalFetch<T>(path: string, init: RequestInit = {}) {
     signal: AbortSignal.timeout(15_000),
   });
   const payload = (await response.json().catch(() => ({}))) as T & {
+    details?: PayPalErrorDetail[];
     message?: string;
   };
   if (!response.ok) {
-    throw new Error(payload.message ?? `PayPal request failed (${response.status}).`);
+    const detail = payload.details?.find((item) => item.issue);
+    throw new PayPalApiError(
+      detail?.description ?? payload.message ?? `PayPal request failed (${response.status}).`,
+      response.status,
+      detail?.issue ?? null,
+    );
   }
   return payload;
 }
@@ -120,7 +145,7 @@ export async function createPayPalOrder({
       payment_source: {
         paypal: {
           experience_context: {
-            brand_name: "Studio Blank",
+            brand_name: "theBestDiy",
             user_action: "PAY_NOW",
             shipping_preference: "SET_PROVIDED_ADDRESS",
             return_url: `${appUrl}/api/paypal/return`,
@@ -141,6 +166,7 @@ export async function createPayPalOrder({
 }
 
 export async function capturePayPalOrder(paypalOrderId: string, orderId: string) {
+  const { captureMockCode } = getPayPalConfig();
   return paypalFetch<PayPalOrderResponse>(
     `/v2/checkout/orders/${encodeURIComponent(paypalOrderId)}/capture`,
     {
@@ -148,6 +174,13 @@ export async function capturePayPalOrder(paypalOrderId: string, orderId: string)
       headers: {
         Prefer: "return=representation",
         "PayPal-Request-Id": requestId(orderId, "p"),
+        ...(captureMockCode
+          ? {
+              "PayPal-Mock-Response": JSON.stringify({
+                mock_application_codes: captureMockCode,
+              }),
+            }
+          : {}),
       },
       body: "{}",
     },

@@ -77,6 +77,15 @@ export function getPayPalConfig() {
   const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
   const webhookId = process.env.PAYPAL_WEBHOOK_ID;
   const environment = process.env.PAYPAL_ENVIRONMENT?.trim().toLowerCase();
+  const normalizedEnvironment = environment === "live" ? "live" : "sandbox";
+  const captureMockCode = process.env.PAYPAL_SANDBOX_CAPTURE_MOCK_CODE
+    ?.trim()
+    .toUpperCase();
+  const allowedCaptureMockCodes = new Set([
+    "INSTRUMENT_DECLINED",
+    "TRANSACTION_REFUSED",
+    "INTERNAL_SERVER_ERROR",
+  ]);
 
   return {
     clientId:
@@ -87,7 +96,13 @@ export function getPayPalConfig() {
         : undefined,
     webhookId:
       webhookId && !webhookId.startsWith("your-") ? webhookId : undefined,
-    environment: environment === "live" ? "live" : "sandbox",
+    environment: normalizedEnvironment,
+    captureMockCode:
+      normalizedEnvironment === "sandbox" &&
+      captureMockCode &&
+      allowedCaptureMockCodes.has(captureMockCode)
+        ? captureMockCode
+        : undefined,
   } as const;
 }
 

@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Studio Blank DIY",
+  title: "theBestDiy",
   description: "Design, preview, and order a set of two custom 18in / 45cm pillow covers.",
 };
 

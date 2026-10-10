@@ -1,4 +1,4 @@
-export const STORE_NAME = "Studio Blank";
+export const STORE_NAME = "theBestDiy";
 export const POLICY_EFFECTIVE_DATE = "October 9, 2026";
 
 function getPublicValue(value: string | undefined) {

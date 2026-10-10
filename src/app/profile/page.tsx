@@ -26,7 +26,7 @@ export default async function ProfilePage() {
         </p>
         <h1 className="mt-3 text-5xl font-black tracking-normal">Profile</h1>
         <p className="mb-8 mt-4 max-w-2xl leading-7 text-muted">
-          Keep the name and avatar attached to your Studio Blank account.
+          Keep the name and avatar attached to your theBestDiy account.
         </p>
         <ProfileForm
           authEnabled={authEnabled}

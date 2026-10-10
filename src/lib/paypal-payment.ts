@@ -233,6 +233,34 @@ export async function applyPayPalLifecycleEvent({
   return { ok: true as const, orderId: order.id, paymentStatus };
 }
 
+export async function failPayPalCapture({
+  issue,
+  orderId,
+  paypalOrderId,
+  supabase,
+}: {
+  issue: "INSTRUMENT_DECLINED" | "TRANSACTION_REFUSED";
+  orderId: string;
+  paypalOrderId: string;
+  supabase: SupabaseService;
+}) {
+  const event: ParsedPayPalWebhookEvent = {
+    eventId: `capture-error:${paypalOrderId}:${issue}`,
+    eventType: "PAYMENT.CAPTURE.DENIED",
+    occurredAt: new Date().toISOString(),
+    summary: `PayPal capture failed with ${issue}.`,
+    resourceId: paypalOrderId,
+    resourceStatus: "DENIED",
+    paypalOrderId,
+    captureId: null,
+    disputeId: null,
+    amountCents: null,
+    currency: null,
+    disputeOutcome: null,
+  };
+  return applyPayPalLifecycleEvent({ event, orderId, supabase });
+}
+
 export async function completePayPalPayment({
   amountCents,
   captureId,

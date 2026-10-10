@@ -6,8 +6,8 @@ import {
 } from "@/components/policy-page";
 
 export const metadata: Metadata = {
-  title: "Returns and Refunds | Studio Blank",
-  description: "Cancellation, replacement, and refund terms for custom Studio Blank products.",
+  title: "Returns and Refunds | theBestDiy",
+  description: "Cancellation, replacement, and refund terms for custom theBestDiy products.",
 };
 
 export default function ReturnsPage() {

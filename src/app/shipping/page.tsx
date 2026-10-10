@@ -6,8 +6,8 @@ import {
 } from "@/components/policy-page";
 
 export const metadata: Metadata = {
-  title: "Shipping and Delivery | Studio Blank",
-  description: "Production, tracking, and estimated U.S. delivery times for Studio Blank orders.",
+  title: "Shipping and Delivery | theBestDiy",
+  description: "Production, tracking, and estimated U.S. delivery times for theBestDiy orders.",
 };
 
 export default function ShippingPage() {

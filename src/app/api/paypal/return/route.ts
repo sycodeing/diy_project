@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
-import { capturePayPalOrder, getCompletedCapture } from "@/lib/paypal";
-import { completePayPalPayment } from "@/lib/paypal-payment";
+import {
+  capturePayPalOrder,
+  getCompletedCapture,
+  getTerminalPayPalCaptureIssue,
+} from "@/lib/paypal";
+import { completePayPalPayment, failPayPalCapture } from "@/lib/paypal-payment";
 
 export const runtime = "nodejs";
 
@@ -47,6 +51,18 @@ export async function GET(request: Request) {
 
     return NextResponse.redirect(new URL(`/orders/${order.id}`, url));
   } catch (error) {
+    const terminalIssue = getTerminalPayPalCaptureIssue(error);
+    if (terminalIssue) {
+      const failed = await failPayPalCapture({
+        issue: terminalIssue,
+        orderId: order.id,
+        paypalOrderId,
+        supabase: serviceSupabase,
+      });
+      if (failed.ok) {
+        return NextResponse.redirect(new URL(`/orders/${order.id}?payment=failed`, url));
+      }
+    }
     console.error("PayPal return capture could not be confirmed", {
       orderId: order.id,
       error: error instanceof Error ? error.message : "Unknown PayPal error",

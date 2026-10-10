@@ -6,15 +6,15 @@ import {
 } from "@/components/policy-page";
 
 export const metadata: Metadata = {
-  title: "Terms and Conditions | Studio Blank",
-  description: "Terms for purchasing and using the Studio Blank custom product service.",
+  title: "Terms and Conditions | theBestDiy",
+  description: "Terms for purchasing from and using theBestDiy.",
 };
 
 export default function TermsPage() {
   return (
     <PolicyPage
       currentPath="/terms"
-      intro="These terms apply when you use Studio Blank, upload a design, or place an order."
+      intro="These terms apply when you use theBestDiy, upload a design, or place an order."
       title="Terms and conditions"
     >
       <PolicySection title="Using the store">
@@ -49,7 +49,7 @@ export default function TermsPage() {
           produced.
         </p>
         <p>
-          Any shipping charge or tax collected by Studio Blank will be shown
+          Any shipping charge or tax collected by theBestDiy will be shown
           before payment. A government, customs authority, or carrier may impose
           charges outside our control.
         </p>

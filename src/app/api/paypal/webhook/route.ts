@@ -3,12 +3,14 @@ import {
   capturePayPalOrder,
   getPayPalCapture,
   getPayPalOrder,
+  getTerminalPayPalCaptureIssue,
   verifyPayPalWebhook,
 } from "@/lib/paypal";
 import {
   applyPayPalLifecycleEvent,
   beginPayPalPaymentEvent,
   completePayPalPayment,
+  failPayPalCapture,
   findPayPalOrderForEvent,
   finishPayPalPaymentEvent,
 } from "@/lib/paypal-payment";
@@ -145,6 +147,17 @@ async function processApprovedOrder(
   try {
     capturedOrder = await capturePayPalOrder(event.paypalOrderId, order.id);
   } catch (captureError) {
+    const terminalIssue = getTerminalPayPalCaptureIssue(captureError);
+    if (terminalIssue) {
+      const failed = await failPayPalCapture({
+        issue: terminalIssue,
+        orderId: order.id,
+        paypalOrderId: event.paypalOrderId,
+        supabase,
+      });
+      if (!failed.ok) throw new Error(failed.error);
+      return;
+    }
     // PayPal request IDs make capture idempotent, but an earlier successful
     // response can still be lost. Reconcile the order before asking PayPal to retry.
     try {
