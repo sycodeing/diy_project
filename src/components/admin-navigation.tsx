@@ -6,6 +6,8 @@ import { usePathname } from "next/navigation";
 const links = [
   { href: "/admin/orders", label: "订单管理", matches: ["/admin/orders"] },
   { href: "/admin/temu-purchases", label: "人工下单", matches: ["/admin/temu-purchases"] },
+  { href: "/admin/x-lead-search", label: "X 筛选", matches: ["/admin/x-lead-search"] },
+  { href: "/admin/x-leads", label: "X 用户", matches: ["/admin/x-leads"] },
   { href: "/admin/marketing", label: "营销数据", matches: ["/admin/marketing"] },
 ];
 

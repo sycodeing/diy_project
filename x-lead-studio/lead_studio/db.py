@@ -22,6 +22,20 @@ create table if not exists leads (
   posted_at text,
   discovered_at text not null,
   status text not null default 'new',
+  segment text not null default 'custom',
+  occasion text,
+  occasion_confidence integer,
+  ownership_confidence integer,
+  us_confidence integer,
+  us_evidence text,
+  organization integer not null default 0,
+  advertisement integer not null default 0,
+  like_count integer not null default 0,
+  reply_count integer not null default 0,
+  repost_count integer not null default 0,
+  view_count integer not null default 0,
+  followers_count integer not null default 0,
+  targeting_json text,
   pet_type text,
   pet_count integer,
   clarity integer,
@@ -31,6 +45,7 @@ create table if not exists leads (
   recency_score integer,
   account_quality integer,
   sensitive integer not null default 0,
+  advertisement_visual integer not null default 0,
   person_primary integer not null default 0,
   minor_primary integer not null default 0,
   score integer,
@@ -66,6 +81,21 @@ create index if not exists leads_review_idx on leads(status, score desc, discove
 
 LEAD_COLUMN_MIGRATIONS = {
     "author_handle": "text",
+    "segment": "text not null default 'custom'",
+    "occasion": "text",
+    "occasion_confidence": "integer",
+    "ownership_confidence": "integer",
+    "us_confidence": "integer",
+    "us_evidence": "text",
+    "organization": "integer not null default 0",
+    "advertisement": "integer not null default 0",
+    "advertisement_visual": "integer not null default 0",
+    "like_count": "integer not null default 0",
+    "reply_count": "integer not null default 0",
+    "repost_count": "integer not null default 0",
+    "view_count": "integer not null default 0",
+    "followers_count": "integer not null default 0",
+    "targeting_json": "text",
 }
 
 
@@ -81,6 +111,9 @@ class Database:
             for column, definition in LEAD_COLUMN_MIGRATIONS.items():
                 if column not in existing_columns:
                     connection.execute(f"alter table leads add column {column} {definition}")
+            connection.execute(
+                "create index if not exists leads_segment_idx on leads(segment,status,discovered_at desc)"
+            )
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

@@ -30,6 +30,10 @@ class Settings:
     )
     min_lead_score: int = int(os.getenv("MIN_LEAD_SCORE", "70"))
     auto_collection_enabled: bool = os.getenv("AUTO_COLLECTION_ENABLED", "true").lower() == "true"
+    remote_queue_enabled: bool = os.getenv("REMOTE_QUEUE_ENABLED", "true").lower() == "true"
+    worker_poll_seconds: int = max(15, min(300, int(os.getenv("WORKER_POLL_SECONDS", "30"))))
+    us_required: bool = os.getenv("US_REQUIRED", "true").lower() == "true"
+    us_min_confidence: int = max(0, min(100, int(os.getenv("US_MIN_CONFIDENCE", "70"))))
 
 
 def ensure_data_dirs() -> None:

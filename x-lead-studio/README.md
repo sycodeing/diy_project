@@ -15,6 +15,12 @@ Load `.env` in your preferred secret manager or PowerShell session, then run `./
 
 The optional `install-startup-task.ps1` registers a hidden Windows logon task. Run it only after the workbench is configured and tested.
 
+## Website admin bridge
+
+With `REMOTE_QUEUE_ENABLED=true`, the local process sends a heartbeat to the website, claims jobs created from `/admin/x-lead-search`, performs read-only X searches locally, and uploads only public lead metadata to the website. The X cookie remains DPAPI-encrypted on this computer and is never uploaded to Vercel or Supabase.
+
+The website and this local worker must use the same `MARKETING_INGEST_SECRET`. Keep the local process running (or install the existing Windows logon task) for manual and scheduled jobs to execute. If the computer is offline, jobs remain queued until the worker returns.
+
 ## Safety boundary
 
 - One self-owned brand account, manually imported cookie, read-only X calls only.

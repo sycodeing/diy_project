@@ -26,6 +26,10 @@ export function formatAdminDate(value: string) {
   }).format(new Date(value));
 }
 
+export function getServerNowMillis() {
+  return Date.now();
+}
+
 export function createOrderNumber() {
   return `DIY-${Date.now().toString(36).toUpperCase()}`;
 }
