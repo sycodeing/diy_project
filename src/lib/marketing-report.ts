@@ -2,19 +2,18 @@ export const MARKETING_STAGES = [
   "link_generated",
   "link_clicked",
   "design_opened",
-  "preview_ready",
   "account_linked",
   "checkout_started",
   "payment_completed",
 ] as const;
 
-export const MARKETING_STAGE_LABELS: Record<(typeof MARKETING_STAGES)[number], string> = {
+export const MARKETING_STAGE_LABELS: Record<(typeof MARKETING_STAGES)[number] | "preview_ready", string> = {
   link_generated: "链接已生成",
   link_clicked: "链接已点击",
   design_opened: "设计页已打开",
   preview_ready: "预览图已就绪",
-  account_linked: "账号已关联",
-  checkout_started: "已发起结账",
+  account_linked: "网站账号已创建",
+  checkout_started: "已发起付款",
   payment_completed: "付款已完成",
 };
 
