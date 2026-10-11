@@ -134,19 +134,19 @@ export function buildFirstPurchaseEmail({
   }).format(amountCents / 100);
   const adminUrl = `https://www.thebestdiyshop.com/admin/orders/${encodeURIComponent(orderId)}`;
   const provider = paymentProvider === "paypal" ? "PayPal" : "Stripe";
-  const subject = `theBestDiy received its first real payment (${amount})`;
+  const subject = `theBestDiy 收到首笔真实付款（${amount}）`;
   const text = [
-    "The first production payment after launch was confirmed.",
-    `Order: ${orderNumber}`,
-    `Amount: ${amount}`,
-    `Provider: ${provider}`,
-    `Open order: ${adminUrl}`,
+    "theBestDiy 已确认收到上线后的首笔真实付款。",
+    `订单号：${orderNumber}`,
+    `付款金额：${amount}`,
+    `支付渠道：${provider}`,
+    `查看订单：${adminUrl}`,
   ].join("\n");
 
   return {
     subject,
     text,
-    html: `<h1>First real payment confirmed</h1><p>theBestDiy has received its first production payment.</p><ul><li>Order: ${escapeHtml(orderNumber)}</li><li>Amount: ${escapeHtml(amount)}</li><li>Provider: ${provider}</li></ul><p><a href="${adminUrl}">Open the order in the admin dashboard</a></p>`,
+    html: `<h1>首笔真实付款已确认</h1><p>theBestDiy 已确认收到上线后的首笔真实付款。</p><ul><li>订单号：${escapeHtml(orderNumber)}</li><li>付款金额：${escapeHtml(amount)}</li><li>支付渠道：${provider}</li></ul><p><a href="${adminUrl}">前往管理后台查看订单</a></p>`,
   };
 }
 

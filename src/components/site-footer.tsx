@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Mail } from "lucide-react";
-import { getSupportContacts, STORE_NAME } from "@/lib/public-site";
+import { STORE_NAME, SUPPORT_EMAIL } from "@/lib/public-site";
 
 const policyLinks = [
   { href: "/contact", label: "Contact" },
@@ -11,8 +11,6 @@ const policyLinks = [
 ] as const;
 
 export function SiteFooter() {
-  const { email } = getSupportContacts();
-
   return (
     <footer className="mt-auto border-t border-line bg-panel">
       <div className="mx-auto grid w-full max-w-7xl gap-8 px-4 py-10 sm:px-6 md:grid-cols-[1fr_auto] md:items-end">
@@ -21,15 +19,13 @@ export function SiteFooter() {
           <p className="mt-2 max-w-md text-sm leading-6 text-muted">
             Custom pillow covers made from your image and shipped with tracking.
           </p>
-          {email ? (
-            <a
-              className="focus-ring mt-4 inline-flex items-center gap-2 rounded-lg text-sm font-bold text-accent hover:text-accent-strong"
-              href={`mailto:${email}`}
-            >
-              <Mail aria-hidden="true" size={16} />
-              {email}
-            </a>
-          ) : null}
+          <a
+            className="focus-ring mt-4 inline-flex items-center gap-2 rounded-lg text-sm font-bold text-accent hover:text-accent-strong"
+            href={`mailto:${SUPPORT_EMAIL}`}
+          >
+            <Mail aria-hidden="true" size={16} />
+            {SUPPORT_EMAIL}
+          </a>
         </div>
 
         <nav aria-label="Store policies" className="flex flex-wrap gap-x-5 gap-y-3 text-sm">

@@ -58,9 +58,12 @@ test("builds a first-purchase alert without customer PII", () => {
   });
 
   assert.match(message.subject, /\$19\.99/);
+  assert.match(message.subject, /收到首笔真实付款/);
   assert.match(message.text, /DIY-TEST123/);
   assert.match(message.text, /PayPal/);
   assert.match(message.text, /\/admin\/orders\/order-123/);
+  assert.match(message.text, /付款金额/);
+  assert.match(message.html, /首笔真实付款已确认/);
   assert.doesNotMatch(message.text, /customer|shipping|address/i);
 });
 
