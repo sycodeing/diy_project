@@ -34,7 +34,7 @@ import type {
   ShippingAddress,
   TemuPurchaseJob,
 } from "@/lib/types";
-import { cn, formatDate } from "@/lib/utils";
+import { cn, formatAdminDate } from "@/lib/utils";
 import {
   advanceManualFulfillmentStatus,
   bindManualTemuOrder,
@@ -198,7 +198,7 @@ export default async function TemuPurchasesPage({
                 `规格：${productSpec}`,
                 `下单提示：${TEMU_PROCUREMENT_PRODUCT.selectionInstruction}`,
                 `数量：${job.quantity}`,
-                `Goods ID：${job.goods_id ?? TEMU_PROCUREMENT_PRODUCT.goodsId}`,
+                `商品编号：${job.goods_id ?? TEMU_PROCUREMENT_PRODUCT.goodsId}`,
                 `商品链接：${productUrl ?? ""}`,
                 artworkUrl
                   ? "定制图：请下载 DIY 图片后上传到 Temu"
@@ -222,7 +222,7 @@ export default async function TemuPurchasesPage({
                         {TEMU_PURCHASE_STATUS_LABELS[job.status]}
                       </span>
                       <span className="inline-flex items-center gap-1 text-xs text-muted">
-                        <Clock3 size={13} /> {formatDate(job.created_at)}
+                        <Clock3 size={13} /> {formatAdminDate(job.created_at)}
                       </span>
                     </div>
                     <CopyButton
@@ -303,7 +303,7 @@ export default async function TemuPurchasesPage({
                               value={String(job.quantity)}
                             />
                             <CopyField
-                              label="Goods ID"
+                              label="商品编号"
                               value={
                                 job.goods_id ?? TEMU_PROCUREMENT_PRODUCT.goodsId
                               }

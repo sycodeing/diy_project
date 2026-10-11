@@ -10,7 +10,7 @@ import { createAdminDesignImageUrls } from "@/lib/design-images";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { TEMU_STATUS_OPTIONS } from "@/lib/temu";
 import type { OrderSummary } from "@/lib/types";
-import { formatDate, formatMoney } from "@/lib/utils";
+import { formatAdminDate, formatMoney } from "@/lib/utils";
 import { updateOrderStatus } from "./actions";
 import { advanceManualFulfillmentStatus } from "../temu-purchases/actions";
 import { getNextFulfillmentStatus, INTERNAL_FULFILLMENT_LABELS } from "@/lib/temu-purchase";
@@ -74,7 +74,7 @@ export default async function AdminOrdersPage() {
                       <div className="relative grid size-24 shrink-0 place-items-center overflow-hidden rounded-lg border border-line bg-white sm:size-32">
                         {artworkUrl ? (
                           <Image
-                            alt={`${product?.name ?? "Custom product"} artwork`}
+                            alt={`${adminProductName(product?.name)}定制图`}
                             className="object-contain p-2"
                             height={128}
                             src={artworkUrl}
@@ -84,7 +84,7 @@ export default async function AdminOrdersPage() {
                         ) : (
                           <div className="flex flex-col items-center gap-2 px-2 text-center text-xs text-muted">
                             <ImageIcon aria-hidden="true" size={22} />
-                            <span>Artwork unavailable</span>
+                            <span>暂无可用图稿</span>
                           </div>
                         )}
                       </div>
@@ -97,18 +97,18 @@ export default async function AdminOrdersPage() {
                             {order.order_number}
                           </Link>
                           <span className="text-xs text-muted">
-                            {formatDate(order.created_at)}
+                            {formatAdminDate(order.created_at)}
                           </span>
                         </div>
                         <h2 className="mt-1 truncate text-lg font-black">
-                          {product?.name ?? "Custom product"}
+                          {adminProductName(product?.name)}
                         </h2>
                         <p className="mt-1 truncate text-sm text-muted">
-                          {order.customer_email ?? "Unknown customer"}
+                          {order.customer_email ?? "未知客户"}
                         </p>
                         <p className="mt-1 text-sm font-bold text-foreground">
                           {formatMoney(order.amount_cents, order.currency)}
-                          {product?.quantity ? ` · Qty ${product.quantity}` : ""}
+                          {product?.quantity ? ` · 数量 ${product.quantity}` : ""}
                         </p>
                         {order.temu_parent_order_sn || order.temu_order_sn ? (
                           <div className="mt-2 flex flex-wrap gap-2">
@@ -235,6 +235,12 @@ export default async function AdminOrdersPage() {
       </main>
     </AppShell>
   );
+}
+
+function adminProductName(name?: string) {
+  if (!name || name === "Custom product") return "定制商品";
+  if (/custom pillow/i.test(name)) return "定制抱枕";
+  return name;
 }
 
 function fulfillmentLabel(status: (typeof statusOptions)[number]) {

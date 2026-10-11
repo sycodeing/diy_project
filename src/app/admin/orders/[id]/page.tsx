@@ -10,7 +10,7 @@ import { createAdminDesignImageUrls } from "@/lib/design-images";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { TEMU_STATUS_OPTIONS } from "@/lib/temu";
 import type { FulfillmentStatus, OrderSummary, ShippingAddress } from "@/lib/types";
-import { formatDate, formatMoney } from "@/lib/utils";
+import { formatAdminDate, formatMoney } from "@/lib/utils";
 import { updateOrderStatus } from "../actions";
 import { advanceManualFulfillmentStatus } from "../../temu-purchases/actions";
 import { getNextFulfillmentStatus, INTERNAL_FULFILLMENT_LABELS } from "@/lib/temu-purchase";
@@ -82,7 +82,7 @@ export default async function AdminOrderDetailPage({
                 {typedOrder.customer_email ?? "未知客户"}
               </p>
               <p className="mt-2 text-sm text-muted">
-                {formatDate(typedOrder.created_at)} /{" "}
+                {formatAdminDate(typedOrder.created_at)} /{" "}
                 {formatMoney(typedOrder.amount_cents, typedOrder.currency)}
               </p>
             </div>
@@ -180,7 +180,7 @@ export default async function AdminOrderDetailPage({
               <dt className="text-muted">最近同步时间</dt>
               <dd className="mt-1 text-foreground">
                 {typedOrder.temu_last_synced_at
-                  ? formatDate(typedOrder.temu_last_synced_at)
+                  ? formatAdminDate(typedOrder.temu_last_synced_at)
                   : "暂无"}
               </dd>
             </div>
@@ -193,6 +193,7 @@ export default async function AdminOrderDetailPage({
         <section className="mt-5 rounded-lg border border-line bg-panel/85 p-5">
           <h2 className="mb-4 text-xl font-black">定制设计</h2>
           <DesignSummary
+            chinese
             design={typedOrder.design_snapshot}
             imageUrls={imageUrls}
           />
@@ -234,9 +235,9 @@ export default async function AdminOrderDetailPage({
                   key={event.id}
                 >
                   <p className="font-black capitalize">
-                    {event.status.replaceAll("_", " ")}
+                    {fulfillmentLabel(event.status)}
                   </p>
-                  <p className="mt-1 text-muted">{formatDate(event.created_at)}</p>
+                  <p className="mt-1 text-muted">{formatAdminDate(event.created_at)}</p>
                   {event.note ? (
                     <p className="mt-2 text-foreground">{event.note}</p>
                   ) : null}

@@ -13,7 +13,7 @@ import {
 } from "@/lib/marketing-report";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
-import { formatMoney } from "@/lib/utils";
+import { formatAdminDate, formatMoney } from "@/lib/utils";
 
 type Search = Promise<Record<string, string | string[] | undefined>>;
 
@@ -125,7 +125,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Se
                 const reached = MARKETING_STAGES.filter((stage) => row.marketing_events.some((event) => event.event_type === stage));
                 const url = linkUrl(row);
                 return <tr className="border-t border-line align-top" key={row.id}>
-                  <td className="py-3 whitespace-nowrap">{formatDateZh(row.created_at)}</td>
+                  <td className="py-3 whitespace-nowrap">{formatAdminDate(row.created_at)}</td>
                   <td className="py-3">{row.x_handle ? <><a className="font-bold text-accent" href={row.x_post_url ?? `https://x.com/${row.x_handle}`} rel="noreferrer" target="_blank">@{row.x_handle}</a><p className="text-xs text-muted">线索 #{row.source_lead_id ?? "—"}{row.lead_score === null ? "" : ` · ${row.lead_score} 分`}</p></> : <span className="text-muted">旧链接，未记录</span>}</td>
                   <td className="py-3">{url ? <a className="font-bold text-accent" href={url} rel="noreferrer" target="_blank">打开链接</a> : <span className="text-muted">配置缺失</span>}</td>
                   <td className="py-3">{row.campaign}</td>
@@ -155,12 +155,8 @@ function ChainDetail({ row, accountEmail, url }: { row: MarketingReportRow; acco
     <section><p className="text-xs font-bold text-muted">B · 专属链接</p>{url ? <a className="mt-1 block break-all font-bold text-accent" href={url} rel="noreferrer" target="_blank">{url}</a> : <p className="mt-1 text-muted">营销密钥未配置，无法还原链接。</p>}</section>
     <section><p className="text-xs font-bold text-muted">C · 网站账号</p><p className="mt-1 font-bold">{row.account_user_id ? accountEmail ?? row.account_user_id : "尚未注册或登录"}</p>{row.account_user_id ? <p className="text-muted">{row.account_was_created ? "客户通过此链接创建了新账号" : "客户使用已有账号登录"}</p> : null}</section>
     <section><p className="text-xs font-bold text-muted">D · 订单与付款</p>{row.orders.length ? <ul className="mt-1 space-y-2">{row.orders.map((order) => <li key={order.id}><Link className="font-bold text-accent" href={`/admin/orders/${order.id}`}>{order.order_number}</Link><span className="ml-2">{formatMoney(order.amount_cents, order.currency)} · {order.payment_status === "paid" ? "已付款" : "未付款"}</span></li>)}</ul> : <p className="mt-1 text-muted">尚未创建订单。</p>}</section>
-    <section><p className="text-xs font-bold text-muted">事件时间线</p><ol className="mt-2 space-y-3">{events.map((event) => <li className="border-l-2 border-accent pl-3" key={event.event_type}><p className="font-bold">{MARKETING_STAGE_LABELS[event.event_type as keyof typeof MARKETING_STAGE_LABELS] ?? event.event_type}</p><p className="text-xs text-muted">{formatDateZh(event.created_at)}</p></li>)}</ol></section>
+    <section><p className="text-xs font-bold text-muted">事件时间线</p><ol className="mt-2 space-y-3">{events.map((event) => <li className="border-l-2 border-accent pl-3" key={event.event_type}><p className="font-bold">{MARKETING_STAGE_LABELS[event.event_type as keyof typeof MARKETING_STAGE_LABELS] ?? event.event_type}</p><p className="text-xs text-muted">{formatAdminDate(event.created_at)}</p></li>)}</ol></section>
   </div>;
-}
-
-function formatDateZh(value: string) {
-  return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Shanghai" }).format(new Date(value));
 }
 
 function FilterInput({ label, name, type = "text", value }: { label: string; name: string; type?: string; value: string }) {

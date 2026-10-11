@@ -18,6 +18,14 @@ export function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+export function formatAdminDate(value: string) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Shanghai",
+  }).format(new Date(value));
+}
+
 export function createOrderNumber() {
   return `DIY-${Date.now().toString(36).toUpperCase()}`;
 }
