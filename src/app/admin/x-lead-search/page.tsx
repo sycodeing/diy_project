@@ -144,6 +144,7 @@ export default async function XLeadSearchPage({
                 <SelectField label="执行频率" name="intervalMinutes" value={String(config.interval_minutes)} options={Object.entries(X_SEARCH_INTERVAL_LABELS).map(([value, label]) => [value, label])} />
               </div>
               <p className="mt-3 text-xs text-muted">{config.enabled && config.next_run_at ? `下一次入队：${formatAdminDate(config.next_run_at)}` : "当前未启用定时筛选。"}</p>
+              <p className="mt-2 text-xs text-muted">数据库每小时检查一次到期配置，实际入队时间最多可能晚约 1 小时。</p>
             </div>
 
             <div className="mt-5 flex flex-wrap gap-3">

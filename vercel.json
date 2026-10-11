@@ -11,10 +11,6 @@
     {
       "path": "/api/cron/marketing-retention",
       "schedule": "30 2 * * *"
-    },
-    {
-      "path": "/api/cron/x-lead-search",
-      "schedule": "0 * * * *"
     }
   ]
 }
