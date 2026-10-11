@@ -630,6 +630,16 @@ create table if not exists public.marketing_links (
   variant text not null,
   source_hash text not null check (length(source_hash) = 64),
   source_image_url text,
+  source_lead_id text,
+  x_author_hash text check (x_author_hash is null or x_author_hash ~ '^[a-f0-9]{64}$'),
+  x_handle text check (x_handle is null or x_handle ~ '^[A-Za-z0-9_]{1,50}$'),
+  x_post_id text,
+  x_post_url text,
+  targeting_segment text,
+  lead_score integer check (lead_score is null or lead_score between 0 and 100),
+  account_user_id uuid references auth.users(id) on delete set null,
+  account_linked_at timestamptz,
+  account_was_created boolean,
   first_clicked_at timestamptz,
   last_clicked_at timestamptz,
   click_count integer not null default 0 check (click_count >= 0),
@@ -643,7 +653,7 @@ create table if not exists public.marketing_events (
   marketing_link_id uuid not null references public.marketing_links(id) on delete cascade,
   event_type text not null check (event_type in (
     'link_generated', 'link_clicked', 'design_opened', 'preview_ready',
-    'checkout_started', 'payment_completed'
+    'account_linked', 'checkout_started', 'payment_completed'
   )),
   order_id uuid references public.orders(id) on delete set null,
   metadata jsonb not null default '{}'::jsonb,
@@ -664,6 +674,10 @@ create index if not exists marketing_links_dimensions_idx
   on public.marketing_links (created_at desc, campaign, channel, variant);
 create index if not exists marketing_events_link_time_idx
   on public.marketing_events (marketing_link_id, created_at);
+create index if not exists marketing_links_source_lead_idx
+  on public.marketing_links (source_lead_id) where source_lead_id is not null;
+create index if not exists marketing_links_account_user_idx
+  on public.marketing_links (account_user_id) where account_user_id is not null;
 create index if not exists orders_marketing_link_idx
   on public.orders (marketing_link_id) where marketing_link_id is not null;
 

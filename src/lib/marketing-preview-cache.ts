@@ -16,12 +16,10 @@ export async function prepareMarketingPreviewCache(
   sourceHash: string,
   expiresAt: string,
   supabase: SupabaseClient,
+  rendererUrl: string,
 ) {
   const existing = await getMarketingPreviewUrls(sourceHash, expiresAt);
   if (existing.length === PREVIEW_TEMPLATES.length) return true;
-
-  const rendererBase = process.env.NEXT_PUBLIC_MOCKUP_RENDERER_URL?.replace(/\/$/, "");
-  if (!rendererBase) return false;
 
   try {
     const artworkResponse = await fetchRemoteImage(sourceImageUrl);
@@ -46,10 +44,10 @@ export async function prepareMarketingPreviewCache(
         const formData = new FormData();
         formData.append("template_id", template.id);
         formData.append("artwork", artworkBlob, "artwork.webp");
-        const response = await fetch(`${rendererBase}/render-preview`, {
+        const response = await fetch(rendererUrl, {
           body: formData,
           method: "POST",
-          signal: AbortSignal.timeout(45_000),
+          signal: AbortSignal.timeout(55_000),
         });
         const resultType = response.headers.get("content-type") ?? "";
         const declaredSize = Number(response.headers.get("content-length") ?? 0);
@@ -80,7 +78,11 @@ export async function prepareMarketingPreviewCache(
     );
 
     return rendered.length === PREVIEW_TEMPLATES.length;
-  } catch {
+  } catch (error) {
+    console.error("Marketing preview cache preparation failed", {
+      error: error instanceof Error ? error.message : "Unknown preview cache error",
+      sourceHash,
+    });
     return false;
   }
 }

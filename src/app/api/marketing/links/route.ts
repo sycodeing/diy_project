@@ -7,6 +7,7 @@ import { prepareMarketingPreviewCache } from "@/lib/marketing-preview-cache";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 
 export const runtime = "nodejs";
+export const maxDuration = 120;
 
 const requestSchema = z.object({
   campaign: z.string().trim().min(1).max(100),
@@ -14,6 +15,15 @@ const requestSchema = z.object({
   variant: z.string().trim().min(1).max(100),
   sourceHash: z.string().regex(/^[a-f0-9]{64}$/i),
   sourceImageUrl: z.url().max(2048).refine((value) => value.startsWith("https://")),
+  xLead: z.object({
+    leadId: z.string().trim().min(1).max(100),
+    authorHash: z.string().regex(/^[a-f0-9]{64}$/i),
+    handle: z.string().trim().regex(/^[A-Za-z0-9_]{1,50}$/),
+    postId: z.string().trim().min(1).max(100),
+    postUrl: z.url().max(2048).refine((value) => /^https:\/\/(?:www\.)?(?:x|twitter)\.com\//i.test(value)),
+    segment: z.string().trim().min(1).max(100).optional(),
+    score: z.number().int().min(0).max(100).optional(),
+  }).optional(),
 });
 
 export async function POST(request: Request) {
@@ -59,7 +69,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid marketing link payload." }, { status: 400 });
   }
 
-  return createLink(parsed.data, idempotencyKey, nonce, timestampSeconds, secret, supabase);
+  const rendererUrl = process.env.MOCKUP_RENDERER_URL?.trim() || `${getAppUrl(request.url)}/api/mockup`;
+  return createLink(parsed.data, idempotencyKey, nonce, timestampSeconds, secret, supabase, rendererUrl);
 }
 
 async function createLink(
@@ -69,6 +80,7 @@ async function createLink(
   timestampSeconds: number,
   secret: string,
   supabase: NonNullable<ReturnType<typeof getSupabaseServiceClient>>,
+  rendererUrl: string,
 ) {
   const { error: nonceError } = await supabase.from("marketing_ingest_nonces").insert({
     nonce,
@@ -107,11 +119,22 @@ async function createLink(
       existing.source_hash,
       existing.expires_at,
       supabase,
+      rendererUrl,
     );
+    if (!cacheReady) return previewCacheFailure();
     return linkResponse(token, existing.expires_at, true, cacheReady);
   }
 
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const cacheReady = await prepareMarketingPreviewCache(
+    payload.sourceImageUrl,
+    payload.sourceHash.toLowerCase(),
+    expiresAt,
+    supabase,
+    rendererUrl,
+  );
+  if (!cacheReady) return previewCacheFailure();
+
   const { data, error } = await supabase
     .from("marketing_links")
     .insert({
@@ -122,6 +145,13 @@ async function createLink(
       variant: payload.variant,
       source_hash: payload.sourceHash.toLowerCase(),
       source_image_url: payload.sourceImageUrl,
+      source_lead_id: payload.xLead?.leadId ?? null,
+      x_author_hash: payload.xLead?.authorHash.toLowerCase() ?? null,
+      x_handle: payload.xLead?.handle ?? null,
+      x_post_id: payload.xLead?.postId ?? null,
+      x_post_url: payload.xLead?.postUrl ?? null,
+      targeting_segment: payload.xLead?.segment ?? null,
+      lead_score: payload.xLead?.score ?? null,
       expires_at: expiresAt,
     })
     .select("id,expires_at")
@@ -139,20 +169,23 @@ async function createLink(
         raced.source_hash,
         raced.expires_at,
         supabase,
+        rendererUrl,
       );
+      if (!cacheReady) return previewCacheFailure();
       return linkResponse(token, raced.expires_at, true, cacheReady);
     }
     return NextResponse.json({ error: "Could not create marketing link." }, { status: 500 });
   }
 
   // The deterministic HMAC token is returned but never persisted in plaintext.
-  const cacheReady = await prepareMarketingPreviewCache(
-    payload.sourceImageUrl,
-    payload.sourceHash.toLowerCase(),
-    data.expires_at,
-    supabase,
-  );
   return linkResponse(token, data.expires_at, false, cacheReady);
+}
+
+function previewCacheFailure() {
+  return NextResponse.json(
+    { error: "Preview cache could not be prepared. Retry this link generation.", retryable: true },
+    { status: 502 },
+  );
 }
 
 function linkResponse(

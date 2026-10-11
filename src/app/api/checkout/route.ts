@@ -16,6 +16,7 @@ import { checkoutRequestSchema } from "@/lib/validation";
 import { createOrderNumber } from "@/lib/utils";
 import {
   getActiveMarketingLinkFromCookie,
+  linkMarketingAccount,
   recordMarketingEvent,
 } from "@/lib/marketing";
 
@@ -120,6 +121,15 @@ export async function POST(request: Request) {
   const amountCents = variant.price_cents ?? PRODUCT_PRICE_CENTS;
   const currency = variant.currency ?? PRODUCT_CURRENCY;
   const marketingLink = await getActiveMarketingLinkFromCookie();
+  if (marketingLink) {
+    const { error: accountLinkError } = await linkMarketingAccount(marketingLink, user);
+    if (accountLinkError) {
+      console.error("Checkout account attribution could not be recorded", {
+        marketingLinkId: marketingLink.id,
+        userId: user.id,
+      });
+    }
+  }
 
   const { data: order, error: orderError } = await supabase
     .from("orders")

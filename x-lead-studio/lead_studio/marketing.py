@@ -30,11 +30,14 @@ async def create_link(payload: dict[str, Any], idempotency_key: str, settings: S
     if len(settings.marketing_secret) < 32:
         raise RuntimeError("MARKETING_INGEST_SECRET must contain at least 32 characters.")
     body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(timeout=90) as client:
         response = await client.post(
             f"{settings.diy_site_url}/api/marketing/links",
             content=body,
             headers=signed_headers(body, idempotency_key, settings.marketing_secret),
         )
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        if not result.get("previewCacheReady"):
+            raise RuntimeError("Marketing link was not returned because preview caching is incomplete.")
+        return result

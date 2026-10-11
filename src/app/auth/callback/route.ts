@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getActiveMarketingLinkFromCookie, linkMarketingAccount } from "@/lib/marketing";
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
@@ -16,6 +17,7 @@ export async function GET(request: Request) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
 
     if (!error) {
+      await linkCurrentAccount(supabase);
       return NextResponse.redirect(new URL(next, requestUrl.origin));
     }
   }
@@ -24,6 +26,7 @@ export async function GET(request: Request) {
     const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
 
     if (!error) {
+      await linkCurrentAccount(supabase);
       return NextResponse.redirect(new URL(next, requestUrl.origin));
     }
   }
@@ -31,4 +34,14 @@ export async function GET(request: Request) {
   return NextResponse.redirect(
     new URL(`/auth?error=oauth&next=${encodeURIComponent(next)}`, requestUrl.origin),
   );
+}
+
+async function linkCurrentAccount(
+  supabase: NonNullable<Awaited<ReturnType<typeof createSupabaseServerClient>>>,
+) {
+  const [{ data: { user } }, marketingLink] = await Promise.all([
+    supabase.auth.getUser(),
+    getActiveMarketingLinkFromCookie(),
+  ]);
+  if (user && marketingLink) await linkMarketingAccount(marketingLink, user);
 }

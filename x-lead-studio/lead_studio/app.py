@@ -131,6 +131,7 @@ async def import_lead(payload: ImportRequest):
     lead_id = db.insert_lead({
         "post_id": payload.post_id,
         "author_hash": author_hash,
+        "author_handle": payload.author,
         "media_url": payload.media_url,
         "post_url": payload.post_url,
         "posted_at": payload.posted_at,
@@ -185,6 +186,7 @@ async def marketing_link(lead_id: int, payload: LinkRequest):
         "campaign": payload.campaign, "channel": payload.channel,
         "variant": payload.variant, "sourceHash": source_hash,
         "sourceImageUrl": lead["media_url"],
+        "xLead": _marketing_lead_payload(lead, lead_id),
     }, idempotency_key, settings)
     db.update_lead(lead_id, {
         "marketing_url": result["url"], "campaign": payload.campaign,
@@ -251,9 +253,26 @@ def _candidate_from_tweet(tweet: dict[str, Any]) -> dict[str, Any] | None:
     return {
         "post_id": post_id,
         "author_hash": hashlib.sha256(username.lower().encode()).hexdigest(),
+        "author_handle": username,
         "media_url": media_url,
         "post_url": f"https://x.com/{username}/status/{post_id}",
         "posted_at": str(tweet.get("date") or tweet.get("created_at") or "") or None,
+    }
+
+
+def _marketing_lead_payload(lead: dict[str, Any], lead_id: int) -> dict[str, Any]:
+    handle = str(lead.get("author_handle") or "").strip().lstrip("@")
+    if not handle and lead.get("post_url"):
+        parts = str(lead["post_url"]).split("/")
+        if len(parts) > 3:
+            handle = parts[3]
+    return {
+        "leadId": str(lead_id),
+        "authorHash": lead["author_hash"],
+        "handle": handle,
+        "postId": str(lead["post_id"]),
+        "postUrl": lead["post_url"],
+        **({"score": int(lead["score"])} if lead.get("score") is not None else {}),
     }
 
 

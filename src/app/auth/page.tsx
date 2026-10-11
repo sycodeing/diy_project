@@ -4,6 +4,7 @@ import { AuthForm } from "@/components/auth-form";
 import { SetupWarning } from "@/components/setup-warning";
 import { getCurrentUser } from "@/lib/auth";
 import { getSupabaseBrowserConfig } from "@/lib/env";
+import { getActiveMarketingLinkFromCookie, linkMarketingAccount } from "@/lib/marketing";
 
 export default async function AuthPage({
   searchParams,
@@ -15,6 +16,8 @@ export default async function AuthPage({
   const user = await getCurrentUser();
 
   if (user) {
+    const marketingLink = await getActiveMarketingLinkFromCookie();
+    if (marketingLink) await linkMarketingAccount(marketingLink, user);
     redirect(nextPath);
   }
 

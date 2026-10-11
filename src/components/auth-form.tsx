@@ -70,6 +70,8 @@ export function AuthForm({
         return;
       }
 
+      await fetch("/api/marketing/account", { method: "POST" }).catch(() => undefined);
+
       router.push(nextPath || "/");
       router.refresh();
     });

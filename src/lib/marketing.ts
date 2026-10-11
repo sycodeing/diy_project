@@ -10,6 +10,7 @@ export type MarketingEventType =
   | "link_clicked"
   | "design_opened"
   | "preview_ready"
+  | "account_linked"
   | "checkout_started"
   | "payment_completed";
 
@@ -33,12 +34,48 @@ export async function getActiveMarketingLinkFromCookie() {
 
   const { data } = await supabase
     .from("marketing_links")
-    .select("id,expires_at,source_hash,source_image_url")
+    .select("id,expires_at,source_hash,source_image_url,created_at,account_user_id")
     .eq("token_hash", hashMarketingToken(token))
     .gt("expires_at", new Date().toISOString())
     .maybeSingle();
 
   return data ?? null;
+}
+
+export async function linkMarketingAccount(
+  marketingLink: NonNullable<Awaited<ReturnType<typeof getActiveMarketingLinkFromCookie>>>,
+  user: { id: string; created_at: string },
+) {
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) return { error: new Error("Marketing storage is not configured.") };
+
+  if (marketingLink.account_user_id && marketingLink.account_user_id !== user.id) {
+    return { error: new Error("This marketing link is already associated with another account.") };
+  }
+  if (marketingLink.account_user_id === user.id) {
+    return recordMarketingEvent(marketingLink.id, "account_linked", {
+      wasNewAccount: false,
+    });
+  }
+
+  const wasNewAccount =
+    new Date(user.created_at).getTime() >= new Date(marketingLink.created_at).getTime() - 5 * 60 * 1000;
+  const { data: updated, error: updateError } = await supabase
+    .from("marketing_links")
+    .update({
+      account_user_id: user.id,
+      account_linked_at: new Date().toISOString(),
+      account_was_created: wasNewAccount,
+    })
+    .eq("id", marketingLink.id)
+    .is("account_user_id", null)
+    .select("id")
+    .maybeSingle();
+  if (updateError || !updated) {
+    return { error: updateError ?? new Error("Marketing account attribution changed concurrently.") };
+  }
+
+  return recordMarketingEvent(marketingLink.id, "account_linked", { wasNewAccount });
 }
 
 export type MarketingPreview = {

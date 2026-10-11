@@ -15,6 +15,7 @@ create table if not exists leads (
   id integer primary key autoincrement,
   post_id text not null unique,
   author_hash text not null,
+  author_handle text,
   media_url text not null,
   media_sha256 text unique,
   post_url text,
@@ -63,6 +64,10 @@ create table if not exists outreach (
 create index if not exists leads_review_idx on leads(status, score desc, discovered_at desc);
 """
 
+LEAD_COLUMN_MIGRATIONS = {
+    "author_handle": "text",
+}
+
 
 class Database:
     def __init__(self, path: Path):
@@ -70,6 +75,12 @@ class Database:
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            existing_columns = {
+                row["name"] for row in connection.execute("pragma table_info(leads)").fetchall()
+            }
+            for column, definition in LEAD_COLUMN_MIGRATIONS.items():
+                if column not in existing_columns:
+                    connection.execute(f"alter table leads add column {column} {definition}")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

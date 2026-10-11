@@ -22,3 +22,12 @@ def test_retention_clears_media_but_keeps_metadata(tmp_path):
     lead = db.get_lead(lead_id)
     assert lead["media_url"] == ""
     assert lead["post_id"] == "1"
+
+
+def test_existing_database_receives_author_handle_column(tmp_path):
+    path = tmp_path / "legacy.sqlite3"
+    db = Database(path)
+    with db.connect() as connection:
+        connection.execute("update leads set author_handle = 'pet_owner' where 1 = 0")
+        columns = {row["name"] for row in connection.execute("pragma table_info(leads)")}
+    assert "author_handle" in columns

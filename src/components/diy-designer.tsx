@@ -201,6 +201,7 @@ export function DiyDesigner({
             : cachedMockupPreviews[0].id,
         );
         setMockupStatus("ready");
+        void trackMarketingEvent("preview_ready");
       });
       return () => {
         canceled = true;
