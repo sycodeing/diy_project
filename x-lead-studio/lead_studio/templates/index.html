@@ -1,17 +1,74 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>X Lead Studio</title><style>
-body{font-family:system-ui;background:#111;color:#eee;margin:0}main{max-width:1200px;margin:auto;padding:28px}section,article{background:#191919;border:1px solid #343434;border-radius:12px;padding:18px;margin:14px 0}input,select,textarea,button{background:#0d0d0d;color:#eee;border:1px solid #444;border-radius:8px;padding:10px}button{background:#d8ff57;color:#111;font-weight:800;cursor:pointer}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}.muted{color:#aaa}code{word-break:break-all}a{color:#d8ff57}summary{cursor:pointer;font-weight:800}</style></head><body><main>
-<h1>Local X Lead Studio</h1><p class="muted">Read-only discovery, human review, manual sending. X identity and analysis stay on this computer.</p>
-<section><h2>1. Self-owned X account cookie</h2><p>Status: {{ "configured" if cookie_configured else "not configured" }}. Stored with Windows DPAPI; never shown again.</p><form action="/settings/cookie" method="post"><input name="cookie" type="password" required placeholder="auth_token=...; ct0=..." style="width:70%"><button>Encrypt and save</button></form></section>
-<section><h2>2. Discover candidates</h2><form id="search"><input name="query" value="{{ default_query }}" style="width:60%"><select name="product"><option>Latest</option><option>Top</option><option>Media</option></select><input name="limit" type="number" min="1" max="50" value="30"><button>Run read-only search</button></form><pre id="search-result"></pre></section>
-<section><h2>Review queue</h2><div class="grid">{% for lead in leads %}<article><strong>#{{ lead.id }} · {{ lead.status }} · score {{ lead.score if lead.score is not none else "—" }}</strong><p><a href="{{ lead.post_url }}" target="_blank" rel="noreferrer">Open source post</a></p><code>{{ lead.author_hash[:12] }}…</code><p>{{ lead.pet_type or "Not analyzed" }}</p><p><button onclick="manualAnalyze({{ lead.id }})">Manual qualify</button> <button onclick="visionAnalyze({{ lead.id }})">Vision analyze</button> <button onclick="renderLead({{ lead.id }})">Render 4</button></p><p><button onclick="makeLink({{ lead.id }})">Create link</button> <button onclick="suppressLead({{ lead.id }})">Suppress</button></p>{% if lead.marketing_url %}<p><a href="{{ lead.marketing_url }}" target="_blank" rel="noreferrer">Promotion link</a></p>{% endif %}<details><summary>Drafts</summary><p>{{ lead.consent_copy or "Analyze first" }}</p><p>{{ lead.public_copy or "" }}</p><p>{{ lead.dm_copy or "" }}</p></details><pre id="lead-{{ lead.id }}"></pre></article>{% else %}<p>No candidates yet.</p>{% endfor %}</div></section>
-<section><details><summary>Advanced read-only browser</summary><p class="muted">Allowed: {{ operations|join(", ") }}</p><form id="advanced"><select name="operation">{% for operation in operations %}<option>{{ operation }}</option>{% endfor %}</select><textarea name="arguments" rows="4" style="width:70%">{}</textarea><input name="limit" type="number" value="20" min="1" max="100"><button>Query</button></form><pre id="advanced-result"></pre></details></section>
-</main><script>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>X 用户筛选器</title>
+  <style>
+    body{font-family:system-ui;background:#f4f7f6;color:#17201e;margin:0}main{max-width:1200px;margin:auto;padding:28px}section,article{background:#fff;border:1px solid #dbe5e2;border-radius:12px;padding:18px;margin:14px 0}input,select,textarea,button{background:#fff;color:#17201e;border:1px solid #b8c9c4;border-radius:8px;padding:10px}button{background:#157c70;color:#fff;font-weight:800;cursor:pointer}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}.muted{color:#62726e}code{word-break:break-all}a{color:#116f65}summary{cursor:pointer;font-weight:800}.notice{background:#edf8f5;border-color:#acd9d0}
+  </style>
+</head>
+<body>
+<main>
+  <h1>本机 X 用户筛选器</h1>
+  <p class="muted">只读发现、人工审核、手动联系。X 身份凭据和原始分析仅保存在这台电脑。</p>
+
+  <section class="notice">
+    <h2>1. 导入本人 X 账号 Cookie</h2>
+    <p>当前状态：<strong>{{ "已配置" if cookie_configured else "尚未配置" }}</strong>。Cookie 会使用 Windows DPAPI 加密保存，提交后不会再次显示，也不会上传到网站。</p>
+    <p class="muted">格式必须同时包含 <code>auth_token</code> 与 <code>ct0</code>，例如：<code>auth_token=...; ct0=...</code></p>
+    <form action="/settings/cookie" method="post">
+      <input name="cookie" type="password" required placeholder="auth_token=...; ct0=..." style="width:70%">
+      <button>加密并保存</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>2. 本机手动筛选</h2>
+    <p class="muted">网站后台的任务会自动领取；这里保留一个本机手动测试入口。</p>
+    <form id="search">
+      <input name="query" value="{{ default_query }}" style="width:50%">
+      <select name="segment">
+        <option value="custom">自定义</option>
+        {% for segment in search_segments %}<option value="{{ segment.key }}">{{ segment.label }}</option>{% endfor %}
+      </select>
+      <select name="product"><option value="Latest">最新帖子</option><option value="Top">热门帖子</option><option value="Media">图片帖子</option></select>
+      <input name="limit" type="number" min="1" max="50" value="30">
+      <button>运行只读筛选</button>
+    </form>
+    <pre id="search-result"></pre>
+  </section>
+
+  <section>
+    <h2>本机审核队列</h2>
+    <div class="grid">
+      {% for lead in leads %}
+      <article>
+        <strong>#{{ lead.id }} · {{ lead.status }} · 评分 {{ lead.score if lead.score is not none else "—" }}</strong>
+        <p><a href="{{ lead.post_url }}" target="_blank" rel="noreferrer">打开来源帖子</a></p>
+        <code>{{ lead.author_hash[:12] }}…</code>
+        <p>{{ lead.pet_type or "尚未分析" }}</p>
+        <p><button onclick="manualAnalyze({{ lead.id }})">人工判定</button> <button onclick="visionAnalyze({{ lead.id }})">视觉分析</button> <button onclick="renderLead({{ lead.id }})">生成 4 张预览</button></p>
+        <p><button onclick="makeLink({{ lead.id }})">创建链接</button> <button onclick="suppressLead({{ lead.id }})">不再联系</button></p>
+        {% if lead.marketing_url %}<p><a href="{{ lead.marketing_url }}" target="_blank" rel="noreferrer">打开营销链接</a></p>{% endif %}
+        <details><summary>营销文案</summary><p>{{ lead.consent_copy or "请先完成分析" }}</p><p>{{ lead.public_copy or "" }}</p><p>{{ lead.dm_copy or "" }}</p></details>
+        <pre id="lead-{{ lead.id }}"></pre>
+      </article>
+      {% else %}<p>暂无候选用户。</p>{% endfor %}
+    </div>
+  </section>
+
+  <section><details><summary>高级只读查询</summary><p class="muted">允许操作：{{ operations|join(", ") }}</p><form id="advanced"><select name="operation">{% for operation in operations %}<option>{{ operation }}</option>{% endfor %}</select><textarea name="arguments" rows="4" style="width:70%">{}</textarea><input name="limit" type="number" value="20" min="1" max="100"><button>查询</button></form><pre id="advanced-result"></pre></details></section>
+</main>
+<script>
 async function submitJson(form,url,result){const data=Object.fromEntries(new FormData(form));data.limit=Number(data.limit);if(data.arguments)data.arguments=JSON.parse(data.arguments);const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(data)});document.getElementById(result).textContent=JSON.stringify(await r.json(),null,2)}
 document.getElementById('search').addEventListener('submit',e=>{e.preventDefault();submitJson(e.currentTarget,'/api/search','search-result')});document.getElementById('advanced').addEventListener('submit',e=>{e.preventDefault();submitJson(e.currentTarget,'/api/x/read','advanced-result')});
 async function leadAction(id,path,body){const r=await fetch(`/api/leads/${id}/${path}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body||{})});document.getElementById(`lead-${id}`).textContent=JSON.stringify(await r.json(),null,2)}
-function manualAnalyze(id){leadAction(id,'analyze',{mode:'manual',has_pet:true,pet_type:prompt('Pet type','dog')||'pet',pet_count:1,pet_confidence:90,clarity:85,print_fit:85,engagement_quality:70,account_quality:70,sensitive:false,advertisement:false,person_primary:false,minor_primary:false})}
+function manualAnalyze(id){leadAction(id,'analyze',{mode:'manual',has_pet:true,pet_type:prompt('宠物类型','dog')||'pet',pet_count:1,pet_confidence:90,clarity:85,print_fit:85,engagement_quality:70,account_quality:70,sensitive:false,advertisement:false,person_primary:false,minor_primary:false})}
 function visionAnalyze(id){leadAction(id,'analyze',{mode:'vision'})}
 function renderLead(id){leadAction(id,'render',{})}
-function makeLink(id){leadAction(id,'marketing-link',{campaign:prompt('Campaign','pet-pillow-us')||'pet-pillow-us',channel:prompt('Channel: consent_reply, public_reply, or direct_message','consent_reply')||'consent_reply',variant:prompt('Variant','a')||'a'})}
-function suppressLead(id){leadAction(id,'suppress?reason='+encodeURIComponent(prompt('Reason','rejected')||'rejected'),{})}
-</script></body></html>
+function makeLink(id){leadAction(id,'marketing-link',{campaign:prompt('营销活动','pet-pillow-us')||'pet-pillow-us',channel:prompt('方式：consent_reply、public_reply 或 direct_message','consent_reply')||'consent_reply',variant:prompt('版本','a')||'a'})}
+function suppressLead(id){leadAction(id,'suppress?reason='+encodeURIComponent(prompt('原因','rejected')||'rejected'),{})}
+</script>
+</body>
+</html>
