@@ -116,3 +116,9 @@ export function getMarketingIngestSecret() {
   const secret = process.env.MARKETING_INGEST_SECRET?.trim();
   return secret && secret.length >= 32 && !secret.startsWith("your-") ? secret : undefined;
 }
+
+export function getXLeadWorkerSecret() {
+  const secret = process.env.X_LEAD_WORKER_SECRET?.trim();
+  if (secret && secret.length >= 32 && !secret.startsWith("your-")) return secret;
+  return getMarketingIngestSecret();
+}

@@ -20,6 +20,7 @@ CREDENTIAL_PATH = DATA_DIR / "x-cookie.dpapi"
 class Settings:
     diy_site_url: str = os.getenv("DIY_SITE_URL", "http://localhost:3000").rstrip("/")
     marketing_secret: str = os.getenv("MARKETING_INGEST_SECRET", "")
+    worker_secret: str = os.getenv("X_LEAD_WORKER_SECRET", os.getenv("MARKETING_INGEST_SECRET", ""))
     vision_mode: str = os.getenv("VISION_MODE", "manual")
     vision_base_url: str = os.getenv("VISION_BASE_URL", "https://api.openai.com/v1").rstrip("/")
     vision_api_key: str = os.getenv("VISION_API_KEY", "")

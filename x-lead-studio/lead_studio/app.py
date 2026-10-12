@@ -407,7 +407,7 @@ async def _collect_search(
 
 
 async def _remote_queue_loop() -> None:
-    if len(settings.marketing_secret) < 32:
+    if len(settings.worker_secret) < 32:
         return
     worker_id = f"{socket.gethostname()}-x-lead-studio"[:120]
     await asyncio.sleep(5)
@@ -416,7 +416,7 @@ async def _remote_queue_loop() -> None:
             async with httpx.AsyncClient(timeout=30) as client:
                 response = await client.post(
                     f"{settings.diy_site_url}/api/x-leads/worker/jobs/claim",
-                    headers={"Authorization": f"Bearer {settings.marketing_secret}"},
+                    headers={"Authorization": f"Bearer {settings.worker_secret}"},
                     json={
                         "workerId": worker_id,
                         "cookieConfigured": CREDENTIAL_PATH.exists(),
@@ -549,7 +549,7 @@ async def _report_remote_job(
     async with httpx.AsyncClient(timeout=45) as client:
         response = await client.post(
             f"{settings.diy_site_url}/api/x-leads/worker/jobs/{job_id}/complete",
-            headers={"Authorization": f"Bearer {settings.marketing_secret}"},
+            headers={"Authorization": f"Bearer {settings.worker_secret}"},
             json={
                 "workerId": worker_id,
                 "status": status,

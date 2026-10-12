@@ -1,10 +1,10 @@
 import "server-only";
 
 import { timingSafeEqual } from "node:crypto";
-import { getMarketingIngestSecret } from "@/lib/env";
+import { getXLeadWorkerSecret } from "@/lib/env";
 
 export function isAuthorizedXLeadWorker(request: Request) {
-  const secret = getMarketingIngestSecret();
+  const secret = getXLeadWorkerSecret();
   const authorization = request.headers.get("authorization") ?? "";
   if (!secret || !authorization.startsWith("Bearer ")) return false;
 
