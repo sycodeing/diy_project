@@ -4,7 +4,6 @@ import {
   CheckCircle2,
   Clock3,
   CreditCard,
-  ExternalLink,
   ImageDown,
   PackageCheck,
 } from "lucide-react";
@@ -14,13 +13,8 @@ import { FormSubmitButton } from "@/components/form-submit-button";
 import { SetupWarning } from "@/components/setup-warning";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminDesignImageUrls } from "@/lib/design-images";
-import {
-  COLOR_OPTIONS,
-  getOptionLabel,
-  STYLE_OPTIONS,
-} from "@/lib/product-config";
+import { resolveProductProcurement } from "@/lib/product-procurement";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { TEMU_PROCUREMENT_PRODUCT } from "@/lib/temu-procurement";
 import {
   ATTENTION_TEMU_PURCHASE_STATUSES,
   getNextFulfillmentStatus,
@@ -159,17 +153,15 @@ export default async function TemuPurchasesPage({
               const order = ordersById.get(job.order_id);
               const design = order?.design_snapshot;
               const artworkUrls = artworkByOrderId.get(job.order_id) ?? {};
-              const artworkSides: ProductSide[] =
-                design?.selection.productSlug === "custom-pillow"
-                  ? ["front"]
-                  : ["front", "back"];
+              const artworkSides: ProductSide[] = design?.sides.back.kind === "none"
+                ? ["front"]
+                : ["front", "back"];
               const downloadSide =
                 artworkSides.find((side) => artworkUrls[side]) ??
                 artworkSides[0];
               const artworkUrl = artworkUrls[downloadSide];
               const imageDownloadUrl = `/api/admin/orders/${job.order_id}/artwork?side=${downloadSide}`;
-              const productUrl =
-                job.product_url ?? TEMU_PROCUREMENT_PRODUCT.productUrl;
+              const procurement = resolveProductProcurement(design);
               const address = mergeShippingAddresses(
                 job.address_snapshot,
                 order?.shipping,
@@ -184,22 +176,18 @@ export default async function TemuPurchasesPage({
               ]
                 .filter(Boolean)
                 .join("\n");
-              const productSpec = design
-                ? [
-                    design.selection.size,
-                    getOptionLabel(STYLE_OPTIONS, design.selection.style),
-                    getOptionLabel(COLOR_OPTIONS, design.selection.color),
-                  ].join(" / ")
-                : TEMU_PROCUREMENT_PRODUCT.selectionInstruction;
+              const productSpec = design?.productSnapshot
+                ? Object.values(design.productSnapshot.options).join(" / ")
+                : procurement.selectionInstruction;
               const purchaseSummary = [
                 `站内订单：${order?.order_number ?? job.order_id}`,
                 `客户邮箱：${order?.customer_email ?? ""}`,
-                `商品：${TEMU_PROCUREMENT_PRODUCT.productTitle}`,
+                `商品：${procurement.productTitle}`,
                 `规格：${productSpec}`,
-                `下单提示：${TEMU_PROCUREMENT_PRODUCT.selectionInstruction}`,
+                `下单提示：${procurement.selectionInstruction}`,
                 `数量：${job.quantity}`,
-                `Goods ID：${job.goods_id ?? TEMU_PROCUREMENT_PRODUCT.goodsId}`,
-                `商品链接：${productUrl ?? ""}`,
+                `Goods ID：${job.goods_id ?? procurement.goodsId}`,
+                ...(job.sku_id ? [`SKU ID：${job.sku_id}`] : []),
                 artworkUrl
                   ? "定制图：请下载 DIY 图片后上传到 Temu"
                   : "定制图：缺少图片，请先核对订单",
@@ -294,7 +282,7 @@ export default async function TemuPurchasesPage({
                             下单商品
                           </p>
                           <p className="mt-1 font-black">
-                            {TEMU_PROCUREMENT_PRODUCT.productTitle}
+                            {procurement.productTitle}
                           </p>
                           <div className="mt-3">
                             <CopyField label="选择规格" value={productSpec} />
@@ -305,21 +293,13 @@ export default async function TemuPurchasesPage({
                             <CopyField
                               label="Goods ID"
                               value={
-                                job.goods_id ?? TEMU_PROCUREMENT_PRODUCT.goodsId
+                                job.goods_id ?? procurement.goodsId ?? "未配置"
                               }
                             />
+                            {job.sku_id ? <CopyField label="SKU ID" value={job.sku_id} /> : null}
+                            <CopyField label="下单提示" value={procurement.selectionInstruction} />
                           </div>
                           <div className="mt-3 flex flex-wrap gap-2">
-                            {productUrl ? (
-                              <a
-                                className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-accent px-3 text-sm font-black text-accent-ink"
-                                href={productUrl}
-                                rel="noreferrer"
-                                target="_blank"
-                              >
-                                打开 Temu 商品 <ExternalLink size={15} />
-                              </a>
-                            ) : null}
                             {artworkUrl ? (
                               <a
                                 className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 text-sm font-bold text-foreground"

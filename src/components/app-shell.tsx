@@ -25,14 +25,14 @@ export async function AppShell({
       className={`${admin ? "admin-theme " : ""}grain flex min-h-[100dvh] flex-col bg-background text-foreground`}
     >
       <header className="sticky top-0 z-40 border-b border-line bg-panel/95 backdrop-blur-xl">
-        <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4 sm:px-6">
-          <Link href="/" className="flex shrink-0 items-center gap-2 sm:gap-3">
+        <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-3 sm:px-6">
+          <Link href="/" className="flex min-h-11 shrink-0 items-center gap-2 sm:gap-3">
             <span
               className={`flex size-9 items-center justify-center rounded-xl bg-accent text-accent-ink shadow-sm ${admin ? "shadow-blue-900/15" : "shadow-teal-900/15"}`}
             >
               <Package size={18} strokeWidth={2} />
             </span>
-            <span className="leading-none">
+            <span className={`${user ? "hidden min-[380px]:block" : "hidden min-[340px]:block"} leading-none`}>
               <span className="block whitespace-nowrap text-xs font-black uppercase tracking-[0.14em] sm:text-sm sm:tracking-[0.18em]">
                 Studio Blank
               </span>
@@ -47,7 +47,7 @@ export async function AppShell({
               <>
                 <Link
                   aria-label="Design"
-                  className="focus-ring inline-flex size-10 items-center justify-center rounded-lg text-muted transition hover:bg-surface hover:text-foreground sm:size-auto sm:px-3 sm:py-2"
+                  className="focus-ring inline-flex size-11 items-center justify-center rounded-lg text-muted transition hover:bg-surface hover:text-foreground sm:size-auto sm:min-h-11 sm:px-3 sm:py-2"
                   href="/products"
                 >
                   <ImageUp size={17} />
@@ -55,7 +55,7 @@ export async function AppShell({
                 </Link>
                 <Link
                   aria-label="Orders"
-                  className="focus-ring inline-flex size-10 items-center justify-center rounded-lg text-muted transition hover:bg-surface hover:text-foreground sm:size-auto sm:px-3 sm:py-2"
+                  className="focus-ring inline-flex size-11 items-center justify-center rounded-lg text-muted transition hover:bg-surface hover:text-foreground sm:size-auto sm:min-h-11 sm:px-3 sm:py-2"
                   href="/orders"
                 >
                   <Package size={17} />
@@ -77,7 +77,7 @@ export async function AppShell({
               <>
                 <Link
                   aria-label={admin ? "个人中心" : "Profile"}
-                  className="focus-ring inline-flex h-10 items-center gap-2 rounded-lg border border-line bg-panel px-2 text-foreground shadow-sm"
+                  className="focus-ring inline-flex h-11 items-center gap-2 rounded-lg border border-line bg-panel px-2 text-foreground shadow-sm"
                   href="/profile"
                 >
                   {avatarUrl ? (
@@ -100,13 +100,13 @@ export async function AppShell({
               <>
                 <Link
                   aria-label="Profile"
-                  className="focus-ring hidden size-10 items-center justify-center rounded-lg text-muted hover:bg-surface hover:text-foreground sm:inline-flex"
+                  className="focus-ring hidden size-11 items-center justify-center rounded-lg text-muted hover:bg-surface hover:text-foreground sm:inline-flex"
                   href="/profile"
                 >
                   <UserRound size={18} />
                 </Link>
                 <Link
-                  className="focus-ring whitespace-nowrap rounded-lg bg-accent px-3 py-2 font-bold text-accent-ink shadow-sm shadow-teal-900/15 transition hover:bg-accent-strong active:translate-y-px sm:px-4"
+                  className="focus-ring inline-flex min-h-11 items-center whitespace-nowrap rounded-lg bg-accent px-3 py-2 font-bold text-accent-ink shadow-sm shadow-teal-900/15 transition hover:bg-accent-strong active:translate-y-px sm:px-4"
                   href="/auth"
                 >
                   Sign in

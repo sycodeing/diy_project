@@ -37,7 +37,7 @@ export function CopyField({
           {label}
         </p>
         <p className={`mt-1 break-words text-sm text-foreground ${multiline ? "whitespace-pre-line" : ""}`}>
-          {value || "—"}
+          {value || "暂无"}
         </p>
       </div>
       <button

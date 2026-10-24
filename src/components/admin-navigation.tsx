@@ -5,8 +5,14 @@ import { usePathname } from "next/navigation";
 
 const links = [
   { href: "/admin/orders", label: "订单管理", matches: ["/admin/orders"] },
+  { href: "/admin/product-intake", label: "商品上新", matches: ["/admin/product-intake"] },
+  { href: "/admin/products", label: "商品管理", matches: ["/admin/products"] },
   { href: "/admin/temu-purchases", label: "人工下单", matches: ["/admin/temu-purchases"] },
   { href: "/admin/marketing", label: "营销数据", matches: ["/admin/marketing"] },
+  { href: "/admin/analytics", label: "用户行为", matches: ["/admin/analytics"] },
+  { href: "/admin/x-leads", label: "X 候选", matches: ["/admin/x-leads", "/admin/x-lead-search"] },
+  { href: "/admin/x-auto-posts", label: "X 自动发送", matches: ["/admin/x-auto-posts", "/admin/x-replies"] },
+  { href: "/admin/x-manual-posts", label: "X 手动发送", matches: ["/admin/x-manual-posts"] },
 ];
 
 export function AdminNavigation({ mobile = false }: { mobile?: boolean }) {

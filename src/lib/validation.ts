@@ -1,17 +1,10 @@
 import { z } from "zod";
 import {
-  COLOR_OPTIONS,
   POSITION_OPTIONS,
-  PRODUCT_SLUG,
   SHAPE_OPTIONS,
-  SIZE_OPTIONS,
-  STYLE_OPTIONS,
 } from "@/lib/product-config";
 import { TEMU_STATUS_OPTIONS } from "@/lib/temu";
 
-const colors: string[] = COLOR_OPTIONS.map((item) => item.value);
-const styles: string[] = STYLE_OPTIONS.map((item) => item.value);
-const sizes: string[] = [...SIZE_OPTIONS];
 const shapes: string[] = SHAPE_OPTIONS.map((item) => item.value);
 const positions: string[] = POSITION_OPTIONS.map((item) => item.value);
 const temuStatuses: string[] = TEMU_STATUS_OPTIONS.map((item) => item.value);
@@ -26,10 +19,10 @@ export const designSideSchema = z.object({
 
 export const checkoutSchema = z.object({
   selection: z.object({
-    productSlug: z.literal(PRODUCT_SLUG),
-    color: z.string().refine((value) => colors.includes(value)),
-    style: z.string().refine((value) => styles.includes(value)),
-    size: z.string().refine((value) => sizes.includes(value)),
+    productSlug: z.string().trim().min(1).max(120),
+    color: z.string().trim().min(1).max(120),
+    style: z.string().trim().min(1).max(120),
+    size: z.string().trim().min(1).max(120),
   }),
   sides: z.object({
     front: designSideSchema,

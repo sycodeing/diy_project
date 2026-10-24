@@ -1,0 +1,27 @@
+{
+  "template_id": "face-towel-02-tabletop",
+  "name": "Tabletop towel",
+  "render_mode": "psd_multiply",
+  "output_width": 1500,
+  "output_height": 1500,
+  "artwork_layout": {
+    "mode": "single_rotated",
+    "content_width": 1051,
+    "content_height": 1189,
+    "surface_width": 623,
+    "surface_height": 1010,
+    "rotation_degrees": 30.4
+  },
+  "print_area": {
+    "type": "quad",
+    "points": [
+      [208, 178],
+      [1259, 178],
+      [1259, 1367],
+      [208, 1367]
+    ]
+  },
+  "blend": {
+    "mask_opacity": 1.0
+  }
+}

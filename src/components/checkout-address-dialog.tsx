@@ -14,11 +14,13 @@ export function CheckoutAddressDialog({
   initialAddress,
   onClose,
   onConfirm,
+  onValidationError,
   paypalEnabled,
 }: {
   initialAddress: ShippingAddress;
   onClose: () => void;
   onConfirm: (address: ShippingAddress, paymentProvider: "stripe" | "paypal") => void;
+  onValidationError?: () => void;
   paypalEnabled: boolean;
 }) {
   const [message, setMessage] = useState<string | null>(null);
@@ -42,6 +44,7 @@ export function CheckoutAddressDialog({
     const validation = validateShippingAddress(address);
 
     if (!validation.ok) {
+      onValidationError?.();
       setMessage(validation.message);
       return;
     }
@@ -66,8 +69,9 @@ export function CheckoutAddressDialog({
             </p>
           </div>
           <button
+            data-analytics="checkout-cancel"
             aria-label="Close address form"
-            className="focus-ring grid size-10 shrink-0 place-items-center rounded-lg border border-line bg-surface text-muted hover:text-foreground"
+            className="focus-ring grid size-11 shrink-0 place-items-center rounded-lg border border-line bg-surface text-muted hover:text-foreground"
             onClick={onClose}
             type="button"
           >
@@ -75,7 +79,7 @@ export function CheckoutAddressDialog({
           </button>
         </div>
 
-        <form className="mt-6 grid gap-4 sm:grid-cols-2" onSubmit={submit}>
+        <form className="mt-6 grid gap-4 sm:grid-cols-2" noValidate onSubmit={submit}>
           <AddressField
             autoComplete="name"
             defaultValue={initialAddress.fullName}
@@ -151,6 +155,7 @@ export function CheckoutAddressDialog({
 
           <div className="flex flex-col-reverse gap-3 border-t border-line pt-4 sm:col-span-2 sm:flex-row sm:items-center sm:justify-between">
             <button
+              data-analytics="address-back"
               className="focus-ring h-12 rounded-lg border border-line bg-panel px-5 font-bold text-muted hover:bg-surface hover:text-foreground"
               onClick={onClose}
               type="button"
@@ -159,6 +164,7 @@ export function CheckoutAddressDialog({
             </button>
             <div className="grid gap-2 sm:grid-cols-2">
               <button
+                data-analytics="card-payment"
                 className="focus-ring inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-line bg-panel px-5 font-bold text-foreground hover:bg-surface"
                 name="paymentProvider"
                 type="submit"
@@ -168,6 +174,7 @@ export function CheckoutAddressDialog({
               </button>
               {paypalEnabled ? (
                 <button
+                  data-analytics="paypal-payment"
                   className="focus-ring inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-[#ffc439] px-5 font-black text-[#172c45] hover:bg-[#f2b724]"
                   name="paymentProvider"
                   type="submit"

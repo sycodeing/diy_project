@@ -16,7 +16,8 @@ export function SignOutButton({ label = "Sign out" }: { label?: string }) {
 
   return (
     <button
-      className="focus-ring inline-flex items-center gap-2 rounded-lg border border-line bg-panel px-3 py-2 text-sm text-muted transition hover:bg-surface hover:text-foreground active:translate-y-px"
+      aria-label={label}
+      className="focus-ring inline-flex size-11 items-center justify-center gap-2 rounded-lg border border-line bg-panel text-sm text-muted transition hover:bg-surface hover:text-foreground active:translate-y-px sm:size-auto sm:min-h-11 sm:px-3 sm:py-2"
       onClick={signOut}
       type="button"
     >

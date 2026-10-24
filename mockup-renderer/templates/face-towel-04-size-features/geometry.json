@@ -1,0 +1,36 @@
+{
+  "template_id": "face-towel-04-size-features",
+  "name": "Size and features",
+  "render_mode": "psd_multiply",
+  "output_width": 1500,
+  "output_height": 1500,
+  "artwork_layout": {
+    "mode": "full",
+    "content_width": 780,
+    "content_height": 1199
+  },
+  "print_area": {
+    "type": "quad",
+    "points": [
+      [
+        124,
+        198
+      ],
+      [
+        902,
+        198
+      ],
+      [
+        902,
+        1395
+      ],
+      [
+        124,
+        1395
+      ]
+    ]
+  },
+  "blend": {
+    "mask_opacity": 1.0
+  }
+}

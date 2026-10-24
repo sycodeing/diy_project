@@ -3,9 +3,22 @@ import Link from "next/link";
 import { ArrowRight, Clock3 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { PRODUCT_CATALOG } from "@/lib/product-catalog";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatMoney } from "@/lib/utils";
 
-export default function ProductsPage() {
+type CatalogProduct = {
+  slug: string;
+  name: string;
+  description: string;
+  image: string;
+  priceCents: number;
+  currency: string;
+  href: string;
+};
+
+export default async function ProductsPage() {
+  const products = await getProducts();
+
   return (
     <AppShell>
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-10 sm:px-6 sm:py-14">
@@ -16,16 +29,21 @@ export default function ProductsPage() {
         </header>
 
         <section aria-label="Available products" className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          {PRODUCT_CATALOG.map((product) => (
+          {products.map((product) => (
             <article className="overflow-hidden rounded-2xl border border-line bg-panel shadow-sm" key={product.slug}>
-              <div className="relative aspect-[4/3] bg-surface">
-                <Image alt={product.name} className="object-cover" fill sizes="(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw" src={product.image} />
+              <div className="relative aspect-square bg-[#e9e4da]">
+                {product.image.startsWith("/") ? (
+                  <Image alt={product.name} className="object-contain" fill sizes="(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw" src={product.image} />
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img alt={product.name} className="h-full w-full object-contain" src={product.image} />
+                )}
                 <span className="absolute left-4 top-4 rounded-full bg-white/95 px-3 py-1 text-xs font-bold text-accent-strong shadow-sm">Available now</span>
               </div>
               <div className="p-5">
                 <div className="flex items-start justify-between gap-3">
                   <h2 className="text-xl font-black">{product.name}</h2>
-                  <p className="shrink-0 font-black">{formatMoney(product.priceCents, "usd")}</p>
+                  <p className="shrink-0 font-black">{formatMoney(product.priceCents, product.currency)}</p>
                 </div>
                 <p className="mt-2 min-h-12 text-sm leading-6 text-muted">{product.description}</p>
                 <Link className="focus-ring mt-5 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 font-bold text-accent-ink hover:bg-accent-strong" href={product.href}>
@@ -44,4 +62,35 @@ export default function ProductsPage() {
       </main>
     </AppShell>
   );
+}
+
+async function getProducts(): Promise<CatalogProduct[]> {
+  const supabase = await createSupabaseServerClient();
+  if (supabase) {
+    const { data } = await supabase.from("products")
+      .select("slug,name,description,base_price_cents,currency,card_image_url")
+      .eq("active", true)
+      .order("created_at", { ascending: false });
+    if (data) {
+      return data.map((product) => ({
+        slug: product.slug,
+        name: product.name,
+        description: product.description ?? "Create a personalized product with your photo.",
+        image: product.card_image_url ?? "/showcase/wood-chair.webp",
+        priceCents: product.base_price_cents,
+        currency: product.currency,
+        href: `/design?product=${encodeURIComponent(product.slug)}`,
+      }));
+    }
+  }
+
+  return PRODUCT_CATALOG.filter((product) => product.available).map((product) => ({
+    slug: product.slug,
+    name: product.name,
+    description: product.description,
+    image: product.image,
+    priceCents: product.priceCents,
+    currency: "usd",
+    href: `${product.href}?product=${encodeURIComponent(product.slug)}`,
+  }));
 }

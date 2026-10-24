@@ -15,12 +15,27 @@ create table if not exists leads (
   id integer primary key autoincrement,
   post_id text not null unique,
   author_hash text not null,
+  author_handle text,
   media_url text not null,
   media_sha256 text unique,
   post_url text,
   posted_at text,
   discovered_at text not null,
   status text not null default 'new',
+  segment text not null default 'custom',
+  occasion text,
+  occasion_confidence integer,
+  ownership_confidence integer,
+  us_confidence integer,
+  us_evidence text,
+  organization integer not null default 0,
+  advertisement integer not null default 0,
+  like_count integer not null default 0,
+  reply_count integer not null default 0,
+  repost_count integer not null default 0,
+  view_count integer not null default 0,
+  followers_count integer not null default 0,
+  targeting_json text,
   pet_type text,
   pet_count integer,
   clarity integer,
@@ -30,6 +45,7 @@ create table if not exists leads (
   recency_score integer,
   account_quality integer,
   sensitive integer not null default 0,
+  advertisement_visual integer not null default 0,
   person_primary integer not null default 0,
   minor_primary integer not null default 0,
   score integer,
@@ -63,6 +79,25 @@ create table if not exists outreach (
 create index if not exists leads_review_idx on leads(status, score desc, discovered_at desc);
 """
 
+LEAD_COLUMN_MIGRATIONS = {
+    "author_handle": "text",
+    "segment": "text not null default 'custom'",
+    "occasion": "text",
+    "occasion_confidence": "integer",
+    "ownership_confidence": "integer",
+    "us_confidence": "integer",
+    "us_evidence": "text",
+    "organization": "integer not null default 0",
+    "advertisement": "integer not null default 0",
+    "advertisement_visual": "integer not null default 0",
+    "like_count": "integer not null default 0",
+    "reply_count": "integer not null default 0",
+    "repost_count": "integer not null default 0",
+    "view_count": "integer not null default 0",
+    "followers_count": "integer not null default 0",
+    "targeting_json": "text",
+}
+
 
 class Database:
     def __init__(self, path: Path):
@@ -70,6 +105,13 @@ class Database:
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            existing = {row[1] for row in connection.execute("pragma table_info(leads)")}
+            for name, declaration in LEAD_COLUMN_MIGRATIONS.items():
+                if name not in existing:
+                    connection.execute(f"alter table leads add column {name} {declaration}")
+            connection.execute(
+                "create index if not exists leads_segment_idx on leads(segment,status,discovered_at desc)"
+            )
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

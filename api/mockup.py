@@ -28,6 +28,7 @@ def health() -> dict[str, str]:
 @app.post("/api/mockup")
 async def render_mockup(
     template_id: str = Form("pillow-psd-01"),
+    focus_mode: str | None = Form(None),
     artwork: UploadFile = File(...),
 ) -> Response:
     if not artwork.content_type or not artwork.content_type.startswith("image/"):
@@ -38,7 +39,9 @@ async def render_mockup(
         raise HTTPException(status_code=413, detail="artwork exceeds 10 MB")
 
     try:
-        rendered = render_preview(template_id, BytesIO(payload))
+        if focus_mode not in {None, "pet_head"}:
+            raise ValueError(f"Unsupported focus mode: {focus_mode}")
+        rendered = render_preview(template_id, BytesIO(payload), focus_mode)
     except TemplateNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (UnidentifiedImageError, ValueError) as exc:

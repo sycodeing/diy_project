@@ -1,7 +1,8 @@
 import { createShippingFingerprint, normalizeShippingAddress } from "@/lib/shipping";
-import { TEMU_PROCUREMENT_PRODUCT } from "@/lib/temu-procurement";
+import { getProcurementJobStatus, resolveProductProcurement } from "@/lib/product-procurement";
 import type { ShippingAddress } from "@/lib/types";
 import type { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { recordCustomerActivity } from "@/lib/customer-activity";
 
 export async function completePayPalPayment({
   amountCents,
@@ -20,7 +21,7 @@ export async function completePayPalPayment({
 }) {
   const { data: order, error: readError } = await supabase
     .from("orders")
-    .select("id,order_number,amount_cents,currency,shipping,paid_at,fulfillment_status,payment_status,payment_provider,paypal_order_id,paypal_capture_id,marketing_link_id")
+    .select("id,order_number,amount_cents,currency,shipping,paid_at,fulfillment_status,payment_status,payment_provider,paypal_order_id,paypal_capture_id,marketing_link_id,activity_session_id,design_snapshot")
     .eq("paypal_order_id", paypalOrderId)
     .maybeSingle();
 
@@ -38,6 +39,7 @@ export async function completePayPalPayment({
   }
 
   const shipping = normalizeShippingAddress(order.shipping as ShippingAddress);
+  const procurement = resolveProductProcurement(order.design_snapshot);
   const { error: orderUpdateError } = await supabase
     .from("orders")
     .update({
@@ -66,12 +68,13 @@ export async function completePayPalPayment({
   const { error: jobError } = await supabase.from("temu_purchase_jobs").upsert(
     {
       order_id: order.id,
-      status: "ready_for_payment",
-      product_url: TEMU_PROCUREMENT_PRODUCT.productUrl,
-      goods_id: TEMU_PROCUREMENT_PRODUCT.goodsId,
-      sku_id: null,
-      expected_amount_cents: null,
-      currency: TEMU_PROCUREMENT_PRODUCT.currency || order.currency,
+      status: getProcurementJobStatus(procurement),
+      product_url: null,
+      goods_id: procurement.goodsId,
+      sku_id: procurement.skuId,
+      quantity: procurement.quantity,
+      expected_amount_cents: procurement.expectedAmountCents,
+      currency: procurement.currency || order.currency,
       address_snapshot: shipping,
       address_fingerprint: createShippingFingerprint(shipping),
       idempotency_key: `temu-purchase:${order.id}`,
@@ -91,6 +94,18 @@ export async function completePayPalPayment({
       { onConflict: "marketing_link_id,event_type", ignoreDuplicates: true },
     );
     if (marketingError) return { ok: false as const, error: marketingError.message };
+  }
+
+  if (order.activity_session_id) {
+    const { error: activityError } = await recordCustomerActivity({
+      sessionId: order.activity_session_id,
+      eventType: "purchase_completed",
+      route: "/checkout/success",
+      target: "paypal",
+      eventKey: `purchase:${order.id}`,
+      orderId: order.id,
+    });
+    if (activityError) console.error("PayPal purchase activity could not be recorded", { orderId: order.id, error: activityError.message });
   }
 
   return { ok: true as const, orderId: order.id, orderNumber: order.order_number };

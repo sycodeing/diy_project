@@ -40,6 +40,18 @@ export type ProductSnapshot = {
   sku: string;
   quantity: number;
   options: Record<string, string>;
+  procurement?: ProductProcurement;
+};
+
+export type ProductProcurement = {
+  provider: "temu" | "manual";
+  productTitle: string;
+  goodsId: string | null;
+  skuId: string | null;
+  selectionInstruction: string;
+  quantity: number;
+  expectedAmountCents: number | null;
+  currency: string;
 };
 
 export type DesignPayload = {

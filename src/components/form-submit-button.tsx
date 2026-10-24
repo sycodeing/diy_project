@@ -4,10 +4,12 @@ import { useFormStatus } from "react-dom";
 
 export function FormSubmitButton({
   className,
+  disabled = false,
   idleLabel,
   pendingLabel = "处理中…",
 }: {
   className: string;
+  disabled?: boolean;
   idleLabel: string;
   pendingLabel?: string;
 }) {
@@ -16,7 +18,7 @@ export function FormSubmitButton({
   return (
     <button
       className={className}
-      disabled={pending}
+      disabled={disabled || pending}
       type="submit"
     >
       {pending ? pendingLabel : idleLabel}

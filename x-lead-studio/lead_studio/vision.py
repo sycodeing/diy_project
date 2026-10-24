@@ -13,7 +13,6 @@ from .config import Settings
 REQUIRED_DEFAULTS = {
     "has_pet": False, "pet_type": "unknown", "pet_count": 0,
     "pet_confidence": 0, "clarity": 0, "print_fit": 0,
-    "engagement_quality": 50, "recency_score": 50, "account_quality": 50,
     "sensitive": False, "advertisement": False, "person_primary": False,
     "minor_primary": False,
 }

@@ -1,0 +1,5 @@
+mockup-renderer/calibration/**
+mockup-renderer/scripts/**
+mockup-renderer/__pycache__/**
+mockup-renderer/*.log
+mockup-renderer/smoke-output.webp

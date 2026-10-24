@@ -6,7 +6,7 @@ import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getTemuStatusLabel } from "@/lib/temu";
-import { TEMU_PROCUREMENT_PRODUCT } from "@/lib/temu-procurement";
+import { getProcurementJobStatus, resolveProductProcurement } from "@/lib/product-procurement";
 import {
   getNextFulfillmentStatus,
   INTERNAL_FULFILLMENT_LABELS,
@@ -23,15 +23,30 @@ export async function refreshTemuJobConfiguration(formData: FormData) {
   if (!supabase) throw new Error("Supabase is not configured.");
 
   const jobId = jobIdSchema.parse(String(formData.get("jobId") ?? ""));
+  const { data: job, error: jobError } = await supabase
+    .from("temu_purchase_jobs")
+    .select("order_id")
+    .eq("id", jobId)
+    .eq("status", "configuration_required")
+    .maybeSingle();
+  if (jobError || !job) throw new Error(jobError?.message ?? "Purchase job not found.");
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("design_snapshot,currency")
+    .eq("id", job.order_id)
+    .maybeSingle();
+  if (orderError || !order) throw new Error(orderError?.message ?? "Order not found.");
+  const procurement = resolveProductProcurement(order.design_snapshot);
   const { error } = await supabase
     .from("temu_purchase_jobs")
     .update({
-      status: "ready_for_payment",
-      product_url: TEMU_PROCUREMENT_PRODUCT.productUrl,
-      goods_id: TEMU_PROCUREMENT_PRODUCT.goodsId,
-      sku_id: null,
-      expected_amount_cents: null,
-      currency: TEMU_PROCUREMENT_PRODUCT.currency,
+      status: getProcurementJobStatus(procurement),
+      product_url: null,
+      goods_id: procurement.goodsId,
+      sku_id: procurement.skuId,
+      quantity: procurement.quantity,
+      expected_amount_cents: procurement.expectedAmountCents,
+      currency: procurement.currency || order.currency,
       last_error_code: null,
       last_error_message: null,
     })

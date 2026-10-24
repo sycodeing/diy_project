@@ -32,13 +32,16 @@ def templates() -> list[dict[str, str]]:
 @app.post("/render-preview")
 async def render_preview_endpoint(
     template_id: str = Form("pillow-psd-01"),
+    focus_mode: str | None = Form(None),
     artwork: UploadFile = File(...),
 ) -> Response:
     if not artwork.content_type or not artwork.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="artwork must be an image")
 
     try:
-        rendered = render_preview(template_id, BytesIO(await artwork.read()))
+        if focus_mode not in {None, "pet_head"}:
+            raise ValueError(f"Unsupported focus mode: {focus_mode}")
+        rendered = render_preview(template_id, BytesIO(await artwork.read()), focus_mode)
     except TemplateNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:

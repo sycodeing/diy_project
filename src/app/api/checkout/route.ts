@@ -1,12 +1,6 @@
-import { NextResponse } from "next/server";
-import {
-  PRODUCT_CURRENCY,
-  PRODUCT_PRICE_CENTS,
-  getOptionLabel,
-  COLOR_OPTIONS,
-  STYLE_OPTIONS,
-} from "@/lib/product-config";
+import { after, NextResponse } from "next/server";
 import { getAppUrl, getPayPalConfig, getStripeConfig } from "@/lib/env";
+import { notifyFirstPaymentTrigger } from "@/lib/first-payment-trigger-alert";
 import { getStripeClient } from "@/lib/stripe";
 import { createPayPalOrder } from "@/lib/paypal";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -18,12 +12,16 @@ import {
   getActiveMarketingLinkFromCookie,
   recordMarketingEvent,
 } from "@/lib/marketing";
+import { getOrCreateActivitySessionId, recordCustomerActivity } from "@/lib/customer-activity";
+import { classifyTraffic } from "@/lib/traffic-classification";
 
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
   const serviceSupabase = getSupabaseServiceClient();
   const stripe = getStripeClient();
   const paypalConfig = getPayPalConfig();
+  const traffic = classifyTraffic(request.headers, new URL(request.url).origin);
+  const isInternal = /(?:^|;\s*)diy_internal_test=1(?:;|$)/.test(request.headers.get("cookie") ?? "");
 
   if (!supabase || !serviceSupabase) {
     return NextResponse.json(
@@ -88,14 +86,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Product is not configured." }, { status: 404 });
   }
 
-  const { data: variant, error: variantError } = await supabase
-    .from("product_variants")
-    .select("id,sku,price_cents,currency")
-    .eq("product_id", product.id)
-    .eq("color", design.selection.color)
-    .eq("style", design.selection.style)
-    .eq("size", design.selection.size)
-    .single();
+  const [{ data: variant, error: variantError }, { data: productOptions }] = await Promise.all([
+    supabase.from("product_variants")
+      .select("id,sku,price_cents,currency,procurement")
+      .eq("product_id", product.id)
+      .eq("color", design.selection.color)
+      .eq("style", design.selection.style)
+      .eq("size", design.selection.size)
+      .eq("active", true)
+      .single(),
+    supabase.from("product_options")
+      .select("option_type,value,label")
+      .eq("product_id", product.id),
+  ]);
 
   if (variantError || !variant) {
     return NextResponse.json({ error: "Selected variant is unavailable." }, { status: 404 });
@@ -117,9 +120,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Could not save design." }, { status: 500 });
   }
 
-  const amountCents = variant.price_cents ?? PRODUCT_PRICE_CENTS;
-  const currency = variant.currency ?? PRODUCT_CURRENCY;
+  const amountCents = variant.price_cents;
+  const currency = variant.currency;
   const marketingLink = await getActiveMarketingLinkFromCookie();
+  const activitySessionId = await getOrCreateActivitySessionId();
 
   const { data: order, error: orderError } = await supabase
     .from("orders")
@@ -144,11 +148,13 @@ export async function POST(request: Request) {
           category: product.category,
           sku: variant.sku,
           quantity: 1,
-          options: getProductOptions(design.selection),
+          options: getProductOptions(design.selection, productOptions ?? []),
+          procurement: variant.procurement,
         },
       },
       shipping,
       marketing_link_id: marketingLink?.id ?? null,
+      activity_session_id: activitySessionId,
     })
     .select("id,order_number")
     .single();
@@ -159,8 +165,8 @@ export async function POST(request: Request) {
 
   const appUrl = getAppUrl(request.url);
   const { automaticTaxEnabled } = getStripeConfig();
-  const productOptions = getProductOptions(design.selection);
-  const productName = [product.name, ...Object.values(productOptions)].join(" / ");
+  const selectedOptions = getProductOptions(design.selection, productOptions ?? []);
+  const productName = [product.name, ...Object.values(selectedOptions)].join(" / ");
 
   if (paymentProvider === "paypal") {
     try {
@@ -196,6 +202,27 @@ export async function POST(request: Request) {
           console.error("PayPal checkout attribution could not be recorded", { orderId: order.id });
         }
       }
+
+      const { error: activityError } = await recordCustomerActivity({
+        sessionId: activitySessionId,
+        eventType: "checkout_started",
+        route: "/design",
+        target: "paypal",
+        eventKey: `checkout:${order.id}`,
+        orderId: order.id,
+        ...traffic,
+        isInternal,
+      });
+      if (activityError) console.error("PayPal checkout activity could not be recorded", { orderId: order.id });
+
+      scheduleFirstPaymentTriggerAlert({
+        amountCents,
+        currency,
+        orderId: order.id,
+        orderNumber: order.order_number,
+        paymentProvider: "paypal",
+        supabase: serviceSupabase,
+      });
 
       return NextResponse.json({ url: paypalOrder.approvalUrl });
     } catch (error) {
@@ -277,20 +304,76 @@ export async function POST(request: Request) {
     }
   }
 
+  const { error: activityError } = await recordCustomerActivity({
+    sessionId: activitySessionId,
+    eventType: "checkout_started",
+    route: "/design",
+    target: "stripe",
+    eventKey: `checkout:${order.id}`,
+    orderId: order.id,
+    ...traffic,
+    isInternal,
+  });
+  if (activityError) console.error("Stripe checkout activity could not be recorded", { orderId: order.id });
+
+  scheduleFirstPaymentTriggerAlert({
+    amountCents,
+    currency,
+    orderId: order.id,
+    orderNumber: order.order_number,
+    paymentProvider: "stripe",
+    supabase: serviceSupabase,
+  });
+
   return NextResponse.json({ url: session.url });
 }
 
-function getProductOptions(selection: Record<string, string>) {
+function scheduleFirstPaymentTriggerAlert({
+  amountCents,
+  currency,
+  orderId,
+  orderNumber,
+  paymentProvider,
+  supabase,
+}: {
+  amountCents: number;
+  currency: string;
+  orderId: string;
+  orderNumber: string;
+  paymentProvider: "paypal" | "stripe";
+  supabase: NonNullable<ReturnType<typeof getSupabaseServiceClient>>;
+}) {
+  after(async () => {
+    const alert = await notifyFirstPaymentTrigger({
+      amountCents,
+      currency,
+      orderId,
+      orderNumber,
+      paymentProvider,
+      supabase,
+    });
+    if (!alert.ok) {
+      console.error("First payment-trigger email could not be sent", {
+        orderId,
+        paymentProvider,
+        error: alert.error,
+      });
+    } else if (alert.status === "not-configured") {
+      console.warn("First payment-trigger email is not configured");
+    }
+  });
+}
+
+function getProductOptions(
+  selection: Record<string, string>,
+  options: Array<{ option_type: string; value: string; label: string }>,
+) {
   return Object.fromEntries(
     Object.entries(selection)
       .filter(([key]) => key !== "productSlug")
       .map(([key, value]) => {
         const label = key.replace(/([A-Z])/g, " $1").replace(/^./, (char) => char.toUpperCase());
-        const displayValue = key === "color"
-          ? getOptionLabel(COLOR_OPTIONS, value)
-          : key === "style"
-            ? getOptionLabel(STYLE_OPTIONS, value)
-            : value;
+        const displayValue = options.find((option) => option.option_type === key && option.value === value)?.label ?? value;
         return [label, displayValue];
       }),
   );

@@ -1,0 +1,36 @@
+{
+  "template_id": "face-towel-03-wall-rail",
+  "name": "Wall rail with two towels",
+  "render_mode": "psd_multiply",
+  "output_width": 1500,
+  "output_height": 1500,
+  "artwork_layout": {
+    "mode": "pair",
+    "content_width": 327,
+    "content_height": 258
+  },
+  "print_area": {
+    "type": "quad",
+    "points": [
+      [
+        68,
+        264
+      ],
+      [
+        678,
+        264
+      ],
+      [
+        678,
+        745
+      ],
+      [
+        68,
+        745
+      ]
+    ]
+  },
+  "blend": {
+    "mask_opacity": 1.0
+  }
+}

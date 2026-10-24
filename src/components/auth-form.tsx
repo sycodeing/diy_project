@@ -80,6 +80,7 @@ export function AuthForm({
       <div className="mb-6 flex rounded-lg border border-line bg-surface p-1">
         {(["sign-in", "sign-up"] as const).map((item) => (
           <button
+            data-analytics="account-mode-toggle"
             className={`focus-ring flex-1 rounded-md px-3 py-2 text-sm font-bold transition ${
               mode === item
                 ? "bg-panel text-foreground shadow-sm"
@@ -137,6 +138,7 @@ export function AuthForm({
         ) : null}
 
         <button
+          data-analytics="account-submit"
           className="focus-ring inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 font-black text-accent-ink transition hover:bg-accent-strong active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
           disabled={isPending}
           type="submit"

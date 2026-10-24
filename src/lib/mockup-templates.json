@@ -1,0 +1,62 @@
+[
+  {
+    "id": "pillow-psd-03-grey-sofa",
+    "label": "Grey sofa close-up",
+    "adminLabel": "灰色沙发近景",
+    "family": "pillow",
+    "cardImageUrl": "/showcase/grey-sofa.webp"
+  },
+  {
+    "id": "pillow-psd-04-size",
+    "label": "18in / 45cm size",
+    "adminLabel": "45cm 尺寸展示",
+    "family": "pillow",
+    "cardImageUrl": "/showcase/size-view.webp"
+  },
+  {
+    "id": "pillow-psd-06-wood-chair",
+    "label": "Wood chair",
+    "adminLabel": "木椅场景",
+    "family": "pillow",
+    "cardImageUrl": "/showcase/wood-chair.webp"
+  },
+  {
+    "id": "pillow-psd-01",
+    "label": "Sofa room",
+    "adminLabel": "沙发房间场景",
+    "family": "pillow",
+    "cardImageUrl": "/showcase/grey-sofa.webp"
+  },
+  {
+    "id": "face-towel-01-wood-rack",
+    "label": "Wood rack with two towels",
+    "adminLabel": "图1：木架双毛巾",
+    "family": "towel",
+    "cardImageUrl": "/showcase/face-towel-card.webp",
+    "fallbackImageUrl": "/showcase/face-towel-01-wood-rack-fallback.webp"
+  },
+  {
+    "id": "face-towel-02-tabletop",
+    "label": "Tabletop towel",
+    "adminLabel": "图2：桌面单毛巾",
+    "family": "towel",
+    "cardImageUrl": "/showcase/face-towel-card.webp",
+    "fallbackImageUrl": "/showcase/face-towel-02-tabletop-fallback.webp"
+  },
+  {
+    "id": "face-towel-03-wall-rail",
+    "label": "Wall rail with two towels",
+    "adminLabel": "图3：墙面双毛巾",
+    "family": "towel",
+    "cardImageUrl": "/showcase/face-towel-card.webp",
+    "fallbackImageUrl": "/showcase/face-towel-03-wall-rail-fallback.webp"
+  },
+  {
+    "id": "face-towel-04-size-features",
+    "label": "Size and features",
+    "adminLabel": "图4：尺寸与特性",
+    "family": "towel",
+    "cardImageUrl": "/showcase/face-towel-card.webp",
+    "fallbackImageUrl": "/showcase/face-towel-04-size-features-fallback.webp"
+  }
+]

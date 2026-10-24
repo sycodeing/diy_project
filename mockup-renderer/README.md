@@ -33,6 +33,7 @@ NEXT_PUBLIC_MOCKUP_RENDERER_URL=http://127.0.0.1:8010
 Multipart fields:
 
 - `template_id`: defaults to `pillow-psd-01`
+- `focus_mode`: optional; use `pet_head` for pet-photo marketing previews
 - `artwork`: image file to place into the product scene
 
 The response is a WebP image.

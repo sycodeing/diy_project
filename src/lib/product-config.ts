@@ -9,7 +9,7 @@ export const PRODUCT_SLUG = "custom-pillow" as const;
 export const PRODUCT_PRICE_CENTS = 1999;
 export const PRODUCT_CURRENCY = "usd";
 
-type ProductArtworkFrame = {
+export type ProductArtworkFrame = {
   aspectRatio: number;
   label: string;
   outputHeight: number;
@@ -34,6 +34,21 @@ export const STYLE_OPTIONS = [
 ];
 
 export const SIZE_OPTIONS = ["18in/45cm"];
+
+export type DesignerProductConfig = {
+  slug: string;
+  name: string;
+  description: string;
+  priceCents: number;
+  currency: string;
+  artworkFrame: ProductArtworkFrame;
+  previewMode: "reuse" | "flat";
+  mockupTemplateIds: string[];
+  colorOptions: Array<{ value: string; label: string; hex: string }>;
+  styleOptions: Array<{ value: string; label: string }>;
+  sizeOptions: Array<{ value: string; label: string }>;
+  defaultDesign: DesignPayload;
+};
 
 export const SHAPE_OPTIONS: Array<{ value: DesignShape; label: string }> = [
   { value: "rectangle", label: "Rectangle" },
@@ -74,6 +89,26 @@ export const DEFAULT_DESIGN: DesignPayload = {
       position: "reverse_center",
     },
   },
+};
+
+export const DEFAULT_PRODUCT_CONFIG: DesignerProductConfig = {
+  slug: PRODUCT_SLUG,
+  name: "Custom Pillow Cover Set",
+  description: "Two personalized 18in/45cm polyester pillow covers. Inserts are not included.",
+  priceCents: PRODUCT_PRICE_CENTS,
+  currency: PRODUCT_CURRENCY,
+  artworkFrame: PRODUCT_ARTWORK_FRAME,
+  previewMode: "reuse",
+  mockupTemplateIds: [
+    "pillow-psd-03-grey-sofa",
+    "pillow-psd-04-size",
+    "pillow-psd-06-wood-chair",
+    "pillow-psd-01",
+  ],
+  colorOptions: [...COLOR_OPTIONS],
+  styleOptions: [...STYLE_OPTIONS],
+  sizeOptions: SIZE_OPTIONS.map((value) => ({ value, label: value })),
+  defaultDesign: DEFAULT_DESIGN,
 };
 
 export function getColorHex(color: string) {

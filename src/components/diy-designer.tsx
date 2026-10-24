@@ -5,6 +5,7 @@ import {
   PointerEvent as ReactPointerEvent,
   WheelEvent as ReactWheelEvent,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useTransition,
@@ -12,16 +13,18 @@ import {
 import { ArrowRight, Check, ImageUp, LoaderCircle, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { CheckoutAddressDialog } from "@/components/checkout-address-dialog";
+import { trackCustomerActivity } from "@/lib/customer-activity-client";
 import {
-  DEFAULT_DESIGN,
-  PRODUCT_ARTWORK_FRAME,
+  DEFAULT_PRODUCT_CONFIG,
   POSITION_OPTIONS,
-  PRODUCT_CURRENCY,
-  PRODUCT_PRICE_CENTS,
   SHAPE_OPTIONS,
-  getColorHex,
+  type DesignerProductConfig,
+  type ProductArtworkFrame,
 } from "@/lib/product-config";
-import { renderMockupPreviewsFromUrl } from "@/lib/mockup-renderer";
+import {
+  getMockupFallbackPreviews,
+  renderMockupPreviewsFromUrl,
+} from "@/lib/mockup-renderer";
 import type { MarketingPreview } from "@/lib/marketing";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type {
@@ -33,7 +36,7 @@ import type {
 } from "@/lib/types";
 import { cn, formatMoney } from "@/lib/utils";
 
-const STORAGE_KEY = "studio-blank-design";
+const STORAGE_KEY_PREFIX = "studio-blank-design";
 const ADDRESS_STORAGE_KEY = "studio-blank-shipping-address";
 const CROP_OUTPUT_TYPE = "image/webp";
 const EMPTY_MOCKUP_PREVIEWS: MarketingPreview[] = [];
@@ -94,6 +97,7 @@ export function DiyDesigner({
   paypalEnabled = false,
   userId = null,
   defaultShippingAddress = null,
+  productConfig = DEFAULT_PRODUCT_CONFIG,
 }: {
   authEnabled?: boolean;
   autoCheckout?: boolean;
@@ -104,14 +108,23 @@ export function DiyDesigner({
   paypalEnabled?: boolean;
   userId?: string | null;
   defaultShippingAddress?: ShippingAddress | null;
+  productConfig?: DesignerProductConfig;
 }) {
   const router = useRouter();
+  const fallbackMockupPreviews = useMemo(
+    () => getMockupFallbackPreviews(productConfig.mockupTemplateIds),
+    [productConfig.mockupTemplateIds],
+  );
+  const initialMockupPreviews = cachedMockupPreviews.length
+    ? cachedMockupPreviews
+    : fallbackMockupPreviews;
+  const storageKey = `${STORAGE_KEY_PREFIX}:${productConfig.slug}`;
   const activeSide: ProductSide = "front";
   const [hasInitialLinkDesign] = useState(
-    () => Boolean(designFromRecord(initialParams)),
+    () => Boolean(designFromRecord(initialParams, productConfig.defaultDesign)),
   );
   const [design, setDesign] = useState<DesignPayload>(
-    () => designFromRecord(initialParams) ?? DEFAULT_DESIGN,
+    () => designFromRecord(initialParams, productConfig.defaultDesign) ?? productConfig.defaultDesign,
   );
   const [hasLoadedDraft, setHasLoadedDraft] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -119,8 +132,11 @@ export function DiyDesigner({
   const [checkoutAddress, setCheckoutAddress] =
     useState<ShippingAddress>(EMPTY_ADDRESS);
   const [isAddressOpen, setIsAddressOpen] = useState(false);
-  const [mockupPreviews, setMockupPreviews] = useState<MockupPreview[]>(cachedMockupPreviews);
-  const [activeMockupId, setActiveMockupId] = useState<string | null>(cachedMockupPreviews[0]?.id ?? null);
+  const [mockupPreviews, setMockupPreviews] = useState<MockupPreview[]>(initialMockupPreviews);
+  const [activeMockupId, setActiveMockupId] = useState<string | null>(initialMockupPreviews[0]?.id ?? null);
+  const [loadedMockupIds, setLoadedMockupIds] = useState<string[]>(
+    cachedMockupPreviews.map((preview) => preview.id),
+  );
   const [mockupStatus, setMockupStatus] = useState<
     "idle" | "rendering" | "ready" | "failed"
   >("idle");
@@ -130,22 +146,23 @@ export function DiyDesigner({
 
   useEffect(() => {
     void trackMarketingEvent("design_opened");
+    trackCustomerActivity("design_opened");
   }, []);
 
   useEffect(() => {
     queueMicrotask(() => {
       if (!hasInitialLinkDesign) {
-        const savedDesign = readStoredDesign();
+        const savedDesign = readStoredDesign(storageKey, productConfig);
         if (savedDesign) setDesign(savedDesign);
       }
       setHasLoadedDraft(true);
     });
-  }, [hasInitialLinkDesign]);
+  }, [hasInitialLinkDesign, productConfig, storageKey]);
 
   useEffect(() => {
     if (!hasLoadedDraft) return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(design));
-  }, [design, hasLoadedDraft]);
+    window.localStorage.setItem(storageKey, JSON.stringify(design));
+  }, [design, hasLoadedDraft, storageKey]);
 
   useEffect(() => {
     if (!autoCheckout) return;
@@ -157,6 +174,7 @@ export function DiyDesigner({
     queueMicrotask(() => {
       setCheckoutAddress(readStoredAddress(getAddressStorageKey(userId), defaultShippingAddress));
       setIsAddressOpen(true);
+      trackCustomerActivity("delivery_opened");
     });
   }, [authEnabled, autoCheckout, defaultShippingAddress, isAuthenticated, router, userId]);
 
@@ -167,6 +185,8 @@ export function DiyDesigner({
   }, []);
 
   useEffect(() => {
+    if (!hasLoadedDraft) return;
+
     const artworkUrl = design.sides.front.imagePreviewUrl;
     let canceled = false;
 
@@ -176,8 +196,25 @@ export function DiyDesigner({
       queueMicrotask(() => {
         if (!canceled) {
           setMockupStatus("idle");
+          setMockupPreviews(fallbackMockupPreviews);
+          setActiveMockupId(fallbackMockupPreviews[0]?.id ?? null);
+          setLoadedMockupIds([]);
+        }
+      });
+      return () => {
+        canceled = true;
+      };
+    }
+
+    if (productConfig.previewMode === "flat") {
+      trackCustomerActivity("preview_started");
+      queueMicrotask(() => {
+        if (!canceled) {
           setMockupPreviews([]);
           setActiveMockupId(null);
+          setMockupStatus("ready");
+          trackCustomerActivity("preview_ready");
+          void trackMarketingEvent("preview_ready");
         }
       });
       return () => {
@@ -192,12 +229,16 @@ export function DiyDesigner({
       queueMicrotask(() => {
         if (canceled) return;
         setMockupPreviews(cachedMockupPreviews);
+        setLoadedMockupIds(cachedMockupPreviews.map((preview) => preview.id));
         setActiveMockupId((current) =>
           cachedMockupPreviews.some((preview) => preview.id === current)
             ? current
             : cachedMockupPreviews[0].id,
         );
         setMockupStatus("ready");
+        trackCustomerActivity("preview_cache_hit", { target: "server-preview-cache" });
+        trackCustomerActivity("preview_ready");
+        void trackMarketingEvent("preview_ready");
       });
       return () => {
         canceled = true;
@@ -206,16 +247,22 @@ export function DiyDesigner({
 
     revokeObjectUrls(mockupObjectUrlsRef.current);
     mockupObjectUrlsRef.current = [];
+    trackCustomerActivity("preview_started");
 
     queueMicrotask(() => {
       if (!canceled) {
-        setMockupPreviews([]);
-        setActiveMockupId(null);
+        setMockupPreviews(fallbackMockupPreviews);
+        setActiveMockupId((current) =>
+          fallbackMockupPreviews.some((preview) => preview.id === current)
+            ? current
+            : fallbackMockupPreviews[0]?.id ?? null,
+        );
+        setLoadedMockupIds([]);
         setMockupStatus("rendering");
       }
     });
 
-    renderMockupPreviewsFromUrl(artworkUrl, (preview) => {
+    renderMockupPreviewsFromUrl(artworkUrl, productConfig.mockupTemplateIds, (preview) => {
       if (canceled) return;
       const nextPreview = {
         id: preview.id,
@@ -223,17 +270,25 @@ export function DiyDesigner({
         url: URL.createObjectURL(preview.blob),
       };
       mockupObjectUrlsRef.current.push(nextPreview.url);
+      setLoadedMockupIds((current) =>
+        current.includes(nextPreview.id) ? current : [...current, nextPreview.id],
+      );
       setMockupPreviews((current) => {
-        const withoutDuplicate = current.filter((item) => item.id !== nextPreview.id);
-        return [...withoutDuplicate, nextPreview];
+        const existingIndex = current.findIndex((item) => item.id === nextPreview.id);
+        if (existingIndex === -1) return [...current, nextPreview];
+        return current.map((item, index) => index === existingIndex ? nextPreview : item);
       });
       setActiveMockupId((current) => current ?? nextPreview.id);
     })
-      .then(() => {
+      .then(({ cacheHitCount }) => {
         if (canceled) {
           return;
         }
         setMockupStatus("ready");
+        if (cacheHitCount > 0) {
+          trackCustomerActivity("preview_cache_hit", { target: "browser-preview-cache" });
+        }
+        trackCustomerActivity("preview_ready");
         void trackMarketingEvent("preview_ready");
       })
       .catch(() => {
@@ -245,7 +300,7 @@ export function DiyDesigner({
     return () => {
       canceled = true;
     };
-  }, [cachedMockupPreviews, cachedMockupSourceImageUrl, design.sides.front.imagePreviewUrl]);
+  }, [cachedMockupPreviews, cachedMockupSourceImageUrl, design.sides.front.imagePreviewUrl, fallbackMockupPreviews, hasLoadedDraft, productConfig.mockupTemplateIds, productConfig.previewMode]);
 
   function updateSide(
     side: ProductSide,
@@ -270,6 +325,8 @@ export function DiyDesigner({
     if (!file) {
       return;
     }
+
+    trackCustomerActivity("upload_started");
 
     setIsReadingImage(true);
     setError(null);
@@ -304,7 +361,7 @@ export function DiyDesigner({
       imagePreviewUrl,
       imagePath: undefined,
       position: "full_panel",
-      shape: PRODUCT_ARTWORK_FRAME.shape === "circle" ? "circle" : "rectangle",
+      shape: productConfig.artworkFrame.shape === "circle" ? "circle" : "rectangle",
     });
     setCropDraft(null);
   }
@@ -318,13 +375,14 @@ export function DiyDesigner({
         }
 
         if (authEnabled && !isAuthenticated) {
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(design));
+          window.localStorage.setItem(storageKey, JSON.stringify(design));
           router.push(`/auth?next=${encodeURIComponent(getCheckoutReturnTo())}`);
           return;
         }
 
         setCheckoutAddress(readStoredAddress(getAddressStorageKey(userId), defaultShippingAddress));
         setIsAddressOpen(true);
+        trackCustomerActivity("delivery_opened");
       } catch (checkoutError) {
         setError(
           checkoutError instanceof Error
@@ -356,7 +414,8 @@ export function DiyDesigner({
           throw new Error(payload.error ?? "Could not prepare payment.");
         }
 
-        window.localStorage.removeItem(STORAGE_KEY);
+        window.localStorage.removeItem(storageKey);
+        trackCustomerActivity("payment_redirected", { target: paymentProvider }, true);
         window.location.href = payload.url;
       } catch (checkoutError) {
         setError(
@@ -381,7 +440,7 @@ export function DiyDesigner({
     } = await supabase.auth.getUser();
 
     if (userError || !user) {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
+      window.localStorage.setItem(storageKey, JSON.stringify(current));
       router.push(`/auth?next=${encodeURIComponent(getCheckoutReturnTo())}`);
       throw new Error("Sign in before checkout.");
     }
@@ -426,28 +485,31 @@ export function DiyDesigner({
       <section className="grid flex-1 gap-5 lg:grid-rows-[1fr_auto]">
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
           <div className="rounded-2xl border border-line bg-panel p-4 shadow-[0_18px_48px_rgba(23,33,31,0.08)] sm:p-6">
-            <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <h1 className="max-w-2xl text-3xl font-black leading-tight tracking-[-0.035em] sm:text-4xl">
-                  {design.sides.front.imagePreviewUrl ? "Preview your custom pillow" : "Upload a photo to begin"}
+            <div className="mb-4 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 sm:mb-5 sm:items-end">
+              <div className="min-w-0">
+                <h1 className="max-w-2xl text-2xl font-black leading-tight tracking-[-0.035em] sm:text-4xl">
+                  {design.sides.front.imagePreviewUrl ? `Preview your ${productConfig.name}` : "Upload a photo to begin"}
                 </h1>
-                <p className="mt-2 text-sm text-muted">Follow the steps below. You can review the result before ordering.</p>
-              </div>
-              <div className="rounded-xl border border-line bg-surface px-4 py-3 text-sm">
-                <p className="text-muted">Base price</p>
-                <p className="text-2xl font-black">
-                  {formatMoney(PRODUCT_PRICE_CENTS, PRODUCT_CURRENCY)}
+                <p className="mt-1.5 text-xs leading-5 text-muted sm:mt-2 sm:text-sm">
+                  <span className="sm:hidden">Upload, preview, then order.</span>
+                  <span className="hidden sm:inline">Follow the steps below. You can review the result before ordering.</span>
                 </p>
-                <p className="mt-1 text-xs text-muted">
-                  2 covers · 18in / 45cm · inserts not included
+              </div>
+              <div className="min-w-[5.6rem] rounded-xl border border-line bg-surface px-3 py-2 text-right text-xs sm:min-w-36 sm:px-4 sm:py-3 sm:text-left sm:text-sm">
+                <p className="text-muted">Base price</p>
+                <p className="text-xl font-black sm:text-2xl">
+                  {formatMoney(productConfig.priceCents, productConfig.currency)}
+                </p>
+                <p className="mt-0.5 text-[0.68rem] text-muted sm:mt-1 sm:text-xs">
+                  {productConfig.sizeOptions[0]?.label ?? productConfig.name}
                 </p>
               </div>
             </div>
 
             <div className="mb-4 grid grid-cols-3 overflow-hidden rounded-xl border border-line bg-surface text-xs font-bold sm:text-sm" aria-label="Order steps">
-              <span className={cn("flex min-h-11 items-center justify-center gap-2 px-2", !design.sides.front.imagePreviewUrl ? "bg-accent text-accent-ink" : "text-accent-strong")}><span className="grid size-6 place-items-center rounded-full border border-current/20 bg-white/20">1</span> Upload</span>
-              <span className={cn("flex min-h-11 items-center justify-center gap-2 px-2", design.sides.front.imagePreviewUrl ? "bg-accent text-accent-ink" : "text-muted")}><span className="grid size-6 place-items-center rounded-full border border-current/20 bg-panel">2</span> Preview</span>
-              <span className="flex min-h-11 items-center justify-center gap-2 px-2 text-muted"><span className="grid size-6 place-items-center rounded-full border border-line bg-panel">3</span> Order</span>
+              <span className={cn("flex min-h-11 items-center justify-center gap-1 px-1 sm:gap-2 sm:px-2", !design.sides.front.imagePreviewUrl ? "bg-accent text-accent-ink" : "text-accent-strong")}><span className="grid size-6 shrink-0 place-items-center rounded-full border border-current/20 bg-white/20">1</span> Upload</span>
+              <span className={cn("flex min-h-11 items-center justify-center gap-1 px-1 sm:gap-2 sm:px-2", design.sides.front.imagePreviewUrl ? "bg-accent text-accent-ink" : "text-muted")}><span className="grid size-6 shrink-0 place-items-center rounded-full border border-current/20 bg-panel">2</span> Preview</span>
+              <span className="flex min-h-11 items-center justify-center gap-1 px-1 text-muted sm:gap-2 sm:px-2"><span className="grid size-6 shrink-0 place-items-center rounded-full border border-line bg-panel">3</span> Order</span>
             </div>
 
             <ContentControls chooseImage={chooseImage} design={design} />
@@ -456,17 +518,16 @@ export function DiyDesigner({
               activeSide={activeSide}
               activeMockupId={activeMockupId}
               design={design}
-              isLoading={
-                isReadingImage ||
-                (mockupStatus === "rendering" && mockupPreviews.length === 0)
-              }
+              isLoading={isReadingImage || mockupStatus === "rendering"}
               loadingLabel={
                 isReadingImage
                   ? "Reading your photo..."
                   : "Rendering four real-scene previews..."
               }
+              loadedMockupIds={loadedMockupIds}
               mockupPreviews={mockupPreviews}
               onSelectMockup={setActiveMockupId}
+              productConfig={productConfig}
             />
 
             <p className="mt-3 text-sm text-muted" role="status" aria-live="polite">
@@ -482,10 +543,10 @@ export function DiyDesigner({
 
           <aside className="h-fit rounded-2xl border border-line bg-panel p-5 shadow-sm lg:sticky lg:top-20">
             <p className="text-lg font-black">Your order</p>
-            <p className="mt-2 text-sm leading-6 text-muted">A set of two 18in / 45cm pillow covers. Inserts are not included.</p>
+            <p className="mt-2 text-sm leading-6 text-muted">{productConfig.description}</p>
             <div className="mt-5 flex items-center justify-between border-t border-line pt-4 text-sm">
               <span className="text-muted">Total</span>
-              <span className="text-xl font-black">{formatMoney(PRODUCT_PRICE_CENTS, PRODUCT_CURRENCY)}</span>
+              <span className="text-xl font-black">{formatMoney(productConfig.priceCents, productConfig.currency)}</span>
             </div>
             <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-sm text-accent-strong">{design.sides.front.imagePreviewUrl ? "Photo added. Review the preview, then continue." : "Start by adding your photo."}</p>
           </aside>
@@ -505,6 +566,7 @@ export function DiyDesigner({
                 : "Configure Supabase and Stripe to accept real orders."}
             </p>
             <button
+              data-analytics="checkout-continue"
               className="focus-ring inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-accent px-5 font-black text-accent-ink shadow-sm shadow-teal-900/15 transition hover:bg-accent-strong active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
               disabled={
                 !design.sides.front.imagePreviewUrl || isPending || isReadingImage || mockupStatus === "rendering"
@@ -529,6 +591,7 @@ export function DiyDesigner({
       {cropDraft ? (
         <PhotoCropper
           draft={cropDraft}
+          frame={productConfig.artworkFrame}
           onApply={applyCroppedImage}
           onCancel={() => setCropDraft(null)}
           onChange={setCropDraft}
@@ -537,8 +600,12 @@ export function DiyDesigner({
       {isAddressOpen ? (
         <CheckoutAddressDialog
           initialAddress={checkoutAddress}
-          onClose={() => setIsAddressOpen(false)}
+          onClose={() => {
+            setIsAddressOpen(false);
+            trackCustomerActivity("delivery_canceled");
+          }}
           onConfirm={confirmOrder}
+          onValidationError={() => trackCustomerActivity("address_validation_failed")}
           paypalEnabled={paypalEnabled}
         />
       ) : null}
@@ -571,7 +638,7 @@ function ContentControls({
   return (
     <div className="grid gap-4">
       <ControlGroup title="Photo">
-        <div className="grid gap-3 sm:grid-cols-[240px_minmax(0,1fr)]">
+        <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3 sm:grid-cols-[240px_minmax(0,1fr)]">
           <label
             className={cn(
               "focus-ring inline-flex h-12 cursor-pointer items-center justify-center gap-2 rounded-lg border px-3 text-sm font-bold transition active:translate-y-px",
@@ -589,10 +656,10 @@ function ContentControls({
               type="file"
             />
           </label>
-          <div className="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-muted">
+          <div className="flex min-h-12 items-center rounded-lg border border-line bg-surface px-3 py-2 text-xs leading-4 text-muted sm:text-sm sm:leading-5">
             {side.imagePreviewUrl
-              ? "Photo loaded. Use the upload button to replace it."
-              : "JPG, PNG or WebP. Your photo is used to prepare the preview."}
+              ? "Photo ready. Tap Image to replace it."
+              : "JPG, PNG or WebP."}
           </div>
         </div>
       </ControlGroup>
@@ -602,11 +669,13 @@ function ContentControls({
 
 function PhotoCropper({
   draft,
+  frame,
   onApply,
   onCancel,
   onChange,
 }: {
   draft: CropDraft;
+  frame: ProductArtworkFrame;
   onApply: (imagePreviewUrl: string) => void;
   onCancel: () => void;
   onChange: (draft: CropDraft) => void;
@@ -626,7 +695,7 @@ function PhotoCropper({
       return;
     }
 
-    renderCropToCanvas(draft, canvas).catch(() => {
+    renderCropToCanvas(draft, canvas, frame).catch(() => {
       if (!canceled) {
         setCropError("Could not preview this image.");
       }
@@ -635,7 +704,7 @@ function PhotoCropper({
     return () => {
       canceled = true;
     };
-  }, [draft]);
+  }, [draft, frame]);
 
   function patchDraft(patch: Partial<CropDraft>) {
     onChange({ ...draft, ...patch });
@@ -767,7 +836,8 @@ function PhotoCropper({
     setCropError(null);
 
     try {
-      onApply(await createCroppedDataUrl(draft));
+      onApply(await createCroppedDataUrl(draft, frame));
+      trackCustomerActivity("crop_confirmed");
     } catch {
       setCropError("Could not crop this image.");
     } finally {
@@ -776,27 +846,27 @@ function PhotoCropper({
   }
 
   const frameClass =
-    PRODUCT_ARTWORK_FRAME.shape === "circle"
+    frame.shape === "circle"
       ? "aspect-square rounded-full"
-      : PRODUCT_ARTWORK_FRAME.aspectRatio === 1
+      : frame.aspectRatio === 1
         ? "aspect-square rounded-lg"
         : "aspect-[4/3] rounded-lg";
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 px-4 py-6 backdrop-blur-sm">
-      <section className="w-full max-w-3xl rounded-2xl border border-line bg-panel p-4 shadow-2xl shadow-slate-900/20 sm:p-5">
+    <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-slate-950/50 px-4 py-4 backdrop-blur-sm sm:py-6">
+      <section className="max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-y-auto rounded-2xl border border-line bg-panel p-4 shadow-2xl shadow-slate-900/20 sm:max-h-[calc(100dvh-3rem)] sm:p-5">
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
             <p className="text-xs font-black uppercase tracking-[0.18em] text-accent">
               Crop photo
             </p>
             <h2 className="mt-1 text-2xl font-black tracking-normal">
-              {PRODUCT_ARTWORK_FRAME.label}
+              {frame.label}
             </h2>
           </div>
           <button
             aria-label="Close cropper"
-            className="focus-ring grid size-10 place-items-center rounded-lg border border-line bg-surface text-muted transition hover:text-foreground"
+            className="focus-ring grid size-11 place-items-center rounded-lg border border-line bg-surface text-muted transition hover:text-foreground"
             onClick={onCancel}
             type="button"
           >
@@ -819,9 +889,9 @@ function PhotoCropper({
             <canvas
               aria-label="Cropped artwork preview"
               className="h-full w-full"
-              height={PRODUCT_ARTWORK_FRAME.outputHeight}
+              height={frame.outputHeight}
               ref={canvasRef}
-              width={PRODUCT_ARTWORK_FRAME.outputWidth}
+              width={frame.outputWidth}
             />
             <CropGrid />
           </div>
@@ -830,8 +900,8 @@ function PhotoCropper({
             <div className="rounded-lg border border-line bg-surface p-3 text-sm">
               <p className="font-bold">{draft.fileName}</p>
               <p className="mt-1 text-muted">
-                {PRODUCT_ARTWORK_FRAME.outputWidth} x{" "}
-                {PRODUCT_ARTWORK_FRAME.outputHeight}
+                {frame.outputWidth} x{" "}
+                {frame.outputHeight}
               </p>
             </div>
 
@@ -852,6 +922,7 @@ function PhotoCropper({
 
             <div className="grid grid-cols-2 gap-2">
               <button
+                data-analytics="crop-cancel"
                 className="focus-ring inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line bg-panel px-3 text-sm font-bold text-foreground transition hover:bg-surface"
                 onClick={onCancel}
                 type="button"
@@ -860,6 +931,7 @@ function PhotoCropper({
                 Cancel
               </button>
               <button
+                data-analytics="crop-confirm"
                 className="focus-ring inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-accent px-3 text-sm font-black text-accent-ink transition hover:bg-foreground disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={isProcessing}
                 onClick={confirmCrop}
@@ -949,22 +1021,29 @@ function PillowPreview({
   design,
   isLoading,
   loadingLabel,
+  loadedMockupIds,
   mockupPreviews,
   onSelectMockup,
+  productConfig,
 }: {
   activeSide: ProductSide;
   activeMockupId: string | null;
   design: DesignPayload;
   isLoading: boolean;
   loadingLabel: string;
+  loadedMockupIds: string[];
   mockupPreviews: MockupPreview[];
   onSelectMockup: (id: string) => void;
+  productConfig: DesignerProductConfig;
 }) {
-  const color = getColorHex(design.selection.color);
+  const color = productConfig.colorOptions.find((option) => option.value === design.selection.color)?.hex ?? "#f5f2ea";
   const side = design.sides[activeSide];
   const activeMockup =
     mockupPreviews.find((preview) => preview.id === activeMockupId) ??
     mockupPreviews[0];
+  const activeMockupIsLoading = Boolean(
+    isLoading && activeMockup && !loadedMockupIds.includes(activeMockup.id),
+  );
 
   if (activeMockup) {
     return (
@@ -972,18 +1051,19 @@ function PillowPreview({
         <div className="relative grid min-h-[320px] place-items-center overflow-hidden rounded-xl border border-line bg-surface sm:min-h-[440px]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            alt={`Rendered pillow preview: ${activeMockup.label}`}
+            alt={`Rendered ${productConfig.name} preview: ${activeMockup.label}`}
             className="h-full max-h-[620px] w-full object-contain"
             src={activeMockup.url}
           />
-          <PreviewLoadingOverlay label={loadingLabel} visible={isLoading} />
+          <PreviewLoadingOverlay label={loadingLabel} visible={activeMockupIsLoading} />
         </div>
         <div
-          aria-label="Pillow preview scenes"
+          aria-label={`${productConfig.name} preview scenes`}
           className="grid grid-cols-2 gap-2 sm:grid-cols-4"
         >
           {mockupPreviews.map((preview) => (
             <button
+              data-analytics="preview-scene-select"
               aria-pressed={preview.id === activeMockup.id}
               className={cn(
                 "focus-ring grid min-w-0 gap-2 rounded-lg border bg-panel p-2 text-left transition",
@@ -995,12 +1075,19 @@ function PillowPreview({
               onClick={() => onSelectMockup(preview.id)}
               type="button"
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                alt=""
-                className="aspect-square w-full rounded object-cover"
-                src={preview.url}
-              />
+              <span className="relative block">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  alt=""
+                  className="aspect-square w-full rounded object-cover"
+                  src={preview.url}
+                />
+                {isLoading && !loadedMockupIds.includes(preview.id) ? (
+                  <span className="absolute right-2 top-2 grid size-8 place-items-center rounded-full border border-white/70 bg-white/85 text-accent shadow-sm backdrop-blur" title="Loading updated preview">
+                    <LoaderCircle aria-hidden="true" className="animate-spin" size={17} strokeWidth={3} />
+                  </span>
+                ) : null}
+              </span>
               <span className="truncate text-xs font-bold">{preview.label}</span>
             </button>
           ))}
@@ -1054,26 +1141,18 @@ function PreviewLoadingOverlay({
     <div
       aria-busy="true"
       aria-live="assertive"
-      className="absolute inset-0 z-20 grid place-items-center bg-white/90 px-6 text-center backdrop-blur-sm"
+      className="pointer-events-none absolute inset-0 z-20 flex items-end justify-center bg-white/20 p-4 text-center"
       role="status"
     >
-      <div className="w-full max-w-sm rounded-2xl border border-line bg-panel px-5 py-7 shadow-2xl shadow-slate-900/15 sm:px-8">
+      <div className="w-full max-w-sm rounded-xl border border-white/80 bg-white/90 px-4 py-3 shadow-lg shadow-slate-900/15 backdrop-blur-sm">
         <LoaderCircle
           aria-hidden="true"
           className="mx-auto animate-spin text-accent"
-          size={48}
+          size={26}
           strokeWidth={3}
         />
-        <p className="mt-5 text-2xl font-black tracking-normal">
-          Building your preview
-        </p>
-        <p className="mt-2 text-sm font-bold text-muted">{label}</p>
-        <div className="mt-5 h-2 overflow-hidden rounded-full bg-surface">
-          <span className="block h-full w-full animate-pulse bg-accent" />
-        </div>
-        <p className="mt-3 text-xs font-bold uppercase tracking-[0.16em] text-accent">
-          Keep this page open
-        </p>
+        <p className="mt-2 text-sm font-black">Building your preview</p>
+        <p className="mt-1 text-xs font-bold text-muted">{label}</p>
       </div>
     </div>
   );
@@ -1135,17 +1214,17 @@ function PrintLayer({
   );
 }
 
-async function renderCropToCanvas(draft: CropDraft, canvas: HTMLCanvasElement) {
+async function renderCropToCanvas(draft: CropDraft, canvas: HTMLCanvasElement, frame: ProductArtworkFrame) {
   const image = await loadImage(draft.sourceUrl);
-  const crop = getCropSourceRect(image.naturalWidth, image.naturalHeight, draft);
+  const crop = getCropSourceRect(image.naturalWidth, image.naturalHeight, draft, frame.aspectRatio);
   const context = canvas.getContext("2d");
 
   if (!context) {
     throw new Error("Canvas is not available.");
   }
 
-  canvas.width = PRODUCT_ARTWORK_FRAME.outputWidth;
-  canvas.height = PRODUCT_ARTWORK_FRAME.outputHeight;
+  canvas.width = frame.outputWidth;
+  canvas.height = frame.outputHeight;
   context.clearRect(0, 0, canvas.width, canvas.height);
   context.drawImage(
     image,
@@ -1160,9 +1239,9 @@ async function renderCropToCanvas(draft: CropDraft, canvas: HTMLCanvasElement) {
   );
 }
 
-async function createCroppedDataUrl(draft: CropDraft) {
+async function createCroppedDataUrl(draft: CropDraft, frame: ProductArtworkFrame) {
   const canvas = document.createElement("canvas");
-  await renderCropToCanvas(draft, canvas);
+  await renderCropToCanvas(draft, canvas, frame);
   return canvas.toDataURL(CROP_OUTPUT_TYPE, 0.9);
 }
 
@@ -1170,8 +1249,8 @@ function getCropSourceRect(
   imageWidth: number,
   imageHeight: number,
   draft: CropDraft,
+  targetAspect: number,
 ) {
-  const targetAspect = PRODUCT_ARTWORK_FRAME.aspectRatio;
   const imageAspect = imageWidth / imageHeight;
   const coverWidth =
     imageAspect > targetAspect ? imageHeight * targetAspect : imageWidth;
@@ -1244,6 +1323,7 @@ function getPositionClass(side: ProductSide, position: string) {
 
 function designFromRecord(
   params: Record<string, string | undefined>,
+  defaultDesign: DesignPayload,
 ): DesignPayload | null {
   const image = normalizeImageParam(
     params.image ??
@@ -1259,20 +1339,20 @@ function designFromRecord(
   const shape = pickParam(
     params.shape ?? null,
     SHAPE_OPTIONS.map((item) => item.value),
-    DEFAULT_DESIGN.sides.front.shape,
+    defaultDesign.sides.front.shape,
   ) as DesignShape;
   const position = pickParam(
     params.position ?? null,
     POSITION_OPTIONS.filter((item) => item.sides.includes("front")).map(
       (item) => item.value,
     ),
-    DEFAULT_DESIGN.sides.front.position,
+    defaultDesign.sides.front.position,
   ) as DesignPosition;
 
   return {
-    ...DEFAULT_DESIGN,
+    ...defaultDesign,
     sides: {
-      ...DEFAULT_DESIGN.sides,
+      ...defaultDesign.sides,
       front: {
         kind: "image",
         imagePreviewUrl: image,
@@ -1283,16 +1363,16 @@ function designFromRecord(
   };
 }
 
-function readStoredDesign() {
+function readStoredDesign(storageKey: string, productConfig: DesignerProductConfig) {
   try {
-    const value = window.localStorage.getItem(STORAGE_KEY);
+    const value = window.localStorage.getItem(storageKey);
     if (!value) return null;
     const design = JSON.parse(value) as DesignPayload;
-    return design?.selection?.productSlug === "custom-pillow"
-      ? { ...design, selection: DEFAULT_DESIGN.selection }
+    return design?.selection?.productSlug === productConfig.slug
+      ? { ...design, selection: productConfig.defaultDesign.selection }
       : null;
   } catch {
-    window.localStorage.removeItem(STORAGE_KEY);
+    window.localStorage.removeItem(storageKey);
     return null;
   }
 }

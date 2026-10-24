@@ -14,6 +14,7 @@ const requestSchema = z.object({
   variant: z.string().trim().min(1).max(100),
   sourceHash: z.string().regex(/^[a-f0-9]{64}$/i),
   sourceImageUrl: z.url().max(2048).refine((value) => value.startsWith("https://")),
+  previewMode: z.enum(["reply", "full"]).default("full"),
 });
 
 export async function POST(request: Request) {
@@ -107,6 +108,7 @@ async function createLink(
       existing.source_hash,
       existing.expires_at,
       supabase,
+      { replyOnly: payload.previewMode === "reply" },
     );
     return linkResponse(token, existing.expires_at, true, cacheReady);
   }
@@ -139,6 +141,7 @@ async function createLink(
         raced.source_hash,
         raced.expires_at,
         supabase,
+      { replyOnly: payload.previewMode === "reply" },
       );
       return linkResponse(token, raced.expires_at, true, cacheReady);
     }
@@ -151,6 +154,7 @@ async function createLink(
     payload.sourceHash.toLowerCase(),
     data.expires_at,
     supabase,
+    { replyOnly: payload.previewMode === "reply" },
   );
   return linkResponse(token, data.expires_at, false, cacheReady);
 }

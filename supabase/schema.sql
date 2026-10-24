@@ -44,7 +44,9 @@ create table if not exists public.products (
   description text,
   base_price_cents integer not null check (base_price_cents > 0),
   currency text not null default 'usd',
-  active boolean not null default true,
+  card_image_url text,
+  customization jsonb not null default '{}'::jsonb,
+  active boolean not null default false,
   created_at timestamptz not null default now()
 );
 
@@ -68,6 +70,7 @@ create table if not exists public.product_variants (
   size text not null,
   price_cents integer not null check (price_cents > 0),
   currency text not null default 'usd',
+  procurement jsonb not null default '{}'::jsonb,
   active boolean not null default true,
   created_at timestamptz not null default now(),
   unique (product_id, color, style, size)
@@ -397,14 +400,16 @@ insert into public.products (
   category,
   description,
   base_price_cents,
-  currency
+  currency,
+  active
 ) values (
   'custom-pillow',
   'Custom Pillow Cover Set',
   'pillow',
   'Two personalized 18in/45cm polyester pillow covers. Inserts are not included.',
   1999,
-  'usd'
+  'usd',
+  true
 ) on conflict (slug) do update set
   name = excluded.name,
   category = excluded.category,
@@ -412,6 +417,25 @@ insert into public.products (
   base_price_cents = excluded.base_price_cents,
   currency = excluded.currency,
   active = true;
+
+update public.products
+set
+  card_image_url = coalesce(card_image_url, '/showcase/wood-chair.webp'),
+  customization = jsonb_build_object(
+    'printSides', jsonb_build_array('front'),
+    'outputWidth', 1200,
+    'outputHeight', 1200,
+    'frameLabel', 'Square pillow artwork',
+    'previewMode', 'reuse',
+    'mockupTemplateIds', jsonb_build_array(
+      'pillow-psd-03-grey-sofa',
+      'pillow-psd-04-size',
+      'pillow-psd-06-wood-chair',
+      'pillow-psd-01'
+    )
+  )
+where slug = 'custom-pillow'
+  and (customization = '{}'::jsonb or card_image_url is null);
 
 update public.products
 set active = false
@@ -475,6 +499,19 @@ insert into storage.buckets (id, name, public)
 values ('avatars', 'avatars', true)
 on conflict (id) do update set public = true;
 
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'product-catalog-assets',
+  'product-catalog-assets',
+  true,
+  4194304,
+  array['image/jpeg', 'image/png', 'image/webp']
+)
+on conflict (id) do update set
+  public = true,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
 drop policy if exists "Users upload own design assets" on storage.objects;
 create policy "Users upload own design assets"
 on storage.objects for insert
@@ -520,6 +557,12 @@ create policy "Avatar images are public"
 on storage.objects for select
 to public
 using (bucket_id = 'avatars');
+
+drop policy if exists "Product catalog images are public" on storage.objects;
+create policy "Product catalog images are public"
+on storage.objects for select
+to public
+using (bucket_id = 'product-catalog-assets');
 
 drop policy if exists "Users upload own avatar" on storage.objects;
 create policy "Users upload own avatar"
@@ -582,21 +625,68 @@ create table if not exists public.marketing_events (
   unique (marketing_link_id, event_type)
 );
 
+create table if not exists public.marketing_link_visits (
+  id uuid primary key default gen_random_uuid(),
+  marketing_link_id uuid not null references public.marketing_links(id) on delete cascade,
+  device_class text not null default 'unknown' check (device_class in ('desktop', 'mobile', 'tablet', 'unknown')),
+  referrer_group text not null default 'direct' check (referrer_group in ('direct', 'internal', 'search', 'x', 'other')),
+  suspected_bot boolean not null default false,
+  is_internal boolean not null default false,
+  visited_at timestamptz not null default now()
+);
+
+comment on table public.marketing_link_visits is
+  'One privacy-minimized row per valid marketing-link redirect. Funnel milestones remain deduplicated in marketing_events.';
+
 create table if not exists public.marketing_ingest_nonces (
   nonce text primary key,
   request_timestamp timestamptz not null,
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.customer_activity_events (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid not null,
+  event_type text not null check (event_type in (
+    'page_view', 'page_exit', 'click', 'design_opened', 'upload_started',
+    'crop_confirmed', 'preview_started', 'preview_cache_hit', 'preview_ready',
+    'delivery_opened', 'delivery_canceled', 'address_validation_failed',
+    'checkout_started', 'payment_redirected', 'purchase_completed'
+  )),
+  route text not null check (length(route) between 1 and 160 and left(route, 1) = '/'),
+  target text check (target is null or length(target) <= 64),
+  duration_seconds integer not null default 0 check (duration_seconds between 0 and 3600),
+  event_key text unique,
+  order_id uuid references public.orders(id) on delete set null,
+  device_class text not null default 'unknown' check (device_class in ('desktop', 'mobile', 'tablet', 'unknown')),
+  referrer_group text not null default 'direct' check (referrer_group in ('direct', 'internal', 'search', 'x', 'other')),
+  suspected_bot boolean not null default false,
+  is_internal boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
 alter table public.orders
-  add column if not exists marketing_link_id uuid references public.marketing_links(id) on delete set null;
+  add column if not exists marketing_link_id uuid references public.marketing_links(id) on delete set null,
+  add column if not exists activity_session_id uuid;
 
 create index if not exists marketing_links_dimensions_idx
   on public.marketing_links (created_at desc, campaign, channel, variant);
 create index if not exists marketing_events_link_time_idx
   on public.marketing_events (marketing_link_id, created_at);
+create index if not exists marketing_link_visits_link_time_idx
+  on public.marketing_link_visits (marketing_link_id, visited_at desc);
+create index if not exists marketing_link_visits_quality_time_idx
+  on public.marketing_link_visits (is_internal, suspected_bot, visited_at desc);
 create index if not exists orders_marketing_link_idx
   on public.orders (marketing_link_id) where marketing_link_id is not null;
+create index if not exists customer_activity_events_time_idx
+  on public.customer_activity_events (created_at desc);
+create index if not exists customer_activity_events_session_time_idx
+  on public.customer_activity_events (session_id, created_at);
+create index if not exists customer_activity_events_quality_time_idx
+  on public.customer_activity_events (is_internal, suspected_bot, created_at desc);
+create index if not exists orders_activity_session_id_idx
+  on public.orders (activity_session_id) where activity_session_id is not null;
 
 drop trigger if exists touch_marketing_links_updated_at on public.marketing_links;
 create trigger touch_marketing_links_updated_at
@@ -621,7 +711,13 @@ create trigger record_marketing_link_generated
 after insert on public.marketing_links
 for each row execute function public.record_marketing_link_generated();
 
-create or replace function public.record_marketing_link_click(p_link_id uuid)
+create or replace function public.record_marketing_link_click(
+  p_link_id uuid,
+  p_device_class text,
+  p_referrer_group text,
+  p_suspected_bot boolean,
+  p_is_internal boolean
+)
 returns void
 language plpgsql
 security definer
@@ -635,6 +731,12 @@ begin
   where id = p_link_id and expires_at > now();
 
   if found then
+    insert into public.marketing_link_visits (
+      marketing_link_id, device_class, referrer_group, suspected_bot, is_internal
+    ) values (
+      p_link_id, p_device_class, p_referrer_group, p_suspected_bot, p_is_internal
+    );
+
     insert into public.marketing_events (marketing_link_id, event_type)
     values (p_link_id, 'link_clicked')
     on conflict (marketing_link_id, event_type) do nothing;
@@ -642,16 +744,21 @@ begin
 end;
 $$;
 
-revoke all on function public.record_marketing_link_click(uuid) from public, anon, authenticated;
-grant execute on function public.record_marketing_link_click(uuid) to service_role;
+revoke all on function public.record_marketing_link_click(uuid, text, text, boolean, boolean) from public, anon, authenticated;
+grant execute on function public.record_marketing_link_click(uuid, text, text, boolean, boolean) to service_role;
 
 alter table public.marketing_links enable row level security;
 alter table public.marketing_events enable row level security;
+alter table public.marketing_link_visits enable row level security;
 alter table public.marketing_ingest_nonces enable row level security;
+alter table public.customer_activity_events enable row level security;
 
-grant select on table public.marketing_links, public.marketing_events to authenticated;
+grant select on table public.marketing_links, public.marketing_events, public.marketing_link_visits to authenticated;
+revoke all on table public.customer_activity_events from anon, authenticated;
+grant select on table public.customer_activity_events to authenticated;
 grant select, insert, update, delete on table
-  public.marketing_links, public.marketing_events, public.marketing_ingest_nonces
+  public.marketing_links, public.marketing_events, public.marketing_link_visits, public.marketing_ingest_nonces,
+  public.customer_activity_events
 to service_role;
 
 drop policy if exists "Admins view marketing links" on public.marketing_links;
@@ -674,6 +781,165 @@ using (
   )
 );
 
+drop policy if exists "Admins view marketing link visits" on public.marketing_link_visits;
+create policy "Admins view marketing link visits"
+on public.marketing_link_visits for select to authenticated
+using (
+  exists (
+    select 1 from public.admin_roles
+    where admin_roles.user_id = (select auth.uid())
+  )
+);
+
 insert into public.marketing_events (marketing_link_id, event_type)
 select id, 'link_generated' from public.marketing_links
 on conflict (marketing_link_id, event_type) do nothing;
+
+drop policy if exists "Admins view customer activity" on public.customer_activity_events;
+create policy "Admins view customer activity"
+on public.customer_activity_events for select to authenticated
+using (
+  exists (
+    select 1 from public.admin_roles
+    where admin_roles.user_id = (select auth.uid())
+  )
+);
+
+create table if not exists public.x_reply_accounts (
+  id uuid primary key default gen_random_uuid(),
+  account_key text not null unique check (account_key ~ '^[A-Za-z0-9_-]{1,64}$'),
+  display_name text not null check (length(display_name) between 1 and 80),
+  positioning text not null check (length(positioning) between 1 and 500),
+  audience text not null check (length(audience) between 1 and 500),
+  voice text not null check (length(voice) between 1 and 500),
+  topics text[] not null default '{}'::text[],
+  prohibited_topics text not null default '',
+  daily_limit integer not null default 5 check (daily_limit between 1 and 20),
+  active boolean not null default true,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.x_reply_jobs (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid not null references public.x_reply_accounts(id) on delete restrict,
+  x_lead_id uuid references public.x_leads(id) on delete set null,
+  action_type text not null default 'reply' check (action_type in ('post', 'reply')),
+  target_post_url text,
+  reply_text text not null check (length(reply_text) between 1 and 270),
+  scheduled_for timestamptz not null default now(),
+  status text not null default 'draft'
+    check (status in ('draft', 'queued', 'claimed', 'sent', 'failed', 'uncertain', 'rejected')),
+  preparation_status text not null default 'ready'
+    check (preparation_status in ('pending', 'processing', 'ready', 'failed')),
+  preparation_error text,
+  prepared_at timestamptz,
+  account_key_snapshot text,
+  positioning_snapshot text,
+  approved_by uuid references auth.users(id) on delete set null,
+  approved_at timestamptz,
+  worker_id text,
+  xuse_draft_id text,
+  action_id text,
+  result_url text,
+  error_code text,
+  error_message text,
+  attempt_count integer not null default 0 check (attempt_count between 0 and 1),
+  claimed_at timestamptz,
+  completed_at timestamptz,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint x_reply_jobs_action_target_check check (
+    (action_type = 'post' and target_post_url is null)
+    or
+    (action_type = 'reply' and target_post_url ~ '^https://(www\.)?(x|twitter)\.com/[A-Za-z0-9_]+/status/[0-9]+')
+  )
+);
+
+create table if not exists public.x_manual_posts (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid references public.x_reply_accounts(id) on delete restrict,
+  x_lead_id uuid references public.x_leads(id) on delete set null,
+  action_type text not null check (action_type in ('post', 'reply')),
+  target_post_url text,
+  post_text text not null check (length(post_text) between 1 and 270),
+  status text not null default 'draft' check (status in ('draft', 'sent', 'discarded')),
+  preparation_status text not null default 'ready'
+    check (preparation_status in ('pending', 'processing', 'ready', 'failed')),
+  preparation_error text,
+  prepared_at timestamptz,
+  result_url text check (result_url is null or result_url ~ '^https://(www\.)?(x|twitter)\.com/[A-Za-z0-9_]+/status/[0-9]+'),
+  sent_at timestamptz,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint x_manual_posts_action_target_check check (
+    (action_type = 'post' and target_post_url is null)
+    or
+    (action_type = 'reply' and target_post_url ~ '^https://(www\.)?(x|twitter)\.com/[A-Za-z0-9_]+/status/[0-9]+')
+  )
+);
+
+create table if not exists public.x_reply_workers (
+  worker_id text primary key check (length(worker_id) between 1 and 120),
+  status text not null default 'paused' check (status in ('online', 'busy', 'paused', 'error')),
+  xuse_available boolean not null default false,
+  configured_accounts text[] not null default '{}'::text[],
+  current_job_id uuid references public.x_reply_jobs(id) on delete set null,
+  worker_version text,
+  last_error text,
+  last_seen_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists x_reply_jobs_queue_idx on public.x_reply_jobs (status, created_at);
+create index if not exists x_reply_jobs_account_history_idx on public.x_reply_jobs (account_id, created_at desc);
+create unique index if not exists x_reply_jobs_no_duplicate_active_target_idx
+  on public.x_reply_jobs (account_id, target_post_url)
+  where action_type = 'reply' and status in ('queued', 'claimed', 'sent', 'uncertain');
+create index if not exists x_reply_jobs_due_queue_idx
+  on public.x_reply_jobs (scheduled_for, created_at) where status = 'queued' and attempt_count = 0;
+create index if not exists x_reply_jobs_preparation_idx
+  on public.x_reply_jobs (preparation_status, created_at desc)
+  where preparation_status in ('pending', 'processing', 'failed');
+create index if not exists x_reply_jobs_x_lead_idx
+  on public.x_reply_jobs (x_lead_id, created_at desc) where x_lead_id is not null;
+create index if not exists x_manual_posts_account_history_idx
+  on public.x_manual_posts (account_id, created_at desc);
+create index if not exists x_manual_posts_preparation_idx
+  on public.x_manual_posts (preparation_status, created_at desc)
+  where preparation_status in ('pending', 'processing', 'failed');
+create index if not exists x_manual_posts_created_by_idx
+  on public.x_manual_posts (created_by) where created_by is not null;
+create index if not exists x_reply_accounts_created_by_idx
+  on public.x_reply_accounts (created_by) where created_by is not null;
+create index if not exists x_reply_jobs_approved_by_idx
+  on public.x_reply_jobs (approved_by) where approved_by is not null;
+create index if not exists x_reply_jobs_created_by_idx
+  on public.x_reply_jobs (created_by) where created_by is not null;
+create index if not exists x_reply_workers_current_job_id_idx
+  on public.x_reply_workers (current_job_id) where current_job_id is not null;
+
+drop trigger if exists touch_x_reply_accounts_updated_at on public.x_reply_accounts;
+create trigger touch_x_reply_accounts_updated_at before update on public.x_reply_accounts
+for each row execute function public.touch_updated_at();
+drop trigger if exists touch_x_reply_jobs_updated_at on public.x_reply_jobs;
+create trigger touch_x_reply_jobs_updated_at before update on public.x_reply_jobs
+for each row execute function public.touch_updated_at();
+drop trigger if exists touch_x_reply_workers_updated_at on public.x_reply_workers;
+create trigger touch_x_reply_workers_updated_at before update on public.x_reply_workers
+for each row execute function public.touch_updated_at();
+drop trigger if exists touch_x_manual_posts_updated_at on public.x_manual_posts;
+create trigger touch_x_manual_posts_updated_at before update on public.x_manual_posts
+for each row execute function public.touch_updated_at();
+
+alter table public.x_reply_accounts enable row level security;
+alter table public.x_reply_jobs enable row level security;
+alter table public.x_reply_workers enable row level security;
+alter table public.x_manual_posts enable row level security;
+revoke all on table public.x_reply_accounts, public.x_reply_jobs, public.x_reply_workers, public.x_manual_posts from anon, authenticated;
+grant usage on schema public to service_role;
+grant select, insert, update, delete on table public.x_reply_accounts, public.x_reply_jobs, public.x_reply_workers, public.x_manual_posts to service_role;

@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { createSignedUrlWithRetry } from "@/lib/storage-signed-url";
 
 export const MARKETING_COOKIE_NAME = "diy_marketing_touch";
 export const MARKETING_ATTRIBUTION_SECONDS = 7 * 24 * 60 * 60;
@@ -74,6 +75,28 @@ export async function getMarketingPreviewUrls(
       : [],
   );
   return previews.length === paths.length ? previews : [];
+}
+
+export const MARKETING_REPLY_PREVIEW = {
+  id: "pillow-psd-03-grey-sofa",
+  label: "Grey sofa close-up",
+} as const;
+
+export async function getMarketingReplyPreviewUrl(
+  sourceHash: string,
+  expiresAt: string,
+): Promise<MarketingPreview | null> {
+  const supabase = getSupabaseServiceClient();
+  if (!supabase || !/^[a-f0-9]{64}$/i.test(sourceHash)) return null;
+  const expiresIn = Math.max(
+    60,
+    Math.min(7 * 24 * 60 * 60, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000)),
+  );
+  const path = `${sourceHash.toLowerCase()}/${MARKETING_REPLY_PREVIEW.id}.webp`;
+  const bucket = supabase.storage.from(MARKETING_PREVIEW_BUCKET);
+  const signedUrl = await createSignedUrlWithRetry(() => bucket.createSignedUrl(path, expiresIn));
+  if (!signedUrl) return null;
+  return { ...MARKETING_REPLY_PREVIEW, url: signedUrl };
 }
 
 export const MOCKUP_PREVIEW_IDS = [

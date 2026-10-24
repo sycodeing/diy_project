@@ -4,8 +4,9 @@ import { getStripeConfig } from "@/lib/env";
 import { createShippingFingerprint, normalizeShippingAddress } from "@/lib/shipping";
 import { getStripeClient } from "@/lib/stripe";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
-import { TEMU_PROCUREMENT_PRODUCT } from "@/lib/temu-procurement";
+import { getProcurementJobStatus, resolveProductProcurement } from "@/lib/product-procurement";
 import type { ShippingAddress } from "@/lib/types";
+import { recordCustomerActivity } from "@/lib/customer-activity";
 
 export const runtime = "nodejs";
 
@@ -88,7 +89,7 @@ async function markOrderPaid({
   const { data: order, error: orderReadError } = await supabase
     .from("orders")
     .select(
-      "id,amount_cents,currency,shipping,paid_at,fulfillment_status,marketing_link_id,stripe_checkout_session_id",
+      "id,amount_cents,currency,shipping,paid_at,fulfillment_status,marketing_link_id,stripe_checkout_session_id,activity_session_id,design_snapshot",
     )
     .eq("id", orderId)
     .maybeSingle();
@@ -113,6 +114,7 @@ async function markOrderPaid({
   }
 
   const shipping = normalizeShippingAddress(order.shipping as ShippingAddress);
+  const procurement = resolveProductProcurement(order.design_snapshot);
   const paidAt = order.paid_at ?? new Date().toISOString();
   const { error: orderUpdateError } = await supabase
     .from("orders")
@@ -154,12 +156,13 @@ async function markOrderPaid({
     .upsert(
       {
         order_id: orderId,
-        status: "ready_for_payment",
-        product_url: TEMU_PROCUREMENT_PRODUCT.productUrl,
-        goods_id: TEMU_PROCUREMENT_PRODUCT.goodsId,
-        sku_id: null,
-        expected_amount_cents: null,
-        currency: TEMU_PROCUREMENT_PRODUCT.currency || order.currency,
+        status: getProcurementJobStatus(procurement),
+        product_url: null,
+        goods_id: procurement.goodsId,
+        sku_id: procurement.skuId,
+        quantity: procurement.quantity,
+        expected_amount_cents: procurement.expectedAmountCents,
+        currency: procurement.currency || order.currency,
         address_snapshot: shipping,
         address_fingerprint: createShippingFingerprint(shipping),
         idempotency_key: `temu-purchase:${orderId}`,
@@ -189,6 +192,18 @@ async function markOrderPaid({
     if (marketingError) {
       return { ok: false as const, error: marketingError.message };
     }
+  }
+
+  if (order.activity_session_id) {
+    const { error: activityError } = await recordCustomerActivity({
+      sessionId: order.activity_session_id,
+      eventType: "purchase_completed",
+      route: "/checkout/success",
+      target: "stripe",
+      eventKey: `purchase:${orderId}`,
+      orderId,
+    });
+    if (activityError) console.error("Stripe purchase activity could not be recorded", { orderId, error: activityError.message });
   }
 
   return { ok: true as const };
