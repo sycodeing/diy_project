@@ -35,11 +35,51 @@ export type XLeadDiscoveryCandidate = {
 
 export type ExistingXLeadDiscoveryRow = {
   post_id: string;
+  author_hash?: string;
   selection_status: string;
   source_job_id: string | null;
   discovered_at: string;
   targeting_data: Record<string, unknown> | null;
 };
+
+export function filterXLeadDiscoveryCandidates({
+  candidates,
+  existing,
+  blacklistedAuthorHashes,
+}: {
+  candidates: XLeadDiscoveryCandidate[];
+  existing: ExistingXLeadDiscoveryRow[];
+  blacklistedAuthorHashes: Set<string>;
+}) {
+  const existingByPostId = new Map(existing.map((lead) => [lead.post_id, lead]));
+  const existingAuthorHashes = new Set(existing.flatMap((lead) => lead.author_hash ? [lead.author_hash] : []));
+  const chosenByAuthor = new Map<string, XLeadDiscoveryCandidate>();
+  let blacklistedCandidates = 0;
+  let duplicateAccountCandidates = 0;
+
+  for (const candidate of candidates) {
+    if (blacklistedAuthorHashes.has(candidate.authorHash)) {
+      blacklistedCandidates += 1;
+      continue;
+    }
+    const chosen = chosenByAuthor.get(candidate.authorHash);
+    if (!chosen) {
+      chosenByAuthor.set(candidate.authorHash, candidate);
+      continue;
+    }
+    duplicateAccountCandidates += 1;
+    if (existingByPostId.has(candidate.postId) && !existingByPostId.has(chosen.postId)) {
+      chosenByAuthor.set(candidate.authorHash, candidate);
+    }
+  }
+
+  const accepted = [...chosenByAuthor.values()].filter((candidate) => {
+    if (!existingAuthorHashes.has(candidate.authorHash) || existingByPostId.has(candidate.postId)) return true;
+    duplicateAccountCandidates += 1;
+    return false;
+  });
+  return { accepted, blacklistedCandidates, duplicateAccountCandidates };
+}
 
 export function buildXLeadDiscoveryUpsertRow({
   candidate,

@@ -36,6 +36,7 @@ type SearchJob = {
   inserted_count: number;
   worker_id: string | null;
   error_message: string | null;
+  metrics: Record<string, unknown> | null;
   started_at: string | null;
   finished_at: string | null;
   created_at: string;
@@ -76,7 +77,7 @@ export default async function XLeadSearchPage({
 
   const [{ data: configData }, { data: jobsData }, { data: workersData }] = await Promise.all([
     supabase.from("x_lead_search_configs").select("*").eq("config_key", "default").maybeSingle(),
-    supabase.from("x_lead_search_jobs").select("id,trigger_type,status,received_count,inserted_count,worker_id,error_message,started_at,finished_at,created_at").order("created_at", { ascending: false }).limit(20),
+    supabase.from("x_lead_search_jobs").select("id,trigger_type,status,received_count,inserted_count,worker_id,error_message,metrics,started_at,finished_at,created_at").order("created_at", { ascending: false }).limit(20),
     supabase.from("x_lead_workers").select("worker_id,status,cookie_configured,last_error,last_seen_at").order("last_seen_at", { ascending: false }).limit(1),
   ]);
   const config = (configData ?? defaults) as SearchConfig;
@@ -156,10 +157,10 @@ export default async function XLeadSearchPage({
           <aside className="rounded-xl border border-line bg-panel/90 p-5">
             <h2 className="text-xl font-black">本机数据执行器</h2>
             <div className={`mt-4 rounded-lg border p-4 ${workerOnline && worker?.cookie_configured ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}`}>
-              <p className="font-black">{workerOnline ? (worker?.cookie_configured ? "在线，数据源已配置" : "在线，但未配置 Apify Token / X Cookie") : "当前离线"}</p>
+              <p className="font-black">{workerOnline ? (worker?.cookie_configured ? "在线，数据源已配置" : "在线，但未配置 TwitterAPI.io Key") : "当前离线"}</p>
               <p className="mt-2 text-xs text-muted">{worker ? `${worker.worker_id} · 最后心跳 ${formatAdminDate(worker.last_seen_at)}` : "尚未收到本机脚本心跳。"}</p>
             </div>
-            <p className="mt-4 text-sm leading-6 text-muted">网站只保存任务和整理后的候选结果。Apify Token、X Cookie 和原始 Dataset 缓存始终留在你的电脑上；配置 Apify 后会优先使用 Apify。</p>
+            <p className="mt-4 text-sm leading-6 text-muted">当前默认使用 TwitterAPI.io 做只读增量发现。API Key 与原始响应只留在本机；旧 Apify 与 X Cookie 代码仍保留，但不会自动回落调用。</p>
             {worker?.last_error ? <p className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{worker.last_error}</p> : null}
           </aside>
         </section>
@@ -167,12 +168,12 @@ export default async function XLeadSearchPage({
         <section className="mt-6 overflow-x-auto rounded-xl border border-line bg-panel/90 p-5">
           <h2 className="text-xl font-black">最近任务</h2>
           <table className="mt-4 w-full min-w-[860px] text-left text-sm">
-            <thead className="text-muted"><tr><th className="pb-3">创建时间</th><th>触发方式</th><th>状态</th><th>获取帖子</th><th>新增用户</th><th>执行器</th><th>结果</th></tr></thead>
+            <thead className="text-muted"><tr><th className="pb-3">创建时间</th><th>触发方式</th><th>状态</th><th>获取帖子</th><th>发现漏斗</th><th>新增用户</th><th>执行器</th><th>结果</th></tr></thead>
             <tbody>{jobs.map((job) => <tr className="border-t border-line" key={job.id}>
               <td className="py-3">{formatAdminDate(job.created_at)}</td>
               <td>{job.trigger_type === "manual" ? "手动" : "定时"}</td>
               <td className="font-bold">{X_JOB_STATUS_LABELS[job.status] ?? job.status}</td>
-              <td>{job.received_count}</td><td>{job.inserted_count}</td><td>{job.worker_id ?? "—"}</td>
+              <td>{job.received_count}</td><td className="min-w-52 text-xs leading-5 text-muted">{formatDiscoveryMetrics(job.metrics)}</td><td>{job.inserted_count}</td><td>{job.worker_id ?? "—"}</td>
               <td className="max-w-80 text-muted">{job.error_message ?? (job.finished_at ? `完成于 ${formatAdminDate(job.finished_at)}` : "—")}</td>
             </tr>)}</tbody>
           </table>
@@ -181,6 +182,25 @@ export default async function XLeadSearchPage({
       </main>
     </AppShell>
   );
+}
+
+function formatDiscoveryMetrics(metrics: Record<string, unknown> | null) {
+  if (!metrics || typeof metrics.provider !== "string") return "—";
+  const parts = [metrics.provider];
+  const uniquePosts = metricNumber(metrics, "unique_posts");
+  const photoPosts = metricNumber(metrics, "photo_posts");
+  const candidatePosts = metricNumber(metrics, "candidate_posts");
+  const existingCandidates = metricNumber(metrics, "existing_candidates");
+  if (uniquePosts !== null) parts.push(`去重 ${uniquePosts}`);
+  if (photoPosts !== null) parts.push(`含图 ${photoPosts}`);
+  if (candidatePosts !== null) parts.push(`候选 ${candidatePosts}`);
+  if (existingCandidates !== null) parts.push(`历史重复 ${existingCandidates}`);
+  return parts.join(" · ");
+}
+
+function metricNumber(metrics: Record<string, unknown>, key: string) {
+  const value = metrics[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 function SelectField({ label, name, value, options }: { label: string; name: string; value: string; options: Array<[string, string]> }) {
   return <label className="block text-sm font-bold">{label}<select className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3" defaultValue={value} name={name}>{options.map(([optionValue, optionLabel]) => <option key={optionValue} value={optionValue}>{optionLabel}</option>)}</select></label>;

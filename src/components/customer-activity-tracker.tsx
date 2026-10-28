@@ -47,6 +47,7 @@ export function CustomerActivityTracker() {
     const route = safeActivityRoute(pathname);
     let lastFlush = Date.now();
     trackCustomerActivity("page_view", { route });
+    if (route === "/design") trackCustomerActivity("landing_confirmed", { route });
 
     const flushDwell = () => {
       const now = Date.now();

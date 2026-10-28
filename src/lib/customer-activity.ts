@@ -6,7 +6,7 @@ export const ACTIVITY_SESSION_COOKIE = "diy_activity_session";
 export const ACTIVITY_SESSION_SECONDS = 7 * 24 * 60 * 60;
 
 export type CustomerActivityEventType =
-  | "page_view" | "page_exit" | "click" | "design_opened" | "upload_started"
+  | "page_view" | "page_exit" | "click" | "landing_confirmed" | "design_opened" | "upload_started"
   | "crop_confirmed" | "preview_started" | "preview_cache_hit" | "preview_ready"
   | "delivery_opened" | "delivery_canceled" | "address_validation_failed"
   | "checkout_started" | "payment_redirected" | "purchase_completed";
@@ -35,6 +35,7 @@ export async function recordCustomerActivity({
   durationSeconds = 0,
   eventKey,
   orderId = null,
+  marketingLinkId = null,
   deviceClass = "unknown",
   referrerGroup = "direct",
   suspectedBot = false,
@@ -47,6 +48,7 @@ export async function recordCustomerActivity({
   durationSeconds?: number;
   eventKey: string;
   orderId?: string | null;
+  marketingLinkId?: string | null;
   deviceClass?: "desktop" | "mobile" | "tablet" | "unknown";
   referrerGroup?: "direct" | "internal" | "search" | "x" | "other";
   suspectedBot?: boolean;
@@ -63,6 +65,7 @@ export async function recordCustomerActivity({
       duration_seconds: durationSeconds,
       event_key: eventKey,
       order_id: orderId,
+      marketing_link_id: marketingLinkId,
       device_class: deviceClass,
       referrer_group: referrerGroup,
       suspected_bot: suspectedBot,

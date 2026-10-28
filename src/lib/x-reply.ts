@@ -39,8 +39,26 @@ export type XReplyAccount = {
   topics: string[];
   prohibited_topics: string;
   daily_limit: number;
+  copy_style: "warm" | "playful" | "concise";
+  copy_variation_notes: string;
+  bitbrowser_window_id: string | null;
+  bitbrowser_window_name: string;
+  require_daily_first_confirmation: boolean;
   active: boolean;
   created_at: string;
+};
+
+export type XReplyAccountProxy = {
+  account_id: string;
+  encrypted_url: string;
+  display_host: string;
+  expected_country: string;
+  expected_region: string;
+  status: "pending" | "healthy" | "error";
+  egress_ip: string | null;
+  last_tested_at: string | null;
+  last_error: string | null;
+  updated_at: string;
 };
 
 export type XReplyJob = {
@@ -114,8 +132,20 @@ export type XReplyWorker = {
   worker_id: string;
   status: string;
   xuse_available: boolean;
+  bitbrowser_available: boolean;
+  bitbrowser_version: string | null;
+  bitbrowser_windows: Array<{ id: string; name: string; seq: number | null; status: number | null }>;
   configured_accounts: string[];
   worker_version: string | null;
   last_error: string | null;
   last_seen_at: string;
+};
+
+export type XReplyDailyGate = {
+  account_id: string;
+  gate_date: string;
+  status: "pending" | "awaiting_confirmation" | "authorized" | "paused";
+  first_job_id: string | null;
+  first_sent_at: string | null;
+  authorized_at: string | null;
 };

@@ -9,6 +9,7 @@ export const MARKETING_ATTRIBUTION_SECONDS = 7 * 24 * 60 * 60;
 export type MarketingEventType =
   | "link_generated"
   | "link_clicked"
+  | "landing_confirmed"
   | "design_opened"
   | "preview_ready"
   | "checkout_started"
@@ -111,6 +112,8 @@ export async function recordMarketingEvent(
   eventType: MarketingEventType,
   metadata: Record<string, unknown> = {},
   orderId?: string,
+  activitySessionId?: string,
+  isInternal = false,
 ) {
   const supabase = getSupabaseServiceClient();
   if (!supabase) return { error: new Error("Marketing storage is not configured.") };
@@ -121,7 +124,9 @@ export async function recordMarketingEvent(
       event_type: eventType,
       metadata,
       order_id: orderId ?? null,
+      activity_session_id: activitySessionId ?? null,
+      is_internal: isInternal,
     },
-    { onConflict: "marketing_link_id,event_type", ignoreDuplicates: true },
+    { onConflict: "marketing_link_id,event_type,is_internal", ignoreDuplicates: true },
   );
 }

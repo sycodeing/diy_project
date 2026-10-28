@@ -1,6 +1,16 @@
 import json
 
-from lead_studio.discovery import candidate_from_tweet
+from lead_studio.discovery import candidate_from_tweet, dedupe_candidates_by_author
+
+
+def test_dedupe_candidates_by_author_preserves_first_candidate():
+    candidates = [
+        {"post_id": "1", "author_hash": "a" * 64},
+        {"post_id": "2", "author_hash": "a" * 64},
+        {"post_id": "3", "author_hash": "b" * 64},
+    ]
+
+    assert [item["post_id"] for item in dedupe_candidates_by_author(candidates)] == ["1", "3"]
 from lead_studio.x_lead_worker import _cloud_candidate
 
 

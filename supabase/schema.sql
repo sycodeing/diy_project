@@ -616,13 +616,15 @@ create table if not exists public.marketing_events (
   id uuid primary key default gen_random_uuid(),
   marketing_link_id uuid not null references public.marketing_links(id) on delete cascade,
   event_type text not null check (event_type in (
-    'link_generated', 'link_clicked', 'design_opened', 'preview_ready',
-    'checkout_started', 'payment_completed'
+    'link_generated', 'link_clicked', 'landing_confirmed', 'design_opened',
+    'preview_ready', 'checkout_started', 'payment_completed'
   )),
   order_id uuid references public.orders(id) on delete set null,
+  activity_session_id uuid,
+  is_internal boolean not null default false,
   metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
-  unique (marketing_link_id, event_type)
+  unique (marketing_link_id, event_type, is_internal)
 );
 
 create table if not exists public.marketing_link_visits (
@@ -648,16 +650,18 @@ create table if not exists public.customer_activity_events (
   id uuid primary key default gen_random_uuid(),
   session_id uuid not null,
   event_type text not null check (event_type in (
-    'page_view', 'page_exit', 'click', 'design_opened', 'upload_started',
-    'crop_confirmed', 'preview_started', 'preview_cache_hit', 'preview_ready',
-    'delivery_opened', 'delivery_canceled', 'address_validation_failed',
-    'checkout_started', 'payment_redirected', 'purchase_completed'
+    'page_view', 'page_exit', 'click', 'landing_confirmed', 'design_opened',
+    'upload_started', 'crop_confirmed', 'preview_started', 'preview_cache_hit',
+    'preview_ready', 'delivery_opened', 'delivery_canceled',
+    'address_validation_failed', 'checkout_started', 'payment_redirected',
+    'purchase_completed'
   )),
   route text not null check (length(route) between 1 and 160 and left(route, 1) = '/'),
   target text check (target is null or length(target) <= 64),
   duration_seconds integer not null default 0 check (duration_seconds between 0 and 3600),
   event_key text unique,
   order_id uuid references public.orders(id) on delete set null,
+  marketing_link_id uuid references public.marketing_links(id) on delete set null,
   device_class text not null default 'unknown' check (device_class in ('desktop', 'mobile', 'tablet', 'unknown')),
   referrer_group text not null default 'direct' check (referrer_group in ('direct', 'internal', 'search', 'x', 'other')),
   suspected_bot boolean not null default false,
@@ -673,6 +677,9 @@ create index if not exists marketing_links_dimensions_idx
   on public.marketing_links (created_at desc, campaign, channel, variant);
 create index if not exists marketing_events_link_time_idx
   on public.marketing_events (marketing_link_id, created_at);
+create index if not exists marketing_events_activity_session_idx
+  on public.marketing_events (activity_session_id, created_at desc)
+  where activity_session_id is not null;
 create index if not exists marketing_link_visits_link_time_idx
   on public.marketing_link_visits (marketing_link_id, visited_at desc);
 create index if not exists marketing_link_visits_quality_time_idx
@@ -685,6 +692,9 @@ create index if not exists customer_activity_events_session_time_idx
   on public.customer_activity_events (session_id, created_at);
 create index if not exists customer_activity_events_quality_time_idx
   on public.customer_activity_events (is_internal, suspected_bot, created_at desc);
+create index if not exists customer_activity_events_marketing_link_idx
+  on public.customer_activity_events (marketing_link_id, created_at desc)
+  where marketing_link_id is not null;
 create index if not exists orders_activity_session_id_idx
   on public.orders (activity_session_id) where activity_session_id is not null;
 
@@ -699,9 +709,9 @@ language plpgsql
 set search_path = ''
 as $$
 begin
-  insert into public.marketing_events (marketing_link_id, event_type)
-  values (new.id, 'link_generated')
-  on conflict (marketing_link_id, event_type) do nothing;
+  insert into public.marketing_events (marketing_link_id, event_type, is_internal)
+  values (new.id, 'link_generated', false)
+  on conflict (marketing_link_id, event_type, is_internal) do nothing;
   return new;
 end;
 $$;
@@ -737,9 +747,9 @@ begin
       p_link_id, p_device_class, p_referrer_group, p_suspected_bot, p_is_internal
     );
 
-    insert into public.marketing_events (marketing_link_id, event_type)
-    values (p_link_id, 'link_clicked')
-    on conflict (marketing_link_id, event_type) do nothing;
+    insert into public.marketing_events (marketing_link_id, event_type, is_internal)
+    values (p_link_id, 'link_clicked', p_is_internal)
+    on conflict (marketing_link_id, event_type, is_internal) do nothing;
   end if;
 end;
 $$;
@@ -791,9 +801,9 @@ using (
   )
 );
 
-insert into public.marketing_events (marketing_link_id, event_type)
-select id, 'link_generated' from public.marketing_links
-on conflict (marketing_link_id, event_type) do nothing;
+insert into public.marketing_events (marketing_link_id, event_type, is_internal)
+select id, 'link_generated', false from public.marketing_links
+on conflict (marketing_link_id, event_type, is_internal) do nothing;
 
 drop policy if exists "Admins view customer activity" on public.customer_activity_events;
 create policy "Admins view customer activity"
@@ -805,6 +815,29 @@ using (
   )
 );
 
+create table if not exists public.x_lead_account_blacklist (
+  author_hash text primary key check (author_hash ~ '^[a-f0-9]{64}$'),
+  x_handle text not null check (x_handle ~ '^[A-Za-z0-9_]{1,50}$'),
+  reason text not null default 'manual_review' check (length(reason) between 1 and 200),
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists x_lead_account_blacklist_handle_idx
+  on public.x_lead_account_blacklist (lower(x_handle));
+create index if not exists x_lead_account_blacklist_created_by_idx
+  on public.x_lead_account_blacklist (created_by) where created_by is not null;
+
+drop trigger if exists touch_x_lead_account_blacklist_updated_at on public.x_lead_account_blacklist;
+create trigger touch_x_lead_account_blacklist_updated_at
+before update on public.x_lead_account_blacklist
+for each row execute function public.touch_updated_at();
+
+alter table public.x_lead_account_blacklist enable row level security;
+revoke all on table public.x_lead_account_blacklist from anon, authenticated;
+grant select, insert, update, delete on table public.x_lead_account_blacklist to service_role;
+
 create table if not exists public.x_reply_accounts (
   id uuid primary key default gen_random_uuid(),
   account_key text not null unique check (account_key ~ '^[A-Za-z0-9_-]{1,64}$'),
@@ -815,8 +848,29 @@ create table if not exists public.x_reply_accounts (
   topics text[] not null default '{}'::text[],
   prohibited_topics text not null default '',
   daily_limit integer not null default 5 check (daily_limit between 1 and 20),
+  copy_style text not null default 'warm'
+    check (copy_style in ('warm', 'playful', 'concise')),
+  copy_variation_notes text not null default ''
+    check (length(copy_variation_notes) <= 500),
+  bitbrowser_window_id text,
+  bitbrowser_window_name text not null default '',
+  require_daily_first_confirmation boolean not null default true,
   active boolean not null default true,
   created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.x_reply_account_proxies (
+  account_id uuid primary key references public.x_reply_accounts(id) on delete cascade,
+  encrypted_url text not null check (length(encrypted_url) between 32 and 4096),
+  display_host text not null check (length(display_host) between 1 and 255),
+  expected_country text not null default 'US' check (expected_country ~ '^[A-Z]{2}$'),
+  expected_region text not null default '' check (length(expected_region) <= 100),
+  status text not null default 'pending' check (status in ('pending', 'healthy', 'error')),
+  egress_ip inet,
+  last_tested_at timestamptz,
+  last_error text check (last_error is null or length(last_error) <= 1000),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -882,11 +936,28 @@ create table if not exists public.x_manual_posts (
   )
 );
 
+create table if not exists public.x_reply_daily_gates (
+  account_id uuid not null references public.x_reply_accounts(id) on delete cascade,
+  gate_date date not null,
+  status text not null default 'pending'
+    check (status in ('pending', 'awaiting_confirmation', 'authorized', 'paused')),
+  first_job_id uuid references public.x_reply_jobs(id) on delete set null,
+  first_sent_at timestamptz,
+  authorized_at timestamptz,
+  authorized_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (account_id, gate_date)
+);
+
 create table if not exists public.x_reply_workers (
   worker_id text primary key check (length(worker_id) between 1 and 120),
   status text not null default 'paused' check (status in ('online', 'busy', 'paused', 'error')),
   xuse_available boolean not null default false,
   configured_accounts text[] not null default '{}'::text[],
+  bitbrowser_available boolean not null default false,
+  bitbrowser_version text,
+  bitbrowser_windows jsonb not null default '[]'::jsonb,
   current_job_id uuid references public.x_reply_jobs(id) on delete set null,
   worker_version text,
   last_error text,
@@ -909,6 +980,8 @@ create index if not exists x_reply_jobs_x_lead_idx
   on public.x_reply_jobs (x_lead_id, created_at desc) where x_lead_id is not null;
 create index if not exists x_manual_posts_account_history_idx
   on public.x_manual_posts (account_id, created_at desc);
+create unique index if not exists x_manual_posts_one_task_per_lead_idx
+  on public.x_manual_posts (x_lead_id) where x_lead_id is not null;
 create index if not exists x_manual_posts_preparation_idx
   on public.x_manual_posts (preparation_status, created_at desc)
   where preparation_status in ('pending', 'processing', 'failed');
@@ -916,15 +989,31 @@ create index if not exists x_manual_posts_created_by_idx
   on public.x_manual_posts (created_by) where created_by is not null;
 create index if not exists x_reply_accounts_created_by_idx
   on public.x_reply_accounts (created_by) where created_by is not null;
+create unique index if not exists x_reply_accounts_bitbrowser_window_id_unique
+  on public.x_reply_accounts (bitbrowser_window_id)
+  where bitbrowser_window_id is not null;
+create index if not exists x_reply_account_proxies_status_idx
+  on public.x_reply_account_proxies (status, last_tested_at desc);
+create unique index if not exists x_reply_account_proxies_unique_egress_idx
+  on public.x_reply_account_proxies (egress_ip) where egress_ip is not null;
 create index if not exists x_reply_jobs_approved_by_idx
   on public.x_reply_jobs (approved_by) where approved_by is not null;
 create index if not exists x_reply_jobs_created_by_idx
   on public.x_reply_jobs (created_by) where created_by is not null;
 create index if not exists x_reply_workers_current_job_id_idx
   on public.x_reply_workers (current_job_id) where current_job_id is not null;
+create index if not exists x_reply_daily_gates_date_status_idx
+  on public.x_reply_daily_gates (gate_date, status);
+create index if not exists x_reply_daily_gates_first_job_id_idx
+  on public.x_reply_daily_gates (first_job_id) where first_job_id is not null;
+create index if not exists x_reply_daily_gates_authorized_by_idx
+  on public.x_reply_daily_gates (authorized_by) where authorized_by is not null;
 
 drop trigger if exists touch_x_reply_accounts_updated_at on public.x_reply_accounts;
 create trigger touch_x_reply_accounts_updated_at before update on public.x_reply_accounts
+for each row execute function public.touch_updated_at();
+drop trigger if exists touch_x_reply_account_proxies_updated_at on public.x_reply_account_proxies;
+create trigger touch_x_reply_account_proxies_updated_at before update on public.x_reply_account_proxies
 for each row execute function public.touch_updated_at();
 drop trigger if exists touch_x_reply_jobs_updated_at on public.x_reply_jobs;
 create trigger touch_x_reply_jobs_updated_at before update on public.x_reply_jobs
@@ -932,14 +1021,30 @@ for each row execute function public.touch_updated_at();
 drop trigger if exists touch_x_reply_workers_updated_at on public.x_reply_workers;
 create trigger touch_x_reply_workers_updated_at before update on public.x_reply_workers
 for each row execute function public.touch_updated_at();
+drop trigger if exists touch_x_reply_daily_gates_updated_at on public.x_reply_daily_gates;
+create trigger touch_x_reply_daily_gates_updated_at before update on public.x_reply_daily_gates
+for each row execute function public.touch_updated_at();
 drop trigger if exists touch_x_manual_posts_updated_at on public.x_manual_posts;
 create trigger touch_x_manual_posts_updated_at before update on public.x_manual_posts
 for each row execute function public.touch_updated_at();
 
 alter table public.x_reply_accounts enable row level security;
+alter table public.x_reply_account_proxies enable row level security;
 alter table public.x_reply_jobs enable row level security;
 alter table public.x_reply_workers enable row level security;
+alter table public.x_reply_daily_gates enable row level security;
 alter table public.x_manual_posts enable row level security;
-revoke all on table public.x_reply_accounts, public.x_reply_jobs, public.x_reply_workers, public.x_manual_posts from anon, authenticated;
+revoke all on table public.x_reply_accounts, public.x_reply_account_proxies, public.x_reply_jobs, public.x_reply_workers, public.x_reply_daily_gates, public.x_manual_posts from anon, authenticated;
 grant usage on schema public to service_role;
-grant select, insert, update, delete on table public.x_reply_accounts, public.x_reply_jobs, public.x_reply_workers, public.x_manual_posts to service_role;
+grant select, insert, update, delete on table public.x_reply_accounts, public.x_reply_account_proxies, public.x_reply_jobs, public.x_reply_workers, public.x_reply_daily_gates, public.x_manual_posts to service_role;
+
+comment on column public.x_reply_accounts.copy_style is
+  'Deterministic per-account copy profile used to vary approved outreach drafts.';
+comment on column public.x_reply_accounts.copy_variation_notes is
+  'Operator guidance for the account voice; never interpreted as permission to auto-send.';
+comment on column public.x_reply_accounts.bitbrowser_window_id is
+  'BitBrowser local API browser environment id. One X account must map to exactly one environment.';
+comment on table public.x_reply_daily_gates is
+  'Daily first-post supervision gate in Asia/Shanghai. The first successful send waits for an admin release before later jobs can run.';
+comment on table public.x_reply_account_proxies is
+  'Application-encrypted per-account proxy routes. Plaintext credentials are only released to the authenticated local worker.';

@@ -2,13 +2,21 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { isAuthorizedXReplyWorker } from "@/lib/x-reply-worker-auth";
+import { getXReplyWorkerSecret } from "@/lib/env";
+import { decryptProxyUrl } from "@/lib/x-proxy-crypto";
 
 export const runtime = "nodejs";
 
 const requestSchema = z.object({
   workerId: z.string().trim().min(1).max(120),
-  xUseAvailable: z.boolean(),
-  configuredAccounts: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)).max(50),
+  bitbrowserAvailable: z.boolean(),
+  bitbrowserVersion: z.string().trim().max(40).nullable().optional(),
+  windows: z.array(z.object({
+    id: z.string().trim().min(1).max(120),
+    name: z.string().trim().max(120),
+    seq: z.number().int().nullable(),
+    status: z.number().int().nullable(),
+  })).max(100),
   version: z.string().trim().min(1).max(40).optional(),
   errorMessage: z.string().trim().max(1000).nullable().optional(),
 });
@@ -21,15 +29,19 @@ export async function POST(request: Request) {
   if (!supabase) return NextResponse.json({ error: "Supabase is not configured." }, { status: 503 });
 
   const now = new Date().toISOString();
-  const available = parsed.data.xUseAvailable && parsed.data.configuredAccounts.length > 0;
+  const available = parsed.data.bitbrowserAvailable && parsed.data.windows.length > 0;
+  const availableWindowIds = new Set(parsed.data.windows.map((window) => window.id));
   const { error: heartbeatError } = await supabase.from("x_reply_workers").upsert({
     worker_id: parsed.data.workerId,
     status: available ? "online" : "paused",
-    xuse_available: parsed.data.xUseAvailable,
-    configured_accounts: parsed.data.configuredAccounts,
+    xuse_available: false,
+    configured_accounts: [],
+    bitbrowser_available: parsed.data.bitbrowserAvailable,
+    bitbrowser_version: parsed.data.bitbrowserVersion ?? null,
+    bitbrowser_windows: parsed.data.windows,
     current_job_id: null,
     worker_version: parsed.data.version ?? null,
-    last_error: parsed.data.errorMessage ?? (available ? null : "x-use 尚未配置可用账号。"),
+    last_error: parsed.data.errorMessage ?? (available ? null : "比特浏览器本地 API 不可用或没有窗口。"),
     last_seen_at: now,
   }, { onConflict: "worker_id" });
   if (heartbeatError) return NextResponse.json({ error: heartbeatError.message }, { status: 500 });
@@ -48,12 +60,51 @@ export async function POST(request: Request) {
 
   const { data: accounts, error: accountsError } = await supabase
     .from("x_reply_accounts")
-    .select("id,account_key")
+    .select("id,account_key,bitbrowser_window_id,require_daily_first_confirmation,x_reply_account_proxies!inner(encrypted_url)")
     .eq("active", true)
-    .in("account_key", parsed.data.configuredAccounts);
+    .not("bitbrowser_window_id", "is", null);
   if (accountsError) return NextResponse.json({ error: accountsError.message }, { status: 500 });
   if (!accounts?.length) return new Response(null, { status: 204 });
-  const accountKeys = new Map(accounts.map((account) => [account.id, account.account_key]));
+  const workerSecret = getXReplyWorkerSecret();
+  if (!workerSecret) return NextResponse.json({ error: "Worker encryption key is unavailable." }, { status: 503 });
+  const accountRoutes = new Map<string, { accountKey: string; proxyUrl: string; windowId: string; requiresConfirmation: boolean }>();
+  for (const account of accounts) {
+    if (!account.bitbrowser_window_id || !availableWindowIds.has(account.bitbrowser_window_id)) continue;
+    const relation = Array.isArray(account.x_reply_account_proxies)
+      ? account.x_reply_account_proxies[0]
+      : account.x_reply_account_proxies;
+    if (!relation?.encrypted_url) continue;
+    try {
+      accountRoutes.set(account.id, {
+        accountKey: account.account_key,
+        proxyUrl: decryptProxyUrl(relation.encrypted_url, workerSecret),
+        windowId: account.bitbrowser_window_id,
+        requiresConfirmation: account.require_daily_first_confirmation,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "代理密文无法解密。";
+      await supabase.from("x_reply_account_proxies").update({ status: "error", last_error: message.slice(0, 1000) }).eq("account_id", account.id);
+    }
+  }
+  if (!accountRoutes.size) return new Response(null, { status: 204 });
+
+  const dateParts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const dateValues = Object.fromEntries(dateParts.map((part) => [part.type, part.value]));
+  const shanghaiDate = `${dateValues.year}-${dateValues.month}-${dateValues.day}`;
+  const { data: gates, error: gatesError } = await supabase.from("x_reply_daily_gates")
+    .select("account_id,status")
+    .eq("gate_date", shanghaiDate)
+    .in("account_id", [...accountRoutes.keys()]);
+  if (gatesError) return NextResponse.json({ error: gatesError.message }, { status: 500 });
+  const gateStatus = new Map((gates ?? []).map((gate) => [gate.account_id, gate.status]));
+  const eligibleAccountIds = [...accountRoutes.entries()].filter(([accountId, route]) => {
+    if (!route.requiresConfirmation) return true;
+    const status = gateStatus.get(accountId);
+    return status == null || status === "pending" || status === "authorized";
+  }).map(([accountId]) => accountId);
+  if (!eligibleAccountIds.length) return new Response(null, { status: 204 });
 
   const { data: queued, error: readError } = await supabase
     .from("x_reply_jobs")
@@ -61,7 +112,7 @@ export async function POST(request: Request) {
     .eq("status", "queued")
     .eq("attempt_count", 0)
     .lte("scheduled_for", now)
-    .in("account_id", accounts.map((account) => account.id))
+    .in("account_id", eligibleAccountIds)
     .order("scheduled_for", { ascending: true })
     .order("created_at", { ascending: true })
     .limit(1)
@@ -84,9 +135,33 @@ export async function POST(request: Request) {
   if (!claimed) return new Response(null, { status: 204 });
 
   await supabase.from("x_reply_workers").update({ status: "busy", current_job_id: claimed.id, last_seen_at: now }).eq("worker_id", parsed.data.workerId);
+  const route = accountRoutes.get(claimed.account_id);
+  if (!route) return NextResponse.json({ error: "Claimed account route is unavailable." }, { status: 500 });
+  const supervisedFirst = route.requiresConfirmation && gateStatus.get(claimed.account_id) !== "authorized";
+  if (supervisedFirst) {
+    const { error: gateError } = await supabase.from("x_reply_daily_gates").upsert({
+      account_id: claimed.account_id,
+      gate_date: shanghaiDate,
+      status: "awaiting_confirmation",
+      first_job_id: claimed.id,
+      first_sent_at: null,
+      authorized_at: null,
+      authorized_by: null,
+    }, { onConflict: "account_id,gate_date" });
+    if (gateError) {
+      await supabase.from("x_reply_jobs").update({
+        status: "uncertain", completed_at: now, error_code: "daily_gate_failed",
+        error_message: "每日首条监督状态写入失败；任务没有下发，请人工核对。",
+      }).eq("id", claimed.id).eq("status", "claimed");
+      return NextResponse.json({ error: gateError.message }, { status: 500 });
+    }
+  }
   return NextResponse.json({ job: {
     id: claimed.id,
-    accountKey: accountKeys.get(claimed.account_id),
+    accountKey: route.accountKey,
+    proxyUrl: route.proxyUrl,
+    bitbrowserWindowId: route.windowId,
+    supervisedFirst,
     actionType: claimed.action_type,
     targetPostUrl: claimed.target_post_url,
     postText: claimed.reply_text,

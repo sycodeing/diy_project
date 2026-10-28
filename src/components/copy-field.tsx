@@ -58,13 +58,23 @@ export function CopyField({
   );
 }
 
-export function CopyButton({ label, value }: { label: string; value: string }) {
+export function CopyButton({
+  emphasized = false,
+  label,
+  value,
+}: {
+  emphasized?: boolean;
+  label: string;
+  value: string;
+}) {
   const [copied, setCopied] = useState(false);
 
   return (
     <button
       aria-label={label}
-      className="focus-ring inline-flex h-9 shrink-0 items-center gap-1 rounded-md border border-line px-2 text-xs font-bold text-muted hover:text-foreground"
+      className={emphasized
+        ? "focus-ring inline-flex h-9 shrink-0 items-center gap-1 rounded-md bg-accent px-3 text-xs font-black text-accent-ink disabled:opacity-50"
+        : "focus-ring inline-flex h-9 shrink-0 items-center gap-1 rounded-md border border-line px-2 text-xs font-bold text-muted hover:text-foreground disabled:opacity-50"}
       disabled={!value}
       onClick={async () => {
         await copyToClipboard(value);

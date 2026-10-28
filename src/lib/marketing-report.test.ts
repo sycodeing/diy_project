@@ -13,8 +13,10 @@ test("keeps redirect requests separate from unflagged requests", () => {
     created_at: "2026-10-23T00:00:00.000Z",
     expires_at: "2026-10-30T00:00:00.000Z",
     marketing_events: [
-      { event_type: "link_generated", created_at: "2026-10-23T00:00:00.000Z", order_id: null },
-      { event_type: "link_clicked", created_at: "2026-10-23T00:01:00.000Z", order_id: null },
+      { event_type: "link_generated", created_at: "2026-10-23T00:00:00.000Z", order_id: null, activity_session_id: null, is_internal: false },
+      { event_type: "link_clicked", created_at: "2026-10-23T00:01:00.000Z", order_id: null, activity_session_id: null, is_internal: false },
+      { event_type: "landing_confirmed", created_at: "2026-10-23T00:01:02.000Z", order_id: null, activity_session_id: "session-1", is_internal: false },
+      { event_type: "preview_ready", created_at: "2026-10-23T00:01:05.000Z", order_id: null, activity_session_id: "session-2", is_internal: true },
     ],
     marketing_link_visits: [
       { id: "visit-1", visited_at: "2026-10-23T00:01:00.000Z", device_class: "desktop", referrer_group: "x", suspected_bot: false, is_internal: false },
@@ -26,7 +28,9 @@ test("keeps redirect requests separate from unflagged requests", () => {
 
   const summary = summarizeMarketing([row]);
   assert.equal(summary.totalClicks, 4);
-  assert.equal(summary.qualifiedRedirects, 1);
+  assert.equal(summary.unflaggedRedirects, 1);
   assert.equal(summary.excludedRedirects, 2);
   assert.equal(summary.stageCounts.link_clicked, 1);
+  assert.equal(summary.stageCounts.landing_confirmed, 1);
+  assert.equal(summary.stageCounts.preview_ready, 0);
 });

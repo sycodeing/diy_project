@@ -9,8 +9,6 @@ import { prepareXLeadQueueTask } from "@/lib/x-lead-materials";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 
 const PAGE_PATH = "/admin/x-auto-posts";
-const accountKeySchema = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/);
-const shortText = z.string().trim().min(1).max(500);
 const idSchema = z.string().uuid();
 const actionTypeSchema = z.enum(["post", "reply"]);
 const xPostUrlSchema = z.string().trim().url().max(2048).refine(
@@ -42,41 +40,6 @@ function shanghaiDayRange(value: Date) {
     start: new Date(start).toISOString(),
     end: new Date(start + 24 * 60 * 60_000).toISOString(),
   };
-}
-
-export async function createXAutoAccount(formData: FormData) {
-  const user = await requireAdmin(PAGE_PATH);
-  const supabase = serviceClient();
-  const topics = String(formData.get("topics") ?? "")
-    .split(/[,，\n]/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .slice(0, 12);
-  const payload = {
-    account_key: accountKeySchema.parse(String(formData.get("accountKey") ?? "")),
-    display_name: z.string().trim().min(1).max(80).parse(String(formData.get("displayName") ?? "")),
-    positioning: shortText.parse(String(formData.get("positioning") ?? "")),
-    audience: shortText.parse(String(formData.get("audience") ?? "")),
-    voice: shortText.parse(String(formData.get("voice") ?? "")),
-    topics,
-    prohibited_topics: z.string().trim().max(500).parse(String(formData.get("prohibitedTopics") ?? "")),
-    daily_limit: z.coerce.number().int().min(1).max(20).parse(formData.get("dailyLimit")),
-    created_by: user.id,
-  };
-  const { error } = await supabase.from("x_reply_accounts").insert(payload);
-  if (error) throw new Error(error.code === "23505" ? "该 x-use 账号标识已经存在。" : error.message);
-  revalidatePath(PAGE_PATH);
-  redirect(`${PAGE_PATH}?notice=account-created`);
-}
-
-export async function setXAutoAccountActive(formData: FormData) {
-  await requireAdmin(PAGE_PATH);
-  const accountId = idSchema.parse(String(formData.get("accountId") ?? ""));
-  const active = String(formData.get("active") ?? "") === "true";
-  const { error } = await serviceClient().from("x_reply_accounts").update({ active }).eq("id", accountId);
-  if (error) throw new Error(error.message);
-  revalidatePath(PAGE_PATH);
-  revalidatePath("/admin/x-manual-posts");
 }
 
 export async function createXAutoDraft(formData: FormData) {
@@ -115,7 +78,7 @@ export async function approveXAutoDraft(formData: FormData) {
   const jobId = idSchema.parse(String(formData.get("jobId") ?? ""));
   const { data: job, error } = await supabase
     .from("x_reply_jobs")
-    .select("id,status,account_id,scheduled_for,preparation_status,x_reply_accounts!inner(account_key,positioning,daily_limit,active)")
+    .select("id,status,account_id,scheduled_for,preparation_status,x_reply_accounts!inner(account_key,positioning,daily_limit,active,bitbrowser_window_id,x_reply_account_proxies(account_id,status))")
     .eq("id", jobId)
     .maybeSingle();
   if (error || !job) throw new Error(error?.message ?? "自动发送草稿不存在。");
@@ -123,14 +86,19 @@ export async function approveXAutoDraft(formData: FormData) {
   if (job.preparation_status !== "ready") throw new Error("预览图、链接和文案尚未准备完成，暂不能批准发送。");
   const account = Array.isArray(job.x_reply_accounts) ? job.x_reply_accounts[0] : job.x_reply_accounts;
   if (!account?.active) throw new Error("该账号已停用。");
+  if (!account.bitbrowser_window_id) throw new Error("该账号尚未绑定比特浏览器窗口。");
+  const proxy = Array.isArray(account.x_reply_account_proxies) ? account.x_reply_account_proxies[0] : account.x_reply_account_proxies;
+  if (!proxy) throw new Error("该账号尚未配置固定代理，请先到 X 账号/IP 页面设置。");
+  if (proxy.status === "error") throw new Error("该账号的固定代理处于异常状态，请更换或重新保存后再批准。");
 
   const { data: workers } = await supabase
     .from("x_reply_workers")
-    .select("configured_accounts,last_seen_at,xuse_available")
-    .eq("xuse_available", true)
+    .select("bitbrowser_windows,last_seen_at,bitbrowser_available")
+    .eq("bitbrowser_available", true)
     .gte("last_seen_at", new Date(Date.now() - 5 * 60_000).toISOString());
-  const locallyConfigured = (workers ?? []).some((worker) => worker.configured_accounts.includes(account.account_key));
-  if (!locallyConfigured) throw new Error(`本机 x-use 尚未报告账号 ${account.account_key}，请先在本机导入该账号会话。`);
+  const locallyConfigured = (workers ?? []).some((worker) => Array.isArray(worker.bitbrowser_windows)
+    && worker.bitbrowser_windows.some((window) => window && typeof window === "object" && "id" in window && window.id === account.bitbrowser_window_id));
+  if (!locallyConfigured) throw new Error(`本机比特浏览器尚未报告窗口 ${account.bitbrowser_window_id}，请确认客户端和 Worker 都已启动。`);
 
   const range = shanghaiDayRange(new Date(job.scheduled_for));
   const { count, error: countError } = await supabase
@@ -187,4 +155,43 @@ export async function retryXAutoPreparation(formData: FormData) {
   await supabase.from("x_reply_jobs").update({ preparation_status: "pending", preparation_error: null }).eq("id", taskId);
   after(() => prepareXLeadQueueTask({ queue: "automatic", taskId, leadId: task.x_lead_id }));
   revalidatePath(PAGE_PATH);
+}
+
+function shanghaiToday() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
+export async function authorizeXDailySending(formData: FormData) {
+  const user = await requireAdmin(PAGE_PATH);
+  const accountId = idSchema.parse(String(formData.get("accountId") ?? ""));
+  const supabase = serviceClient();
+  const { data, error } = await supabase.from("x_reply_daily_gates").update({
+    status: "authorized",
+    authorized_at: new Date().toISOString(),
+    authorized_by: user.id,
+  }).eq("account_id", accountId).eq("gate_date", shanghaiToday())
+    .eq("status", "awaiting_confirmation").not("first_sent_at", "is", null)
+    .select("account_id").maybeSingle();
+  if (error || !data) throw new Error(error?.message ?? "今日首条尚未确认发送成功，不能放行后续任务。");
+  revalidatePath(PAGE_PATH);
+  redirect(`${PAGE_PATH}?notice=daily-authorized`);
+}
+
+export async function pauseXDailySending(formData: FormData) {
+  await requireAdmin(PAGE_PATH);
+  const accountId = idSchema.parse(String(formData.get("accountId") ?? ""));
+  const { error } = await serviceClient().from("x_reply_daily_gates").upsert({
+    account_id: accountId,
+    gate_date: shanghaiToday(),
+    status: "paused",
+    authorized_at: null,
+    authorized_by: null,
+  }, { onConflict: "account_id,gate_date" });
+  if (error) throw new Error(error.message);
+  revalidatePath(PAGE_PATH);
+  redirect(`${PAGE_PATH}?notice=daily-paused`);
 }

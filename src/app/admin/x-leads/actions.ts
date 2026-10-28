@@ -1,15 +1,15 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
 import { prepareXLeadQueueTask } from "@/lib/x-lead-materials";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
-import { getXLeadTargetingChecks, type XLeadRow } from "@/lib/x-lead";
+import { getXLeadTargetingChecks, X_LEAD_REJECTION_REASONS, type XLeadRow } from "@/lib/x-lead";
 
 const leadIdSchema = z.uuid();
 const suitabilityDecisionSchema = z.enum(["reject", "restore"]);
+const rejectionReasonSchema = z.enum(X_LEAD_REJECTION_REASONS);
 const PREPARING_COPY = "Preparing your personalized pet-pillow preview and link…";
 const RESTORABLE_SELECTION_STATUSES = new Set([
   "new",
@@ -47,13 +47,19 @@ async function getLeadAndAssignedAccount(leadId: string) {
   const { supabase, lead } = await getEligibleLead(leadId);
   const { data: accounts, error: accountsError } = await supabase
     .from("x_reply_accounts")
-    .select("id,created_at")
+    .select("id,created_at,x_reply_account_proxies!inner(status)")
     .eq("active", true)
     .order("created_at", { ascending: true });
   if (accountsError) throw new Error(accountsError.message);
-  if (!accounts?.length) throw new Error("还没有启用的发送账号，请先到自动发送页配置账号定位。");
+  const routableAccounts = (accounts ?? []).filter((account) => {
+    const proxy = Array.isArray(account.x_reply_account_proxies)
+      ? account.x_reply_account_proxies[0]
+      : account.x_reply_account_proxies;
+    return proxy?.status !== "error";
+  });
+  if (!routableAccounts.length) throw new Error("还没有配置可用固定代理的启用账号，请先到 X 账号/IP 页面完成设置。");
 
-  const accountIds = accounts.map((account) => account.id);
+  const accountIds = routableAccounts.map((account) => account.id);
   const since = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
   const { data: automaticRows } = await supabase
     .from("x_reply_jobs")
@@ -65,14 +71,26 @@ async function getLeadAndAssignedAccount(leadId: string) {
   for (const row of automaticRows ?? []) {
     load.set(row.account_id, (load.get(row.account_id) ?? 0) + 1);
   }
-  const account = [...accounts].sort((left, right) => (load.get(left.id) ?? 0) - (load.get(right.id) ?? 0))[0];
+  const account = [...routableAccounts].sort((left, right) => (load.get(left.id) ?? 0) - (load.get(right.id) ?? 0))[0];
   return { supabase, lead, account };
 }
 
 export async function createXLeadManualTask(formData: FormData) {
   const user = await requireAdmin("/admin/x-leads");
   const leadId = leadIdSchema.parse(String(formData.get("leadId") ?? ""));
-  const { supabase, lead } = await getEligibleLead(leadId);
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) throw new Error("Supabase 服务端连接尚未配置。");
+  const { data: existingTask, error: existingTaskError } = await supabase
+    .from("x_manual_posts")
+    .select("id")
+    .eq("x_lead_id", leadId)
+    .maybeSingle();
+  if (existingTaskError) throw new Error(existingTaskError.message);
+  if (existingTask) {
+    return;
+  }
+
+  const { lead } = await getEligibleLead(leadId);
   const { data: task, error } = await supabase.from("x_manual_posts").insert({
     x_lead_id: leadId,
     action_type: "reply",
@@ -82,11 +100,13 @@ export async function createXLeadManualTask(formData: FormData) {
     preparation_status: "pending",
     created_by: user.id,
   }).select("id").single();
+  if (error?.code === "23505") {
+    return;
+  }
   if (error || !task) throw new Error(error?.message ?? "手动发送任务创建失败。");
-  await supabase.from("x_leads").update({ selection_status: "approved" }).eq("id", leadId);
+  const { error: updateLeadError } = await supabase.from("x_leads").update({ selection_status: "approved" }).eq("id", leadId);
+  if (updateLeadError) throw new Error(`手动任务已创建，但候选状态更新失败：${updateLeadError.message}`);
   after(() => prepareXLeadQueueTask({ queue: "manual", taskId: task.id, leadId }));
-  revalidatePath("/admin/x-leads");
-  revalidatePath("/admin/x-manual-posts");
 }
 
 export async function createXLeadAutoTask(formData: FormData) {
@@ -107,8 +127,38 @@ export async function createXLeadAutoTask(formData: FormData) {
   if (error || !task) throw new Error(error?.message ?? "自动发送草稿创建失败。");
   await supabase.from("x_leads").update({ selection_status: "approved" }).eq("id", leadId);
   after(() => prepareXLeadQueueTask({ queue: "automatic", taskId: task.id, leadId }));
-  revalidatePath("/admin/x-leads");
-  revalidatePath("/admin/x-auto-posts");
+}
+
+export async function blacklistXLeadAccount(formData: FormData) {
+  const user = await requireAdmin("/admin/x-leads");
+  const leadId = leadIdSchema.parse(String(formData.get("leadId") ?? ""));
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) throw new Error("Supabase 服务端连接尚未配置。");
+
+  const { data: lead, error: leadError } = await supabase
+    .from("x_leads")
+    .select("author_hash,x_handle")
+    .eq("id", leadId)
+    .maybeSingle();
+  if (leadError || !lead) throw new Error(leadError?.message ?? "候选用户不存在。");
+
+  const { error: blacklistError } = await supabase.from("x_lead_account_blacklist").upsert({
+    author_hash: lead.author_hash,
+    x_handle: lead.x_handle,
+    reason: "manual_review",
+    created_by: user.id,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "author_hash" });
+  if (blacklistError) throw new Error(blacklistError.message);
+
+  const { error: suppressError } = await supabase
+    .from("x_leads")
+    .update({ selection_status: "suppressed" })
+    .eq("author_hash", lead.author_hash)
+    .not("selection_status", "in", '("approved","contacted")');
+  if (suppressError) throw new Error(suppressError.message);
+  // Deliberately do not revalidate /admin/x-leads. The operator's current queue
+  // remains stable until they explicitly refresh it.
 }
 
 export async function setXLeadSuitability(formData: FormData) {
@@ -134,8 +184,13 @@ export async function setXLeadSuitability(formData: FormData) {
       throw new Error("该候选已进入发送流程或不再联系，不能改为不合适。");
     }
     if (lead.selection_status === "rejected") return;
+    const rejectionReason = rejectionReasonSchema.parse(String(formData.get("rejectionReason") ?? ""));
+    const rejectionNote = z.string().trim().max(200).parse(String(formData.get("rejectionNote") ?? ""));
+    if (rejectionReason === "other" && !rejectionNote) throw new Error("选择其他原因时，请填写具体说明。");
     targetingData.manual_previous_status = lead.selection_status;
     targetingData.manual_rejected_at = new Date().toISOString();
+    targetingData.manual_rejection_reason = rejectionReason;
+    targetingData.manual_rejection_note = rejectionNote;
     nextStatus = "rejected";
   } else {
     if (lead.selection_status !== "rejected") throw new Error("该候选当前不是人工标记的不合适状态。");
@@ -145,6 +200,8 @@ export async function setXLeadSuitability(formData: FormData) {
     nextStatus = RESTORABLE_SELECTION_STATUSES.has(previousStatus) ? previousStatus : "review";
     delete targetingData.manual_previous_status;
     delete targetingData.manual_rejected_at;
+    delete targetingData.manual_rejection_reason;
+    delete targetingData.manual_rejection_note;
   }
 
   const { data: updated, error: updateError } = await supabase
@@ -155,5 +212,5 @@ export async function setXLeadSuitability(formData: FormData) {
     .select("id")
     .maybeSingle();
   if (updateError || !updated) throw new Error(updateError?.message ?? "候选状态已变化，请刷新后重试。");
-  revalidatePath("/admin/x-leads");
+  // Deliberately keep the current queue snapshot and ordering until manual refresh.
 }

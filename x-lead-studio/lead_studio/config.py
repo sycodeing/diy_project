@@ -16,6 +16,8 @@ DATA_DIR = ROOT / ".data"
 MEDIA_DIR = DATA_DIR / "media"
 MOCKUP_DIR = DATA_DIR / "mockups"
 APIFY_CACHE_DIR = DATA_DIR / "apify" / "runs"
+TWITTERAPI_STATE_PATH = DATA_DIR / "twitterapi" / "watermarks.json"
+TWITTERAPI_ARCHIVE_DIR = DATA_DIR / "twitterapi" / "runs"
 DB_PATH = DATA_DIR / "leads.sqlite3"
 CREDENTIAL_PATH = DATA_DIR / "x-cookie.dpapi"
 
@@ -51,15 +53,21 @@ class Settings:
     preview_download_worker_enabled: bool = os.getenv("PREVIEW_DOWNLOAD_WORKER_ENABLED", "true").lower() == "true"
     preview_download_root: Path = Path(os.getenv("PREVIEW_DOWNLOAD_ROOT", r"D:\Temu\Photo\待发送"))
     preview_download_poll_seconds: int = max(5, min(300, int(os.getenv("PREVIEW_DOWNLOAD_POLL_SECONDS", "10"))))
+    x_lead_provider: str = os.getenv("X_LEAD_PROVIDER", "twitterapi").strip().lower()
+    twitterapi_api_key: str = os.getenv("TWITTERAPI_API_KEY", "").strip()
+    twitterapi_base_url: str = os.getenv("TWITTERAPI_BASE_URL", "https://api.twitterapi.io").rstrip("/")
+    twitterapi_us_query_share: int = max(50, min(100, int(os.getenv("TWITTERAPI_US_QUERY_SHARE", "90"))))
+    apify_enabled: bool = os.getenv("APIFY_ENABLED", "false").lower() == "true"
     apify_api_token: str = os.getenv("APIFY_API_TOKEN", "").strip()
     apify_actor_id: str = os.getenv("APIFY_ACTOR_ID", "KvRrkwDDFm4vmklVv").strip()
     apify_max_charge_usd: float = max(0.01, min(10.0, float(os.getenv("APIFY_MAX_CHARGE_USD", "1.00"))))
     x_reply_worker_enabled: bool = os.getenv("X_REPLY_WORKER_ENABLED", "true").lower() == "true"
     x_reply_worker_secret: str = os.getenv("X_REPLY_WORKER_SECRET", "")
     x_reply_worker_poll_seconds: int = max(10, min(300, int(os.getenv("X_REPLY_WORKER_POLL_SECONDS", "15"))))
+    bitbrowser_api_url: str = os.getenv("BITBROWSER_API_URL", "http://127.0.0.1:54345").rstrip("/")
     x_use_home: Path = field(default_factory=_default_x_use_home)
 
 
 def ensure_data_dirs() -> None:
-    for path in (DATA_DIR, MEDIA_DIR, MOCKUP_DIR, APIFY_CACHE_DIR):
+    for path in (DATA_DIR, MEDIA_DIR, MOCKUP_DIR, APIFY_CACHE_DIR, TWITTERAPI_ARCHIVE_DIR):
         path.mkdir(parents=True, exist_ok=True)

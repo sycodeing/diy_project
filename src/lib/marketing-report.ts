@@ -1,6 +1,7 @@
 export const MARKETING_STAGES = [
   "link_generated",
   "link_clicked",
+  "landing_confirmed",
   "design_opened",
   "preview_ready",
   "checkout_started",
@@ -10,6 +11,7 @@ export const MARKETING_STAGES = [
 export const MARKETING_STAGE_LABELS: Record<(typeof MARKETING_STAGES)[number], string> = {
   link_generated: "链接已生成",
   link_clicked: "收到跳转请求",
+  landing_confirmed: "浏览器确认落地",
   design_opened: "已打开设计器",
   preview_ready: "预览已生成",
   checkout_started: "已开始结账",
@@ -43,6 +45,8 @@ export type MarketingReportRow = {
     event_type: string;
     created_at: string;
     order_id: string | null;
+    activity_session_id: string | null;
+    is_internal: boolean;
   }>;
   marketing_link_visits: Array<{
     id: string;
@@ -66,7 +70,7 @@ export function summarizeMarketing(rows: MarketingReportRow[]) {
   const stageCounts = Object.fromEntries(
     MARKETING_STAGES.map((stage) => [
       stage,
-      rows.filter((row) => row.marketing_events.some((event) => event.event_type === stage)).length,
+      rows.filter((row) => row.marketing_events.some((event) => isReportableMarketingEvent(event, stage))).length,
     ]),
   ) as Record<(typeof MARKETING_STAGES)[number], number>;
   const paidOrders = rows.flatMap((row) => row.orders).filter((order) => order.payment_status === "paid");
@@ -74,10 +78,22 @@ export function summarizeMarketing(rows: MarketingReportRow[]) {
   return {
     stageCounts,
     totalClicks: rows.reduce((sum, row) => sum + row.click_count, 0),
-    qualifiedRedirects: rows.flatMap((row) => row.marketing_link_visits).filter((visit) => !visit.suspected_bot && !visit.is_internal).length,
+    unflaggedRedirects: rows.flatMap((row) => row.marketing_link_visits).filter((visit) => !visit.suspected_bot && !visit.is_internal).length,
     excludedRedirects: rows.flatMap((row) => row.marketing_link_visits).filter((visit) => visit.suspected_bot || visit.is_internal).length,
     paidOrders: paidOrders.length,
     revenue,
     averageOrderValue: paidOrders.length ? Math.round(revenue / paidOrders.length) : 0,
   };
+}
+
+export function reachedMarketingStages(row: MarketingReportRow) {
+  return MARKETING_STAGES.filter((stage) => row.marketing_events.some((event) => isReportableMarketingEvent(event, stage)));
+}
+
+function isReportableMarketingEvent(
+  event: MarketingReportRow["marketing_events"][number],
+  stage: (typeof MARKETING_STAGES)[number],
+) {
+  if (event.event_type !== stage) return false;
+  return stage === "link_generated" || stage === "link_clicked" || !event.is_internal;
 }

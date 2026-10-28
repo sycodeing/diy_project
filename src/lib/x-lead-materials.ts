@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { getAppUrl, getMarketingIngestSecret } from "@/lib/env";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
-import { createXLeadDrafts } from "@/lib/x-lead-copy";
+import { createXLeadDrafts, type XLeadCopyProfile } from "@/lib/x-lead-copy";
 import { getXLeadTargetingChecks, type XLeadRow } from "@/lib/x-lead";
 
 type QueueKind = "manual" | "automatic";
@@ -9,6 +9,7 @@ type QueueKind = "manual" | "automatic";
 export async function ensureXLeadMarketingAssets(
   leadId: string,
   previewMode: "reply" | "full" = "full",
+  copyProfile?: XLeadCopyProfile,
 ) {
   const supabase = getSupabaseServiceClient();
   const secret = getMarketingIngestSecret();
@@ -99,8 +100,9 @@ export async function ensureXLeadMarketingAssets(
   const drafts = createXLeadDrafts({
     occasion: lead.occasion,
     occasionConfidence: lead.occasion_confidence,
+    petType: lead.pet_type,
     targetingData: lead.targeting_data,
-  }, result.url);
+  }, result.url, copyProfile);
   if (!drafts.publicCopy.includes(result.url)) {
     throw new Error("营销文案未包含专属跳转链接。");
   }
@@ -139,7 +141,36 @@ export async function prepareXLeadQueueTask({
   }).eq("id", taskId).in("preparation_status", ["pending", "failed"]);
 
   try {
-    const assets = await ensureXLeadMarketingAssets(leadId, "reply");
+    let copyProfile: XLeadCopyProfile | undefined;
+    if (queue === "automatic") {
+      const { data: automaticTask, error: taskError } = await supabase
+        .from("x_reply_jobs")
+        .select("x_reply_accounts!inner(account_key,copy_style,voice,positioning,copy_variation_notes)")
+        .eq("id", taskId)
+        .maybeSingle();
+      if (taskError || !automaticTask) throw new Error(taskError?.message ?? "自动发送账号不存在。");
+      const relation = Array.isArray(automaticTask.x_reply_accounts)
+        ? automaticTask.x_reply_accounts[0]
+        : automaticTask.x_reply_accounts;
+      if (!relation) throw new Error("自动发送账号不存在。");
+      copyProfile = {
+        accountKey: relation.account_key,
+        style: relation.copy_style,
+        voice: relation.voice,
+        positioning: relation.positioning,
+        variationNotes: relation.copy_variation_notes,
+        variationSeed: taskId,
+      };
+    } else {
+      copyProfile = {
+        accountKey: "manual-review",
+        style: "warm",
+        voice: "warm, specific, and respectful",
+        positioning: "private custom pet keepsake previews",
+        variationSeed: `${leadId}:${taskId}`,
+      };
+    }
+    const assets = await ensureXLeadMarketingAssets(leadId, "reply", copyProfile);
     if (!assets.previewCacheReady) throw new Error("宠物图片已找到，但预览图生成失败，请稍后重试。");
     const contentField = queue === "manual"
       ? { post_text: assets.drafts.publicCopy }

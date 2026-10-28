@@ -1,31 +1,42 @@
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
-import { FormSubmitButton } from "@/components/form-submit-button";
 import { SetupWarning } from "@/components/setup-warning";
 import { requireAdmin } from "@/lib/auth";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { formatAdminDate } from "@/lib/utils";
 import {
   describeUsEvidence,
+  filterXLeadsForQueue,
   getXLeadReferenceConclusion,
   getXLeadReviewEvidence,
   getXLeadTargetingChecks,
   getXLeadFunnelStatus,
+  getXLeadRejectionNote,
+  getXLeadRejectionReason,
   sortXLeadsByPriority,
   X_LEAD_CONCLUSION_LABELS,
+  X_LEAD_REJECTION_REASON_LABELS,
+  X_LEAD_REJECTION_REASONS,
   X_LEAD_SEGMENT_LABELS,
   type XLeadConclusion,
   type XLeadRow,
 } from "@/lib/x-lead";
-import { createXLeadAutoTask, createXLeadManualTask, setXLeadSuitability } from "./actions";
+import { CandidateActions } from "./candidate-actions";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+type ManualQueueTaskSummary = {
+  id: string;
+  status: string;
+  preparation_status: string;
+  created_at: string;
+};
+
 export default async function XLeadsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ conclusion?: string; segment?: string; review?: string; notice?: string }>;
+  searchParams: Promise<{ conclusion?: string; segment?: string; review?: string; reason?: string; notice?: string }>;
 }) {
   await requireAdmin("/admin/x-leads");
   const supabase = getSupabaseServiceClient();
@@ -35,25 +46,43 @@ export default async function XLeadsPage({
   const filters = await searchParams;
   let query = supabase
     .from("x_leads")
-    .select("id,post_id,x_handle,post_url,media_url,posted_at,discovered_at,selection_status,segment,pet_type,occasion,occasion_confidence,ownership_confidence,us_confidence,us_evidence,lead_score,like_count,reply_count,repost_count,view_count,followers_count,targeting_data,consent_copy,public_copy,direct_message_copy,marketing_link_id,marketing_links!x_leads_marketing_link_id_fkey(id,idempotency_key,source_hash,expires_at,account_user_id,account_was_created,marketing_events(event_type,created_at),orders(id,payment_status,paid_at))")
+    .select("id,post_id,x_handle,post_url,media_url,posted_at,discovered_at,selection_status,segment,pet_type,occasion,occasion_confidence,ownership_confidence,us_confidence,us_evidence,lead_score,like_count,reply_count,repost_count,view_count,followers_count,targeting_data,consent_copy,public_copy,direct_message_copy,marketing_link_id,marketing_links!x_leads_marketing_link_id_fkey(id,idempotency_key,source_hash,expires_at,account_user_id,account_was_created,marketing_events(event_type,created_at),orders(id,payment_status,paid_at)),x_manual_posts(id,status,preparation_status,created_at)")
     .in("pet_type", ["cat", "dog"])
     .order("discovered_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(1000);
   if (filters.segment) query = query.eq("segment", filters.segment);
-  if (filters.review === "rejected") query = query.eq("selection_status", "rejected");
+  if (filters.review === "rejected" || filters.reason) query = query.eq("selection_status", "rejected");
   else if (filters.review !== "all") query = query.neq("selection_status", "rejected");
-  const [{ data, error }, { count: activeAccountCount, error: accountsError }, { data: searchConfig }] = await Promise.all([
+  const [{ data, error }, { count: activeAccountCount, error: accountsError }, { data: searchConfig }, { data: rejectedRows }] = await Promise.all([
     query,
     supabase.from("x_reply_accounts").select("id", { count: "exact", head: true }).eq("active", true),
     supabase.from("x_lead_search_configs").select("us_min_confidence").eq("config_key", "default").maybeSingle(),
+    supabase.from("x_leads").select("targeting_data").eq("selection_status", "rejected").limit(1000),
   ]);
-  const allLeads = (data ?? []) as unknown as XLeadRow[];
-  const usMinConfidence = searchConfig?.us_min_confidence ?? 70;
-  const filteredLeads = filters.conclusion && filters.conclusion in X_LEAD_CONCLUSION_LABELS
-    ? allLeads.filter((lead) => getXLeadReferenceConclusion(lead, usMinConfidence) === filters.conclusion)
+  const leadsWithManualTasks = (data ?? []) as unknown as Array<XLeadRow & { x_manual_posts: ManualQueueTaskSummary[] | null }>;
+  const manualTaskByLeadId = new Map(leadsWithManualTasks.flatMap((lead) => {
+    const task = lead.x_manual_posts?.toSorted((left, right) => right.created_at.localeCompare(left.created_at))[0];
+    return task ? [[lead.id, task] as const] : [];
+  }));
+  const allLeads = leadsWithManualTasks as XLeadRow[];
+  const reasonFilteredLeads = filters.reason && filters.reason in X_LEAD_REJECTION_REASON_LABELS
+    ? allLeads.filter((lead) => getXLeadRejectionReason(lead) === filters.reason)
     : allLeads;
+  const usMinConfidence = searchConfig?.us_min_confidence ?? 70;
+  const conclusionFilter = filters.conclusion || (filters.review === "rejected" || filters.review === "all" || filters.reason ? "all" : "");
+  const filteredLeads = filterXLeadsForQueue(reasonFilteredLeads, conclusionFilter, usMinConfidence);
   const leads = sortXLeadsByPriority(filteredLeads, usMinConfidence);
+  const conclusionCounts = new Map<XLeadConclusion, number>();
+  for (const lead of reasonFilteredLeads) {
+    const conclusion = getXLeadReferenceConclusion(lead, usMinConfidence);
+    conclusionCounts.set(conclusion, (conclusionCounts.get(conclusion) ?? 0) + 1);
+  }
+  const rejectionCounts = new Map<string, number>();
+  for (const row of (rejectedRows ?? []) as Array<Pick<XLeadRow, "targeting_data">>) {
+    const reason = getXLeadRejectionReason(row);
+    rejectionCounts.set(reason, (rejectionCounts.get(reason) ?? 0) + 1);
+  }
   const noticeText = filters.notice === "not-eligible"
       ? "该用户已被拒绝或加入不再联系名单，不能生成链接。"
       : null;
@@ -80,12 +109,22 @@ export default async function XLeadsPage({
           </div>
         </section>
 
-        <form className="mt-6 grid gap-3 rounded-xl border border-line bg-panel/90 p-4 sm:grid-cols-[1fr_1fr_1fr_auto]">
-          <SelectFilter label="参考结论" name="conclusion" value={filters.conclusion ?? ""} options={[["", "全部结论"], ...Object.entries(X_LEAD_CONCLUSION_LABELS)]} />
+        {rejectionCounts.size ? <section className="mt-5 rounded-xl border border-line bg-panel/90 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-black">人工过滤原因统计</h2><span className="text-xs text-muted">共 {Array.from(rejectionCounts.values()).reduce((sum, count) => sum + count, 0)} 条</span></div>
+          <div className="mt-3 flex flex-wrap gap-2">{Array.from(rejectionCounts.entries()).toSorted((left, right) => right[1] - left[1]).map(([reason, count]) => <Link className="focus-ring rounded-md border border-line bg-white px-3 py-2 text-xs font-bold" href={`/admin/x-leads?review=rejected&reason=${encodeURIComponent(reason)}`} key={reason}>{X_LEAD_REJECTION_REASON_LABELS[reason] ?? reason}：{count}</Link>)}</div>
+          <p className="mt-3 text-xs text-muted">优先优化数量最高的原因：调整搜索词、位置阈值或图片规则后，再比较新一批候选的原因占比。</p>
+        </section> : null}
+
+        <form className="mt-6 grid gap-3 rounded-xl border border-line bg-panel/90 p-4 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto]">
+          <SelectFilter label="参考结论" name="conclusion" value={conclusionFilter} options={[["", "待处理（建议 + 人工判断）"], ...Object.entries(X_LEAD_CONCLUSION_LABELS), ["all", "全部结论"]]} />
           <SelectFilter label="目标人群" name="segment" value={filters.segment ?? ""} options={[["", "全部人群"], ["new_adoption", X_LEAD_SEGMENT_LABELS.new_adoption], ["pet_birthday", X_LEAD_SEGMENT_LABELS.pet_birthday]]} />
           <SelectFilter label="人工筛选" name="review" value={filters.review ?? ""} options={[["", "未标记不合适"], ["rejected", "只看已标记不合适"], ["all", "全部人工状态"]]} />
+          <SelectFilter label="过滤原因" name="reason" value={filters.reason ?? ""} options={[["", "全部原因"], ...X_LEAD_REJECTION_REASONS.map((reason) => [reason, X_LEAD_REJECTION_REASON_LABELS[reason]] as [string, string]), ["legacy", X_LEAD_REJECTION_REASON_LABELS.legacy]]} />
           <button className="focus-ring mt-auto h-11 rounded-lg bg-accent px-5 font-black text-accent-ink" type="submit">筛选</button>
         </form>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs">
+          {(Object.entries(X_LEAD_CONCLUSION_LABELS) as Array<[XLeadConclusion, string]>).map(([conclusion, label]) => <span className="rounded-md border border-line bg-white px-2.5 py-1.5 font-bold" key={conclusion}>{label}：{conclusionCounts.get(conclusion) ?? 0}</span>)}
+        </div>
 
         {error || accountsError ? <p className="mt-6 rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">读取候选列表失败：{error?.message ?? accountsError?.message}</p> : null}
         {!accountsError && !activeAccountCount ? <p className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-900">当前没有启用的自动发送账号，因此只能加入手动队列；手动队列不绑定账号。</p> : null}
@@ -96,6 +135,7 @@ export default async function XLeadsPage({
             const failedChecks = targetingChecks.filter((check) => !check.passed);
             const conclusion = getXLeadReferenceConclusion(lead, usMinConfidence);
             const actionable = conclusion === "recommended" || conclusion === "manual_review";
+            const manualTask = manualTaskByLeadId.get(lead.id);
             return <article className="overflow-hidden rounded-xl border border-line bg-panel/90" key={lead.id}>
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-surface px-4 py-2.5">
                 <div className="flex flex-wrap items-center gap-2">
@@ -130,34 +170,32 @@ export default async function XLeadsPage({
 
                 <aside className="space-y-3 rounded-lg border border-line bg-white p-3">
                   <ReferenceConclusion conclusion={conclusion} failedChecks={failedChecks} reviewEvidence={reviewEvidence} />
-                  {actionable ? <div className="grid gap-3 border-t border-line pt-3 sm:grid-cols-2">
-                    <form action={createXLeadManualTask}>
-                      <input name="leadId" type="hidden" value={lead.id} />
-                      <FormSubmitButton className="focus-ring h-11 w-full rounded-lg bg-foreground px-4 text-sm font-black text-background disabled:opacity-50" idleLabel="加入手动队列" pendingLabel="正在入队…" />
-                    </form>
-                    <form action={createXLeadAutoTask}>
-                      <input name="leadId" type="hidden" value={lead.id} />
-                      <FormSubmitButton className="focus-ring h-11 w-full rounded-lg bg-accent px-4 text-sm font-black text-accent-ink disabled:opacity-50" disabled={!activeAccountCount} idleLabel="加入自动队列" pendingLabel="正在入队…" />
-                    </form>
-                  </div> : <p className="border-t border-line pt-3 text-xs font-bold text-red-700">参考结论不建议处理，不能加入发送队列。</p>}
-                  {lead.selection_status === "rejected" ? <form action={setXLeadSuitability} className="border-t border-line pt-3">
-                    <input name="leadId" type="hidden" value={lead.id} />
-                    <input name="decision" type="hidden" value="restore" />
-                    <FormSubmitButton className="focus-ring h-10 w-full rounded-lg border border-line bg-white px-4 text-sm font-black" idleLabel="恢复到候选列表" pendingLabel="正在恢复…" />
-                  </form> : !["approved", "contacted", "suppressed"].includes(lead.selection_status) ? <form action={setXLeadSuitability} className="border-t border-line pt-3">
-                    <input name="leadId" type="hidden" value={lead.id} />
-                    <input name="decision" type="hidden" value="reject" />
-                    <FormSubmitButton className="focus-ring h-10 w-full rounded-lg border border-red-200 bg-red-50 px-4 text-sm font-black text-red-800" idleLabel="不合适，从候选中过滤" pendingLabel="正在过滤…" />
-                  </form> : null}
+                  <CandidateActions
+                    actionable={actionable}
+                    activeAccountCount={activeAccountCount ?? 0}
+                    existingManualTaskLabel={manualTask ? describeManualQueueTask(manualTask) : undefined}
+                    initialRejectionNote={getXLeadRejectionNote(lead)}
+                    initialRejectionReason={getXLeadRejectionReason(lead)}
+                    leadId={lead.id}
+                    selectionStatus={lead.selection_status}
+                  />
                 </aside>
               </div>
             </article>;
           })}
-          {!leads.length ? <div className="rounded-xl border border-line bg-panel/90 p-10 text-center"><p className="text-lg font-black">还没有符合条件的 X 用户。</p><p className="mt-2 text-sm text-muted">先到“X 用户筛选”页启动任务；本机执行器完成后，结果会显示在这里。</p></div> : null}
+          {!leads.length ? <div className="rounded-xl border border-line bg-panel/90 p-10 text-center"><p className="text-lg font-black">当前没有待处理且达到硬性条件的候选。</p><p className="mt-2 text-sm text-muted">列表不会继续混入不符合数据。可以启动新的筛选任务，或主动选择“全部结论”检查历史记录。</p></div> : null}
         </div>
       </main>
     </AppShell>
   );
+}
+
+function describeManualQueueTask(task: ManualQueueTaskSummary) {
+  if (task.status === "sent") return "已加入手动队列 · 已登记发送";
+  if (task.status === "discarded") return "已加入手动队列 · 已作废";
+  if (task.preparation_status === "failed") return "已加入手动队列 · 准备失败";
+  if (["pending", "processing"].includes(task.preparation_status)) return "已加入手动队列 · 素材准备中";
+  return "已加入手动队列 · 待人工发送";
 }
 function SelectFilter({ label, name, value, options }: { label: string; name: string; value: string; options: Array<[string, string]> }) {
   return <label className="block text-sm font-bold">{label}<select className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3" defaultValue={value} name={name}>{options.map(([optionValue, optionLabel]) => <option key={optionValue || "all"} value={optionValue}>{optionLabel}</option>)}</select></label>;

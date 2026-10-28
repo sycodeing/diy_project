@@ -10,10 +10,6 @@ import { getSupabaseServiceClient } from "@/lib/supabase/service";
 
 const PAGE_PATH = "/admin/x-manual-posts";
 const idSchema = z.string().uuid();
-const xPostUrlSchema = z.string().trim().url().max(2048).refine(
-  (value) => /^https:\/\/(?:www\.)?(?:x|twitter)\.com\/[A-Za-z0-9_]+\/status\/\d+/i.test(value),
-  "请输入具体的 X 帖子链接。",
-);
 
 function serviceClient() {
   const supabase = getSupabaseServiceClient();
@@ -28,13 +24,11 @@ export async function markXManualPostSentWithoutRefresh(
   await requireAdmin(PAGE_PATH);
   try {
     const id = idSchema.parse(String(formData.get("id") ?? ""));
-    const resultValue = String(formData.get("resultUrl") ?? "").trim();
-    const resultUrl = resultValue ? xPostUrlSchema.parse(resultValue) : null;
     const supabase = serviceClient();
     const sentAt = new Date().toISOString();
     const { data, error } = await supabase
       .from("x_manual_posts")
-      .update({ status: "sent", result_url: resultUrl, sent_at: sentAt })
+      .update({ status: "sent", result_url: null, sent_at: sentAt })
       .eq("id", id)
       .eq("status", "draft")
       .select("id,x_lead_id")

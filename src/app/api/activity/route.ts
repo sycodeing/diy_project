@@ -6,10 +6,11 @@ import {
   ACTIVITY_SESSION_SECONDS,
   recordCustomerActivity,
 } from "@/lib/customer-activity";
+import { getActiveMarketingLinkFromCookie, recordMarketingEvent } from "@/lib/marketing";
 import { classifyTraffic } from "@/lib/traffic-classification";
 
 const clientEventTypes = [
-  "page_view", "page_exit", "click", "design_opened", "upload_started",
+  "page_view", "page_exit", "click", "landing_confirmed", "design_opened", "upload_started",
   "crop_confirmed", "preview_started", "preview_cache_hit", "preview_ready",
   "delivery_opened", "delivery_canceled", "address_validation_failed",
   "payment_redirected",
@@ -51,6 +52,7 @@ export async function POST(request: Request) {
   const { eventId, eventType, route, target, durationSeconds, referrerGroup } = parsed.data;
   const traffic = classifyTraffic(request.headers, new URL(request.url).origin);
   const isInternal = /(?:^|;\s*)diy_internal_test=1(?:;|$)/.test(request.headers.get("cookie") ?? "");
+  const marketingLink = await getActiveMarketingLinkFromCookie();
   const { error } = await recordCustomerActivity({
     sessionId,
     eventType,
@@ -58,6 +60,7 @@ export async function POST(request: Request) {
     target: target ?? (eventType === "click" ? "button" : null),
     durationSeconds: eventType === "page_exit" ? durationSeconds ?? 0 : 0,
     eventKey: `client:${sessionId}:${eventId}`,
+    marketingLinkId: marketingLink?.id ?? null,
     ...traffic,
     referrerGroup: referrerGroup ?? traffic.referrerGroup,
     isInternal,
@@ -65,6 +68,20 @@ export async function POST(request: Request) {
   if (error) {
     console.error("Customer activity could not be recorded", { error: error.message });
     return NextResponse.json({ error: "Could not record activity." }, { status: 503 });
+  }
+  if (eventType === "landing_confirmed" && marketingLink) {
+    const { error: marketingError } = await recordMarketingEvent(
+      marketingLink.id,
+      "landing_confirmed",
+      {},
+      undefined,
+      sessionId,
+      isInternal,
+    );
+    if (marketingError) {
+      console.error("Browser-confirmed landing could not be recorded", { error: marketingError.message });
+      return NextResponse.json({ error: "Could not record marketing landing." }, { status: 503 });
+    }
   }
 
   const response = new NextResponse(null, { status: 204 });

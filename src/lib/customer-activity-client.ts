@@ -4,6 +4,7 @@ export type ClientActivityEventType =
   | "page_view"
   | "page_exit"
   | "click"
+  | "landing_confirmed"
   | "design_opened"
   | "upload_started"
   | "crop_confirmed"
@@ -15,11 +16,13 @@ export type ClientActivityEventType =
   | "address_validation_failed"
   | "payment_redirected";
 
+let activityQueue: Promise<void> = Promise.resolve();
+
 export function trackCustomerActivity(
   eventType: ClientActivityEventType,
   details: { route?: string; target?: string; durationSeconds?: number } = {},
   keepalive = false,
-) {
+): Promise<boolean> {
   syncInternalTestCookie();
   const event = {
     eventId: crypto.randomUUID(),
@@ -31,16 +34,26 @@ export function trackCustomerActivity(
   };
   const body = JSON.stringify(event);
   if (keepalive && navigator.sendBeacon) {
-    navigator.sendBeacon("/api/activity", new Blob([body], { type: "application/json" }));
-    return;
+    return Promise.resolve(navigator.sendBeacon("/api/activity", new Blob([body], { type: "application/json" })));
   }
-  void fetch("/api/activity", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body,
-    keepalive,
-    credentials: "same-origin",
-  }).catch(() => undefined);
+  const request = activityQueue.then(async () => {
+    const response = await fetch("/api/activity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+      keepalive,
+      credentials: "same-origin",
+    });
+    if (!response.ok) {
+      console.warn("Customer activity could not be recorded", { eventType, status: response.status });
+    }
+    return response.ok;
+  }).catch((error) => {
+    console.warn("Customer activity could not be recorded", { eventType, error });
+    return false;
+  });
+  activityQueue = request.then(() => undefined);
+  return request;
 }
 
 function syncInternalTestCookie() {

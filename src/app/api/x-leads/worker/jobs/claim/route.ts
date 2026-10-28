@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     status: parsed.data.cookieConfigured ? "online" : "paused",
     cookie_configured: parsed.data.cookieConfigured,
     worker_version: parsed.data.version ?? null,
-    last_error: parsed.data.cookieConfigured ? null : "尚未在本机导入 X Cookie。",
+    last_error: parsed.data.cookieConfigured ? null : "尚未在本机配置当前数据源凭据。",
     last_seen_at: now,
   }, { onConflict: "worker_id" });
   if (heartbeatError) return NextResponse.json({ error: heartbeatError.message }, { status: 500 });

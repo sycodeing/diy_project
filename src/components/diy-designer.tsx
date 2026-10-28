@@ -145,8 +145,7 @@ export function DiyDesigner({
   const mockupObjectUrlsRef = useRef<string[]>([]);
 
   useEffect(() => {
-    void trackMarketingEvent("design_opened");
-    trackCustomerActivity("design_opened");
+    void trackMarketingMilestone("design_opened");
   }, []);
 
   useEffect(() => {
@@ -213,8 +212,7 @@ export function DiyDesigner({
           setMockupPreviews([]);
           setActiveMockupId(null);
           setMockupStatus("ready");
-          trackCustomerActivity("preview_ready");
-          void trackMarketingEvent("preview_ready");
+          void trackMarketingMilestone("preview_ready");
         }
       });
       return () => {
@@ -237,8 +235,7 @@ export function DiyDesigner({
         );
         setMockupStatus("ready");
         trackCustomerActivity("preview_cache_hit", { target: "server-preview-cache" });
-        trackCustomerActivity("preview_ready");
-        void trackMarketingEvent("preview_ready");
+        void trackMarketingMilestone("preview_ready");
       });
       return () => {
         canceled = true;
@@ -288,8 +285,7 @@ export function DiyDesigner({
         if (cacheHitCount > 0) {
           trackCustomerActivity("preview_cache_hit", { target: "browser-preview-cache" });
         }
-        trackCustomerActivity("preview_ready");
-        void trackMarketingEvent("preview_ready");
+        void trackMarketingMilestone("preview_ready");
       })
       .catch(() => {
         if (!canceled) {
@@ -624,6 +620,10 @@ async function trackMarketingEvent(eventType: "design_opened" | "preview_ready")
   } catch {
     // Attribution must never block the customer from designing or checking out.
   }
+}
+
+async function trackMarketingMilestone(eventType: "design_opened" | "preview_ready") {
+  if (await trackCustomerActivity(eventType)) await trackMarketingEvent(eventType);
 }
 
 function ContentControls({

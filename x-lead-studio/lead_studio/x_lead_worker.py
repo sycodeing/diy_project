@@ -9,14 +9,15 @@ import httpx
 
 from .apify import collect_apify_search
 from .config import CREDENTIAL_PATH, Settings
-from .discovery import collect_search
+from .discovery import collect_search, dedupe_candidates_by_author
 from .targeting import SEARCH_SEGMENTS
+from .twitterapi import collect_twitterapi_search
 
 
 async def run_x_lead_worker(settings: Settings) -> None:
     if not settings.x_lead_worker_enabled or len(settings.x_lead_worker_secret) < 32:
         return
-    provider = "apify" if settings.apify_api_token else "x-cookie"
+    provider = _selected_provider(settings)
     worker_id = f"{socket.gethostname()}-pet-lead-{provider}"[:120]
     headers = {"Authorization": f"Bearer {settings.x_lead_worker_secret}"}
     async with httpx.AsyncClient(timeout=120) as client:
@@ -27,8 +28,8 @@ async def run_x_lead_worker(settings: Settings) -> None:
                     headers=headers,
                     json={
                         "workerId": worker_id,
-                        "cookieConfigured": bool(settings.apify_api_token) or CREDENTIAL_PATH.exists(),
-                        "version": "1.0.0",
+                        "cookieConfigured": _provider_is_configured(settings, provider),
+                        "version": "1.1.0",
                     },
                 )
                 if response.status_code == 204:
@@ -56,35 +57,61 @@ async def _execute_job(
     status = "completed"
     error_code = None
     error_message = None
+    metrics: dict[str, Any] = {"provider": _selected_provider(settings)}
     try:
         configuration = job.get("configuration") or {}
-        if settings.apify_api_token:
-            items, found = await collect_apify_search(client, settings, configuration)
+        provider = _selected_provider(settings)
+        if provider == "twitterapi":
+            items, found, metrics = await collect_twitterapi_search(
+                client,
+                settings,
+                configuration,
+                archive_id=str(job.get("id") or ""),
+            )
             received_count = len(items)
             for candidate in found:
                 if candidate.get("pet_type") in {"cat", "dog"}:
                     candidates[candidate["post_id"]] = _cloud_candidate(candidate)
-        else:
+        elif provider == "apify":
+            items, found = await collect_apify_search(client, settings, configuration)
+            received_count = len(items)
+            metrics = {"provider": "apify", "received_posts": received_count, "candidate_posts": len(found)}
+            for candidate in found:
+                if candidate.get("pet_type") in {"cat", "dog"}:
+                    candidates[candidate["post_id"]] = _cloud_candidate(candidate)
+        elif provider == "x-cookie":
             received_count = await _collect_with_local_x_cookie(
                 settings,
                 configuration,
                 candidates,
             )
+            metrics = {"provider": "x-cookie", "received_posts": received_count, "candidate_posts": len(candidates)}
+        else:
+            raise ValueError(f"Unsupported X lead provider: {provider}")
     except Exception as error:
         message = str(error)
         blocked_terms = (
             "captcha", "cloudflare", "unauthorized", "forbidden", "rate limit", "no account",
-            "apify authorization", "usage limit", "not enough credits",
+            "apify authorization", "usage limit", "not enough credits", "credits are exhausted",
         )
         status = "blocked" if any(term in message.lower() for term in blocked_terms) else "failed"
         error_code = "source_access_blocked" if status == "blocked" else "discovery_failed"
-        if status == "blocked" and settings.apify_api_token:
+        provider = _selected_provider(settings)
+        if status == "blocked" and provider == "twitterapi":
+            error_message = "TwitterAPI.io access paused. Check the local API key and account credits."
+        elif status == "blocked" and provider == "apify":
             error_message = "Apify access paused. Check the local token, account usage, and Actor availability."
         elif status == "blocked":
             error_message = "X access paused. Re-import a valid cookie or wait for the rate limit."
         else:
             error_message = f"Read-only discovery failed: {type(error).__name__}"
 
+    submitted_candidates = list(candidates.values()) if status == "completed" else []
+    deduped_candidates = dedupe_candidates_by_author(submitted_candidates)
+    metrics = {
+        **metrics,
+        "duplicate_account_candidates": len(submitted_candidates) - len(deduped_candidates),
+    }
     response = await client.post(
         f"{settings.diy_site_url}/api/x-leads/worker/jobs/{job['id']}/complete",
         headers=headers,
@@ -94,10 +121,28 @@ async def _execute_job(
             "receivedCount": received_count,
             "errorCode": error_code,
             "errorMessage": error_message,
-            "candidates": list(candidates.values()) if status == "completed" else [],
+            "metrics": metrics,
+            "candidates": deduped_candidates,
         },
     )
     response.raise_for_status()
+
+
+def _selected_provider(settings: Settings) -> str:
+    provider = settings.x_lead_provider
+    if provider == "apify" and not settings.apify_enabled:
+        return "apify-disabled"
+    return provider
+
+
+def _provider_is_configured(settings: Settings, provider: str) -> bool:
+    if provider == "twitterapi":
+        return bool(settings.twitterapi_api_key)
+    if provider == "apify":
+        return settings.apify_enabled and bool(settings.apify_api_token)
+    if provider == "x-cookie":
+        return CREDENTIAL_PATH.exists()
+    return False
 
 
 async def _collect_with_local_x_cookie(

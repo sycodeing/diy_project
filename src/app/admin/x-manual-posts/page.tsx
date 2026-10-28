@@ -36,8 +36,14 @@ export default async function XManualPostsPage({ searchParams }: { searchParams:
   const supabase = getSupabaseServiceClient();
   if (!supabase) return <AppShell admin><main className="mx-auto w-full max-w-3xl px-4 py-10"><SetupWarning /></main></AppShell>;
   const filters = await searchParams;
-  const { data: postRows, error: postsError } = await supabase.from("x_manual_posts").select("*,x_leads(media_url,pet_type,marketing_links!x_leads_marketing_link_id_fkey(source_hash,expires_at))").order("created_at", { ascending: false }).limit(100);
-  const posts = sortXManualPosts((postRows ?? []) as unknown as XManualPost[]);
+  const postSelect = "*,x_leads(media_url,pet_type,marketing_links!x_leads_marketing_link_id_fkey(source_hash,expires_at))";
+  const [{ data: activeRows, error: activeError }, { data: historyRows, error: historyError }] = await Promise.all([
+    supabase.from("x_manual_posts").select(postSelect).eq("status", "draft").order("created_at", { ascending: false }).limit(500),
+    supabase.from("x_manual_posts").select(postSelect).in("status", ["sent", "discarded"]).order("created_at", { ascending: false }).limit(2000),
+  ]);
+  const postsError = activeError ?? historyError;
+  const posts = sortXManualPosts([...(activeRows ?? []), ...(historyRows ?? [])] as unknown as XManualPost[]);
+  const sentCount = posts.filter((post) => post.status === "sent").length;
   const cards = await Promise.all(posts.map(async (post) => {
     const link = post.x_leads?.marketing_links;
     const preview = post.status !== "discarded" && post.preparation_status === "ready" && link
@@ -64,7 +70,7 @@ export default async function XManualPostsPage({ searchParams }: { searchParams:
         <p className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950"><strong>发送队列隔离，候选池共用：</strong>手动草稿写入独立数据表，本机发送执行器不会读取；候选用户统一由“X 用户筛选”获取，和自动发送使用同一份待筛选结果。</p>
 
         <section className="mt-6">
-          <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-black">手动发送队列与结果</h2><p className="mt-1 text-sm text-muted">这里不再从零建任务；任务统一从候选用户与帖子列表加入。</p></div><Link className="focus-ring rounded-lg bg-accent px-4 py-3 text-sm font-black text-accent-ink" href="/admin/x-leads">返回候选列表</Link></div>
+          <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-black">手动发送队列与结果</h2><p className="mt-1 text-sm text-muted">待发送 {posts.filter((post) => post.status === "draft").length} 条 · 历史已发送 {sentCount} 条。历史记录会独立完整加载，不再被新任务挤出。</p></div><Link className="focus-ring rounded-lg bg-accent px-4 py-3 text-sm font-black text-accent-ink" href="/admin/x-leads?conclusion=contacted">查看全部已进入发送流程</Link></div>
             <div className="mt-4 space-y-4">
               {cards.map(({ post, preview }) => {
                 const openUrl = post.action_type === "post" ? "https://x.com/compose/post" : post.target_post_url ?? "https://x.com/home";
@@ -90,8 +96,7 @@ export default async function XManualPostsPage({ searchParams }: { searchParams:
                   </div> : <p className="mt-4 rounded-lg border border-dashed border-line bg-surface p-3 text-xs text-muted">这是改版前创建的旧任务，没有关联宠物原图和预览图。</p>}
                   {post.target_post_url ? <a className="mt-3 inline-block break-all text-sm font-bold text-accent" href={post.target_post_url} rel="noreferrer" target="_blank">查看目标帖子 ↗</a> : null}
                   <blockquote className="mt-3 whitespace-pre-wrap rounded-lg border border-line bg-white p-4 text-sm leading-6">{post.post_text}</blockquote>
-                  <div className="mt-3 flex flex-wrap gap-2"><CopyButton label="复制文案" value={post.post_text} />{post.target_post_url ? <CopyButton label="复制目标链接" value={post.target_post_url} /> : null}<a className="focus-ring inline-flex h-9 items-center gap-1 rounded-md bg-accent px-3 text-xs font-black text-accent-ink" href={openUrl} rel="noreferrer" target="_blank"><ExternalLink size={14} />{post.action_type === "post" ? "打开 X 发帖" : "打开目标并回复"}</a></div>
-                  {post.status === "draft" ? <div className="mt-4 rounded-lg border border-line bg-surface/70 p-3"><MarkSentForm taskId={post.id} /></div> : null}
+                  <div className="mt-3 flex flex-wrap gap-2"><CopyButton emphasized label="复制文案" value={post.post_text} />{post.target_post_url ? <CopyButton label="复制目标链接" value={post.target_post_url} /> : null}<a className="focus-ring inline-flex h-9 items-center gap-1 rounded-md bg-accent px-3 text-xs font-black text-accent-ink" href={openUrl} rel="noreferrer" target="_blank"><ExternalLink size={14} />{post.action_type === "post" ? "打开 X 发帖" : "打开目标并回复"}</a>{post.status === "draft" ? <MarkSentForm taskId={post.id} /> : null}</div>
                   {post.status === "sent" ? <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-900"><CheckCircle2 className="mr-2 inline" size={17} />人工登记于 {post.sent_at ? formatDate(post.sent_at) : "—"}{post.result_url ? <> · <a className="underline" href={post.result_url} rel="noreferrer" target="_blank">打开结果</a></> : null}</p> : null}
                 </article>;
               })}

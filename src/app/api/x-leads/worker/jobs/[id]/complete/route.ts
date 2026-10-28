@@ -4,6 +4,7 @@ import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { isAuthorizedXLeadWorker } from "@/lib/x-lead-worker-auth";
 import {
   buildXLeadDiscoveryUpsertRow,
+  filterXLeadDiscoveryCandidates,
   type ExistingXLeadDiscoveryRow,
 } from "@/lib/x-lead-discovery-upsert";
 
@@ -42,6 +43,7 @@ const requestSchema = z.object({
   receivedCount: z.number().int().min(0).max(1000),
   errorCode: z.string().trim().max(80).nullable().optional(),
   errorMessage: z.string().trim().max(1000).nullable().optional(),
+  metrics: z.record(z.string(), z.unknown()).default({}),
   candidates: z.array(candidateSchema).max(100).default([]),
 });
 
@@ -68,28 +70,49 @@ export async function POST(request: Request, context: RouteContext<"/api/x-leads
   }
 
   let insertedCount = 0;
+  let acceptedCandidateCount = 0;
+  let blacklistedCandidateCount = 0;
+  let duplicateAccountCandidateCount = 0;
   if (parsed.data.status === "completed" && parsed.data.candidates.length) {
-    const postIds = parsed.data.candidates.map((candidate) => candidate.postId);
-    const { data: existing, error: existingError } = await supabase
-      .from("x_leads")
-      .select("post_id,selection_status,source_job_id,discovered_at,targeting_data")
-      .in("post_id", postIds);
-    if (existingError) return NextResponse.json({ error: existingError.message }, { status: 500 });
+    const authorHashes = [...new Set(parsed.data.candidates.map((candidate) => candidate.authorHash))];
+    const [{ data: existing, error: existingError }, { data: blacklist, error: blacklistError }] = await Promise.all([
+      supabase
+        .from("x_leads")
+        .select("post_id,author_hash,selection_status,source_job_id,discovered_at,targeting_data")
+        .in("author_hash", authorHashes),
+      supabase
+        .from("x_lead_account_blacklist")
+        .select("author_hash")
+        .in("author_hash", authorHashes),
+    ]);
+    if (existingError || blacklistError) {
+      return NextResponse.json({ error: existingError?.message ?? blacklistError?.message }, { status: 500 });
+    }
+    const filtered = filterXLeadDiscoveryCandidates({
+      candidates: parsed.data.candidates,
+      existing: (existing ?? []) as ExistingXLeadDiscoveryRow[],
+      blacklistedAuthorHashes: new Set((blacklist ?? []).map((row) => row.author_hash)),
+    });
+    acceptedCandidateCount = filtered.accepted.length;
+    blacklistedCandidateCount = filtered.blacklistedCandidates;
+    duplicateAccountCandidateCount = filtered.duplicateAccountCandidates;
     const existingByPostId = new Map(
       ((existing ?? []) as ExistingXLeadDiscoveryRow[]).map((lead) => [lead.post_id, lead]),
     );
     const existingIds = new Set(existingByPostId.keys());
-    insertedCount = postIds.filter((postId) => !existingIds.has(postId)).length;
+    insertedCount = filtered.accepted.filter((candidate) => !existingIds.has(candidate.postId)).length;
 
     const discoveredAt = new Date().toISOString();
-    const rows = parsed.data.candidates.map((candidate) => buildXLeadDiscoveryUpsertRow({
+    const rows = filtered.accepted.map((candidate) => buildXLeadDiscoveryUpsertRow({
       candidate,
       jobId: id,
       discoveredAt,
       existing: existingByPostId.get(candidate.postId),
     }));
-    const { error: upsertError } = await supabase.from("x_leads").upsert(rows, { onConflict: "post_id" });
-    if (upsertError) return NextResponse.json({ error: upsertError.message }, { status: 500 });
+    if (rows.length) {
+      const { error: upsertError } = await supabase.from("x_leads").upsert(rows, { onConflict: "post_id" });
+      if (upsertError) return NextResponse.json({ error: upsertError.message }, { status: 500 });
+    }
   }
 
   const finishedAt = new Date().toISOString();
@@ -101,6 +124,15 @@ export async function POST(request: Request, context: RouteContext<"/api/x-leads
       inserted_count: insertedCount,
       error_code: parsed.data.errorCode ?? null,
       error_message: parsed.data.errorMessage ?? null,
+      metrics: {
+        ...parsed.data.metrics,
+        submitted_candidates: parsed.data.candidates.length,
+        accepted_candidates: acceptedCandidateCount,
+        blacklisted_candidates: blacklistedCandidateCount,
+        duplicate_account_candidates: duplicateAccountCandidateCount,
+        inserted_candidates: insertedCount,
+        existing_candidates: Math.max(0, acceptedCandidateCount - insertedCount),
+      },
       finished_at: finishedAt,
     })
     .eq("id", id)

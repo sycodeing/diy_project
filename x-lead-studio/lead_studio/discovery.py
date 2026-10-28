@@ -10,6 +10,19 @@ from .targeting import build_targeting, candidate_status
 from .xclient import read
 
 
+def dedupe_candidates_by_author(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the first candidate per X account while preserving provider order."""
+    seen: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for candidate in candidates:
+        author_hash = str(candidate.get("author_hash") or candidate.get("authorHash") or "")
+        if not author_hash or author_hash in seen:
+            continue
+        seen.add(author_hash)
+        deduped.append(candidate)
+    return deduped
+
+
 def candidate_from_tweet(
     tweet: dict[str, Any],
     source_segment: str,
@@ -109,4 +122,4 @@ async def collect_search(
             )
         )
     ]
-    return items, candidates
+    return items, dedupe_candidates_by_author(candidates)

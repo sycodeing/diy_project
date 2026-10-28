@@ -52,6 +52,41 @@ export const X_LEAD_CONCLUSION_LABELS = {
   do_not_contact: "不再联系",
 } as const;
 
+export const X_LEAD_REJECTION_REASONS = [
+  "not_target_occasion",
+  "not_pet_owner",
+  "organization_or_ad",
+  "location_mismatch",
+  "image_unusable",
+  "duplicate_or_contacted",
+  "sensitive_or_inappropriate",
+  "other",
+] as const;
+
+export const X_LEAD_REJECTION_REASON_LABELS: Record<string, string> = {
+  not_target_occasion: "不是领养 / 生日目标场景",
+  not_pet_owner: "无法确认是本人宠物",
+  organization_or_ad: "机构、商家或广告内容",
+  location_mismatch: "非美国或位置证据不足",
+  image_unusable: "图片不适合制作产品",
+  duplicate_or_contacted: "重复候选或已经联系",
+  sensitive_or_inappropriate: "敏感、不适合营销的内容",
+  other: "其他原因",
+  legacy: "历史记录（未分类）",
+};
+
+export type XLeadRejectionReason = typeof X_LEAD_REJECTION_REASONS[number];
+
+export function getXLeadRejectionReason(lead: Pick<XLeadRow, "targeting_data">) {
+  const reason = lead.targeting_data?.manual_rejection_reason;
+  return typeof reason === "string" && reason in X_LEAD_REJECTION_REASON_LABELS ? reason : "legacy";
+}
+
+export function getXLeadRejectionNote(lead: Pick<XLeadRow, "targeting_data">) {
+  const note = lead.targeting_data?.manual_rejection_note;
+  return typeof note === "string" ? note : "";
+}
+
 export type XLeadConclusion = keyof typeof X_LEAD_CONCLUSION_LABELS;
 
 export type XLeadTargetingCheck = {
@@ -174,7 +209,24 @@ export function sortXLeadsByPriority(leads: XLeadRow[], usMinConfidence = 70) {
     const conclusionDifference = X_LEAD_CONCLUSION_ORDER[getXLeadReferenceConclusion(left, usMinConfidence)]
       - X_LEAD_CONCLUSION_ORDER[getXLeadReferenceConclusion(right, usMinConfidence)];
     if (conclusionDifference) return conclusionDifference;
+    const scoreDifference = (right.lead_score ?? -1) - (left.lead_score ?? -1);
+    if (scoreDifference) return scoreDifference;
     return right.discovered_at.localeCompare(left.discovered_at) || right.id.localeCompare(left.id);
+  });
+}
+
+export function filterXLeadsForQueue(
+  leads: XLeadRow[],
+  conclusion: string | undefined,
+  usMinConfidence = 70,
+) {
+  if (conclusion === "all") return leads;
+  if (conclusion && conclusion in X_LEAD_CONCLUSION_LABELS) {
+    return leads.filter((lead) => getXLeadReferenceConclusion(lead, usMinConfidence) === conclusion);
+  }
+  return leads.filter((lead) => {
+    const referenceConclusion = getXLeadReferenceConclusion(lead, usMinConfidence);
+    return referenceConclusion === "recommended" || referenceConclusion === "manual_review";
   });
 }
 

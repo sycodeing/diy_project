@@ -317,11 +317,8 @@ def _marketing_lead_payload(lead: dict[str, Any], lead_id: int) -> dict[str, Any
 
 
 def _drafts(pet_type: str, occasion: str, occasion_confidence: int = 0) -> dict[str, str]:
-    confirmed_occasion = occasion if occasion_confidence >= 70 else "unknown"
-    opening = {
-        "new_adoption": f"Congratulations on welcoming your new {pet_type} home.",
-        "pet_birthday": f"Happy birthday to your {pet_type}!",
-    }.get(confirmed_occasion, f"Your {pet_type} is absolutely adorable—this photo really made me smile!")
+    del occasion, occasion_confidence
+    opening = f"Your {pet_type} is absolutely adorable—this photo really made me smile!"
     return {
         "consent_copy": f"{opening} Would you be comfortable if I made a private pillow preview from the photo? No reposting or purchase required.",
         "public_copy": f"{opening} I made a small personalized pillow preview from the photo. If you want to see or edit it, here is the private design link: {{link}}",

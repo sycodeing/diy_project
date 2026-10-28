@@ -28,15 +28,16 @@ $env:X_USE_HOME = "$env:LOCALAPPDATA\x-use"
 .\.venv\Scripts\x-use doctor
 ```
 
-Import only accounts you operate. Each x-use `account_id` must match the account key entered at `/admin/x-auto-posts`. Give each account a distinct positioning, audience, topic set and voice. This is content separation, not proxy or IP rotation.
+Import only accounts you operate. Each x-use `account_id` must match the account key entered at `/admin/x-accounts`. Give each account a distinct positioning, audience, topic set and voice, then assign one fixed authenticated proxy URL. Each approved task receives a deterministic micro-variation based on its account and task ID, so previewed text remains unchanged after approval.
 
 Set the same dedicated `X_REPLY_WORKER_SECRET` on the website and in this worker's `.env`, then run `./run.ps1`. The workflow is:
 
 1. An administrator creates the exact post or reply draft and selects one account.
 2. The administrator approves that individual draft.
-3. At the planned time, the local worker asks x-use to create its own pending draft (`post_tweet` or `reply_to_tweet`), verifies the draft ID, and calls `approve_draft` for that same text.
-4. `/admin/x-manual-posts` is a separate manual-only queue. It never reaches this worker and only records operator-confirmed results.
-5. The website records `sent`, `failed`, or `uncertain`. Claimed or uncertain writes are never automatically retried.
+3. At the planned time, the local worker applies that account's fixed proxy, tests the real egress IP, and asks the website to reject any IP already assigned to another account.
+4. Only after the route passes does x-use create its own pending draft (`post_tweet` or `reply_to_tweet`), verify the draft ID, and call `approve_draft` for that same approved text.
+5. `/admin/x-manual-posts` is a separate manual-only queue. It never reaches this worker and only records operator-confirmed results.
+6. The website records `sent`, `failed`, or `uncertain`. Claimed or uncertain writes are never automatically retried.
 
 No server-side LLM key is required because the approved text is passed explicitly.
 
@@ -47,13 +48,15 @@ Automatic collection runs two US pet-owner experiments: `new_adoption` and `pet_
 1. A location-first query with `place_country:US`.
 2. A broader English query whose results are checked against the Post place and public profile location.
 
-When Apify is configured, the worker performs a second, profile-only lookup for authors of viable cat/dog posts and does not fetch their timelines. It combines public profile `location` and X's `accountBasedIn` signal with the post query evidence: confirmed US accounts continue, explicit non-US accounts are rejected, and unresolved or conflicting locations remain in `location_review`.
+TwitterAPI.io is the default read-only discovery provider. The worker uses `Latest` searches, Unix `since_time` / `until_time` windows, per-segment local watermarks, a five-minute overlap for indexing delay, and a 90% US-place / 10% broad query split. This avoids rescanning the full lookback range on every run while preserving a small sample for profiles whose public location needs review.
+
+Every successful TwitterAPI.io response page is atomically archived under `.data/twitterapi/runs/<job-id>.json` before result-limit truncation, deduplication, photo checks, location targeting, or business/ad filtering. This keeps all fetched public source data available for later reprocessing if targeting rules change (for example, if US-only targeting is removed). A failed multi-page run remains as a `partial` archive containing every page already received. Archives include the response and query metadata but never the API key or request headers.
 
 The default daily limit is 40 candidates across both segments. Change it with `AUTO_COLLECTION_DAILY_LIMIT`. A candidate needs a US-confidence score of at least 70 by default. Candidates without enough public location evidence remain in `location_review`; pet businesses, shelters, ads, and adoption listings are put in `rejected_targeting`.
 
-The hosted admin queues use one shared discovery worker. Set the same `X_LEAD_WORKER_SECRET` on the website and in this worker's `.env`. Jobs created at `/admin/x-lead-search` are claimed locally, searched with the locally encrypted discovery cookie, and written into the single `/admin/x-leads` candidate pool. Both manual and automatic sending select from that pool; neither sending mode runs its own search.
+The hosted admin queues use one shared discovery worker. Set the same `X_LEAD_WORKER_SECRET` on the website and in this worker's `.env`, then set `TWITTERAPI_API_KEY` locally. Jobs created at `/admin/x-lead-search` are claimed locally and written into the single `/admin/x-leads` candidate pool. Both manual and automatic sending select from that pool; neither sending mode runs its own search.
 
-For Apify discovery, set `APIFY_API_TOKEN` in the local `.env`. The worker then runs the configured X Search Scraper Actor, stores the raw Dataset JSON under `.data/apify/runs/<run-id>.json`, normalizes one preview image per post (a photo or video thumbnail), and upserts the reviewed candidate metadata into the shared Supabase `x_leads` pool. The token and raw cache stay local. Without an Apify token, the worker falls back to the locally encrypted X cookie reader.
+The Apify implementation and `.data/apify/runs/` history remain intact as a dormant fallback. It is used only when `X_LEAD_PROVIDER=apify` and `APIFY_ENABLED=true` are both explicitly configured; merely retaining `APIFY_API_TOKEN` does not activate it. `X_LEAD_PROVIDER=x-cookie` remains available for an explicit local-cookie rollback. There is no automatic provider fallback, so an invalid or exhausted TwitterAPI.io account cannot silently spend Apify credits.
 
 Collection calculates engagement, account quality, recency, occasion, ownership, and US evidence from the source Post. Image analysis then decides whether the pet photo is suitable for a pillow. A lead reaches `review` only after passing both targeting and image checks. Manual review can correct occasion, ownership, and US evidence.
 
@@ -63,8 +66,8 @@ The dashboard records the audience segment on each lead and uses it in the defau
 
 - Only operator-owned accounts with locally imported cookies. Cookies stay under `X_USE_HOME`.
 - Discovery remains read-only. Public replies require exact-text, per-item administrator approval.
-- No DMs, automatic reply generation, batch cycles, queue auto-drain, proxy/IP rotation, fingerprint spoofing, CAPTCHA handling, or challenge bypass.
-- Account selection is explicit; the system never rotates accounts automatically.
+- No DMs, unreviewed copy changes, batch cycles, proxy rotation, fingerprint spoofing, CAPTCHA handling, or challenge bypass.
+- Every automatic item still requires exact-text administrator approval. Accounts use fixed routes; a missing, duplicate, or failed route blocks sending instead of falling back to a direct connection.
 - CAPTCHA, Cloudflare, authentication failure, or persistent throttling pauses collection.
 - Original images and mockups are removed after seven days. Anonymous statistics and suppression records remain.
 - Routine tests mock X and do not authenticate to X.
