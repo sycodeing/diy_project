@@ -6,6 +6,7 @@ import { requireAdmin } from "@/lib/auth";
 import { prepareXLeadQueueTask } from "@/lib/x-lead-materials";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { getXLeadTargetingChecks, X_LEAD_REJECTION_REASONS, type XLeadRow } from "@/lib/x-lead";
+import { isXAccountClaimEligible } from "@/lib/x-reply-safety";
 
 const leadIdSchema = z.uuid();
 const suitabilityDecisionSchema = z.enum(["reject", "restore"]);
@@ -47,17 +48,44 @@ async function getLeadAndAssignedAccount(leadId: string) {
   const { supabase, lead } = await getEligibleLead(leadId);
   const { data: accounts, error: accountsError } = await supabase
     .from("x_reply_accounts")
-    .select("id,created_at,x_reply_account_proxies!inner(status)")
+    .select("id,created_at,account_key,executor_id,network_mode,expected_egress_ip,x_reply_account_proxies(status)")
     .eq("active", true)
     .order("created_at", { ascending: true });
   if (accountsError) throw new Error(accountsError.message);
+  const executorIds = Array.from(new Set((accounts ?? []).flatMap((account) => account.executor_id ? [account.executor_id] : [])));
+  const workers = executorIds.length
+    ? await supabase
+      .from("x_reply_workers")
+      .select("executor_id,execution_mode,xuse_available,configured_accounts,current_egress_ip,network_probe_status,last_seen_at")
+      .in("executor_id", executorIds)
+      .gte("last_seen_at", new Date(Date.now() - 5 * 60_000).toISOString())
+    : { data: [], error: null };
+  if (workers.error) throw new Error(workers.error.message);
+  const workerByExecutor = new Map((workers.data ?? []).flatMap((worker) => worker.executor_id ? [[worker.executor_id, worker] as const] : []));
   const routableAccounts = (accounts ?? []).filter((account) => {
     const proxy = Array.isArray(account.x_reply_account_proxies)
       ? account.x_reply_account_proxies[0]
       : account.x_reply_account_proxies;
-    return proxy?.status !== "error";
+    const worker = account.executor_id ? workerByExecutor.get(account.executor_id) : undefined;
+    if (!worker) return false;
+    return isXAccountClaimEligible({
+      executionMode: worker.execution_mode,
+      executorId: worker.executor_id ?? "",
+      xuseAvailable: worker.xuse_available,
+      configuredAccounts: Array.isArray(worker.configured_accounts) ? worker.configured_accounts : [],
+      currentEgressIp: worker.current_egress_ip,
+      networkProbeStatus: worker.network_probe_status,
+      account: {
+        executorId: account.executor_id,
+        accountKey: account.account_key,
+        networkMode: account.network_mode,
+        expectedEgressIp: account.expected_egress_ip,
+        hasProxy: Boolean(proxy),
+        proxyStatus: proxy?.status ?? null,
+      },
+    });
   });
-  if (!routableAccounts.length) throw new Error("还没有配置可用固定代理的启用账号，请先到 X 账号/IP 页面完成设置。");
+  if (!routableAccounts.length) throw new Error("当前没有通过 Mac 执行器、x-use 账号和出口检查的自动发送账号。");
 
   const accountIds = routableAccounts.map((account) => account.id);
   const since = new Date(Date.now() - 24 * 60 * 60_000).toISOString();

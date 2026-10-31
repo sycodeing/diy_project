@@ -14,6 +14,7 @@ type QueueState = {
 export function CandidateActions({
   actionable,
   activeAccountCount,
+  existingAutomaticTaskLabel,
   existingManualTaskLabel,
   initialRejectionNote,
   initialRejectionReason,
@@ -22,13 +23,17 @@ export function CandidateActions({
 }: {
   actionable: boolean;
   activeAccountCount: number;
+  existingAutomaticTaskLabel?: string;
   existingManualTaskLabel?: string;
   initialRejectionNote: string;
   initialRejectionReason: string;
   leadId: string;
   selectionStatus: string;
 }) {
-  const [queueState, setQueueState] = useState<QueueState>(existingManualTaskLabel ? {
+  const [queueState, setQueueState] = useState<QueueState>(existingAutomaticTaskLabel ? {
+    href: "/admin/x-auto-posts",
+    label: existingAutomaticTaskLabel,
+  } : existingManualTaskLabel ? {
     href: "/admin/x-manual-posts",
     label: existingManualTaskLabel,
   } : null);

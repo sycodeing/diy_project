@@ -33,6 +33,13 @@ type ManualQueueTaskSummary = {
   created_at: string;
 };
 
+type AutomaticQueueTaskSummary = {
+  id: string;
+  status: string;
+  preparation_status: string;
+  created_at: string;
+};
+
 export default async function XLeadsPage({
   searchParams,
 }: {
@@ -46,7 +53,7 @@ export default async function XLeadsPage({
   const filters = await searchParams;
   let query = supabase
     .from("x_leads")
-    .select("id,post_id,x_handle,post_url,media_url,posted_at,discovered_at,selection_status,segment,pet_type,occasion,occasion_confidence,ownership_confidence,us_confidence,us_evidence,lead_score,like_count,reply_count,repost_count,view_count,followers_count,targeting_data,consent_copy,public_copy,direct_message_copy,marketing_link_id,marketing_links!x_leads_marketing_link_id_fkey(id,idempotency_key,source_hash,expires_at,account_user_id,account_was_created,marketing_events(event_type,created_at),orders(id,payment_status,paid_at)),x_manual_posts(id,status,preparation_status,created_at)")
+    .select("id,post_id,x_handle,post_url,media_url,posted_at,discovered_at,selection_status,segment,pet_type,occasion,occasion_confidence,ownership_confidence,us_confidence,us_evidence,lead_score,like_count,reply_count,repost_count,view_count,followers_count,targeting_data,consent_copy,public_copy,direct_message_copy,marketing_link_id,marketing_links!x_leads_marketing_link_id_fkey(id,idempotency_key,source_hash,expires_at,account_user_id,account_was_created,marketing_events(event_type,created_at),orders(id,payment_status,paid_at)),x_manual_posts(id,status,preparation_status,created_at),x_reply_jobs(id,status,preparation_status,created_at)")
     .in("pet_type", ["cat", "dog"])
     .order("discovered_at", { ascending: false })
     .order("id", { ascending: false })
@@ -60,12 +67,19 @@ export default async function XLeadsPage({
     supabase.from("x_lead_search_configs").select("us_min_confidence").eq("config_key", "default").maybeSingle(),
     supabase.from("x_leads").select("targeting_data").eq("selection_status", "rejected").limit(1000),
   ]);
-  const leadsWithManualTasks = (data ?? []) as unknown as Array<XLeadRow & { x_manual_posts: ManualQueueTaskSummary[] | null }>;
-  const manualTaskByLeadId = new Map(leadsWithManualTasks.flatMap((lead) => {
+  const leadsWithQueueTasks = (data ?? []) as unknown as Array<XLeadRow & {
+    x_manual_posts: ManualQueueTaskSummary[] | null;
+    x_reply_jobs: AutomaticQueueTaskSummary[] | null;
+  }>;
+  const manualTaskByLeadId = new Map(leadsWithQueueTasks.flatMap((lead) => {
     const task = lead.x_manual_posts?.toSorted((left, right) => right.created_at.localeCompare(left.created_at))[0];
     return task ? [[lead.id, task] as const] : [];
   }));
-  const allLeads = leadsWithManualTasks as XLeadRow[];
+  const automaticTaskByLeadId = new Map(leadsWithQueueTasks.flatMap((lead) => {
+    const task = lead.x_reply_jobs?.toSorted((left, right) => right.created_at.localeCompare(left.created_at))[0];
+    return task ? [[lead.id, task] as const] : [];
+  }));
+  const allLeads = leadsWithQueueTasks as XLeadRow[];
   const reasonFilteredLeads = filters.reason && filters.reason in X_LEAD_REJECTION_REASON_LABELS
     ? allLeads.filter((lead) => getXLeadRejectionReason(lead) === filters.reason)
     : allLeads;
@@ -136,6 +150,7 @@ export default async function XLeadsPage({
             const conclusion = getXLeadReferenceConclusion(lead, usMinConfidence);
             const actionable = conclusion === "recommended" || conclusion === "manual_review";
             const manualTask = manualTaskByLeadId.get(lead.id);
+            const automaticTask = automaticTaskByLeadId.get(lead.id);
             return <article className="overflow-hidden rounded-xl border border-line bg-panel/90" key={lead.id}>
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-surface px-4 py-2.5">
                 <div className="flex flex-wrap items-center gap-2">
@@ -173,6 +188,7 @@ export default async function XLeadsPage({
                   <CandidateActions
                     actionable={actionable}
                     activeAccountCount={activeAccountCount ?? 0}
+                    existingAutomaticTaskLabel={automaticTask ? describeAutomaticQueueTask(automaticTask) : undefined}
                     existingManualTaskLabel={manualTask ? describeManualQueueTask(manualTask) : undefined}
                     initialRejectionNote={getXLeadRejectionNote(lead)}
                     initialRejectionReason={getXLeadRejectionReason(lead)}
@@ -196,6 +212,18 @@ function describeManualQueueTask(task: ManualQueueTaskSummary) {
   if (task.preparation_status === "failed") return "已加入手动队列 · 准备失败";
   if (["pending", "processing"].includes(task.preparation_status)) return "已加入手动队列 · 素材准备中";
   return "已加入手动队列 · 待人工发送";
+}
+
+function describeAutomaticQueueTask(task: AutomaticQueueTaskSummary) {
+  if (task.status === "sent") return "已加入自动队列 · 发送成功";
+  if (task.status === "rejected") return "已加入自动队列 · 已拒绝";
+  if (task.status === "uncertain") return "已加入自动队列 · 结果待核对";
+  if (task.status === "failed") return "已加入自动队列 · 发送失败";
+  if (task.status === "queued") return "已加入自动队列 · 等待本机发送";
+  if (task.status === "claimed") return "已加入自动队列 · 本机处理中";
+  if (task.preparation_status === "failed") return "已加入自动队列 · 准备失败";
+  if (["pending", "processing"].includes(task.preparation_status)) return "已加入自动队列 · 素材准备中";
+  return "已加入自动队列 · 待确认发送";
 }
 function SelectFilter({ label, name, value, options }: { label: string; name: string; value: string; options: Array<[string, string]> }) {
   return <label className="block text-sm font-bold">{label}<select className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3" defaultValue={value} name={name}>{options.map(([optionValue, optionLabel]) => <option key={optionValue || "all"} value={optionValue}>{optionLabel}</option>)}</select></label>;

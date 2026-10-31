@@ -11,27 +11,11 @@ import { getXApprovalBlockReason } from "@/lib/x-reply-safety";
 
 const PAGE_PATH = "/admin/x-auto-posts";
 const idSchema = z.string().uuid();
-const actionTypeSchema = z.enum(["post", "reply"]);
-const xPostUrlSchema = z.string().trim().url().max(2048).refine(
-  (value) => /^https:\/\/(?:www\.)?(?:x|twitter)\.com\/[A-Za-z0-9_]+\/status\/\d+/i.test(value),
-  "请输入具体的 X 帖子链接。",
-);
-const shanghaiDateTimeSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
 
 function serviceClient() {
   const supabase = getSupabaseServiceClient();
   if (!supabase) throw new Error("Supabase 服务端连接尚未配置。");
   return supabase;
-}
-
-function parseShanghaiDateTime(value: FormDataEntryValue | null) {
-  const localValue = shanghaiDateTimeSchema.parse(String(value ?? ""));
-  const result = new Date(`${localValue}:00+08:00`);
-  if (!Number.isFinite(result.getTime())) throw new Error("计划发送时间无效。");
-  const now = Date.now();
-  if (result.getTime() < now - 10 * 60_000) throw new Error("计划发送时间不能早于当前时间 10 分钟以上。");
-  if (result.getTime() > now + 31 * 24 * 60 * 60_000) throw new Error("计划发送时间最多可设置到 31 天后。");
-  return result;
 }
 
 function shanghaiDayRange(value: Date) {
@@ -41,88 +25,6 @@ function shanghaiDayRange(value: Date) {
     start: new Date(start).toISOString(),
     end: new Date(start + 24 * 60 * 60_000).toISOString(),
   };
-}
-
-export async function createAndQueueXAutoJob(formData: FormData) {
-  const user = await requireAdmin(PAGE_PATH);
-  const supabase = serviceClient();
-  if (String(formData.get("confirmed") ?? "") !== "confirmed") {
-    throw new Error("请先确认账号、发送内容和计划时间。");
-  }
-  const accountId = idSchema.parse(String(formData.get("accountId") ?? ""));
-  const actionType = actionTypeSchema.parse(String(formData.get("actionType") ?? ""));
-  const scheduledFor = parseShanghaiDateTime(formData.get("scheduledFor"));
-  const { data: account, error: accountError } = await supabase
-    .from("x_reply_accounts")
-    .select("id,account_key,positioning,daily_limit,active,executor_id,network_mode,expected_egress_ip,x_reply_account_proxies(account_id,status)")
-    .eq("id", accountId)
-    .maybeSingle();
-  if (accountError || !account) throw new Error(accountError?.message ?? "账号不存在。");
-  if (!account.active) throw new Error("该账号已停用，不能创建自动发送草稿。");
-
-  const proxyRelation = account.x_reply_account_proxies;
-  const proxy = Array.isArray(proxyRelation) ? proxyRelation[0] : proxyRelation;
-  if (!account.executor_id) throw new Error("该账号尚未绑定 Mac 执行器。");
-  const { data: worker, error: workerError } = await supabase
-    .from("x_reply_workers")
-    .select("execution_mode,xuse_available,configured_accounts,current_egress_ip,network_probe_status,last_seen_at")
-    .eq("executor_id", account.executor_id)
-    .gte("last_seen_at", new Date(Date.now() - 5 * 60_000).toISOString())
-    .maybeSingle();
-  if (workerError) throw new Error(workerError.message);
-  if (worker?.execution_mode !== "send") throw new Error("绑定执行器当前不是 send 模式，不能创建自动发送任务。");
-  const safetyError = getXApprovalBlockReason({
-    jobStatus: "draft",
-    preparationStatus: "ready",
-    account: {
-      active: account.active,
-      accountKey: account.account_key,
-      executorId: account.executor_id,
-      networkMode: account.network_mode,
-      expectedEgressIp: account.expected_egress_ip,
-      proxyStatus: proxy?.status ?? null,
-    },
-    worker: worker ? {
-      lastSeenAt: worker.last_seen_at,
-      xuseAvailable: worker.xuse_available,
-      configuredAccounts: Array.isArray(worker.configured_accounts) ? worker.configured_accounts : [],
-      currentEgressIp: worker.current_egress_ip,
-      networkProbeStatus: worker.network_probe_status,
-    } : null,
-    nowMillis: Date.now(),
-  });
-  if (safetyError) throw new Error(safetyError);
-
-  const range = shanghaiDayRange(scheduledFor);
-  const { count, error: countError } = await supabase
-    .from("x_reply_jobs")
-    .select("id", { count: "exact", head: true })
-    .eq("account_id", accountId)
-    .in("status", ["queued", "claimed", "sent", "uncertain"])
-    .gte("scheduled_for", range.start)
-    .lt("scheduled_for", range.end);
-  if (countError) throw new Error(countError.message);
-  if ((count ?? 0) >= account.daily_limit) throw new Error("该账号在计划发送日已达到人工设置的发送上限。");
-
-  const targetValue = String(formData.get("targetPostUrl") ?? "").trim();
-  const targetPostUrl = actionType === "reply" ? xPostUrlSchema.parse(targetValue) : null;
-  const { error } = await supabase.from("x_reply_jobs").insert({
-    account_id: accountId,
-    action_type: actionType,
-    target_post_url: targetPostUrl,
-    reply_text: z.string().trim().min(1).max(270).parse(String(formData.get("postText") ?? "")),
-    scheduled_for: scheduledFor.toISOString(),
-    status: "queued",
-    preparation_status: "ready",
-    account_key_snapshot: account.account_key,
-    positioning_snapshot: account.positioning,
-    approved_by: user.id,
-    approved_at: new Date().toISOString(),
-    created_by: user.id,
-  });
-  if (error) throw new Error(error.message);
-  revalidatePath(PAGE_PATH);
-  redirect(`${PAGE_PATH}?notice=queued`);
 }
 
 export async function approveXAutoDraft(formData: FormData) {

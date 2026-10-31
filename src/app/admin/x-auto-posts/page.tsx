@@ -1,10 +1,12 @@
-import { AlertTriangle, CheckCircle2, Clock3, LoaderCircle, Monitor, Send } from "lucide-react";
+/* eslint-disable @next/next/no-img-element */
+import { AlertTriangle, CheckCircle2, Clock3, ExternalLink, LoaderCircle, Monitor, Send } from "lucide-react";
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { QueueAutoRefresh } from "@/components/queue-auto-refresh";
 import { SetupWarning } from "@/components/setup-warning";
 import { requireAdmin } from "@/lib/auth";
+import { getMarketingReplyPreviewUrl } from "@/lib/marketing";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { cn, formatDate, getServerNowMillis } from "@/lib/utils";
 import {
@@ -19,7 +21,6 @@ import {
 import {
   approveXAutoDraft,
   authorizeXDailySending,
-  createAndQueueXAutoJob,
   pauseXDailySending,
   rejectXAutoDraft,
   retryXAutoPreparation,
@@ -29,7 +30,6 @@ export const dynamic = "force-dynamic";
 
 const notices: Record<string, string> = {
   "draft-created": "自动发送草稿已创建，尚未批准，也不会发送。",
-  queued: "发送任务已确认并批准；到达计划时间后由绑定 Mac 自动发送。",
   "lead-added": "已从候选列表加入自动发送草稿，尚未批准，也不会发送。",
   approved: "已逐条批准；任务将在计划时间由本机执行。",
   "daily-authorized": "已确认今日首条效果；该账号今天的后续已批准任务可以自动发送。",
@@ -50,33 +50,26 @@ function formatShanghaiDate(value: string) {
   }).format(new Date(value));
 }
 
-function defaultShanghaiSchedule() {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Shanghai",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(new Date(Date.now() + 2 * 60_000));
-  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${value.year}-${value.month}-${value.day}T${value.hour}:${value.minute}`;
-}
-
 export default async function XAutoPostsPage({ searchParams }: { searchParams: Promise<{ notice?: string }> }) {
   await requireAdmin("/admin/x-auto-posts");
   const supabase = getSupabaseServiceClient();
   if (!supabase) return <AppShell admin><main className="mx-auto w-full max-w-3xl px-4 py-10"><SetupWarning /></main></AppShell>;
   const filters = await searchParams;
   const [{ data: jobRows, error: jobsError }, { data: workerRows }, { data: accountRows }, { data: gateRows }, { count: legacySentCount }] = await Promise.all([
-    supabase.from("x_reply_jobs").select("*,x_reply_accounts(account_key,display_name,positioning)").order("created_at", { ascending: false }).limit(1000),
+    supabase.from("x_reply_jobs").select("*,x_reply_accounts(account_key,display_name,positioning),x_leads(media_url,pet_type,marketing_links!x_leads_marketing_link_id_fkey(source_hash,expires_at))").order("created_at", { ascending: false }).limit(1000),
     supabase.from("x_reply_workers").select("*").order("last_seen_at", { ascending: false }),
     supabase.from("x_reply_accounts").select("*").eq("active", true).order("display_name"),
     supabase.from("x_reply_daily_gates").select("account_id,gate_date,status,first_job_id,first_sent_at,authorized_at").eq("gate_date", shanghaiToday()),
     supabase.from("x_manual_posts").select("id", { count: "exact", head: true }).eq("status", "sent"),
   ]);
   const jobs = (jobRows ?? []) as unknown as XReplyJob[];
+  const cards = await Promise.all(jobs.map(async (job) => {
+    const link = job.x_leads?.marketing_links;
+    const preview = job.preparation_status === "ready" && link
+      ? await getMarketingReplyPreviewUrl(link.source_hash, link.expires_at)
+      : null;
+    return { job, preview: preview?.url ?? null };
+  }));
   const isPreparing = jobs.some((job) => ["pending", "processing"].includes(job.preparation_status));
   const workers = (workerRows ?? []) as XReplyWorker[];
   const renderedAt = getServerNowMillis();
@@ -85,18 +78,6 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
   const executorOnline = freshWorkers.length > 0;
   const accounts = (accountRows ?? []) as XReplyAccount[];
   const gates = new Map(((gateRows ?? []) as XReplyDailyGate[]).map((gate) => [gate.account_id, gate]));
-  const accountReadiness = new Map(accounts.map((account) => {
-    const worker = account.executor_id ? workerByExecutor.get(account.executor_id) : undefined;
-    let reason = "可发送";
-    if (!account.executor_id) reason = "未绑定执行器";
-    else if (!worker) reason = "执行器离线";
-    else if (worker.execution_mode !== "send") reason = "执行器为 observe";
-    else if (!worker.xuse_available) reason = "x-use 异常";
-    else if (!worker.configured_accounts.includes(account.account_key)) reason = "本地账号缺失";
-    else if (account.network_mode === "vpn_direct" && (!account.expected_egress_ip || worker.network_probe_status !== "healthy" || worker.current_egress_ip !== account.expected_egress_ip)) reason = "出口未匹配";
-    return [account.id, { ready: reason === "可发送", reason }] as const;
-  }));
-  const hasReadyAccount = [...accountReadiness.values()].some((value) => value.ready);
   const notice = filters.notice ? notices[filters.notice] : null;
 
   return (
@@ -114,23 +95,8 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
         </div>
         {notice ? <p className="mt-5 rounded-lg border border-line bg-panel p-3 text-sm font-bold">{notice}</p> : null}
         {jobsError ? <p className="mt-5 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{jobsError.message}</p> : null}
-        <p className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950"><strong>发送队列隔离，候选池共用。</strong>你可以在下方直接确认一条最终内容，也可以从“X 用户筛选”把候选加入草稿后再逐条批准；`observe` 只上报状态，不能领取任务。</p>
+        <p className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950"><strong>发送队列隔离，候选池共用。</strong>自动任务只从“X 待处理用户与帖子”选择加入；素材准备完成后在本页逐条核对并批准。`observe` 只上报状态，不能领取任务。</p>
         {legacySentCount ? <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950"><strong>历史已发送记录仍在：</strong>启用本机自动发送前，已有 {legacySentCount} 条人工发送历史。<Link className="ml-1 font-black underline" href="/admin/x-manual-posts">打开历史记录</Link></p> : null}
-
-        <section className="mt-6 rounded-xl border border-accent/40 bg-panel/90 p-5">
-          <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-2xl font-black">创建自动发送任务</h2><p className="mt-1 text-sm leading-6 text-muted">选择账号并核对最终公开内容；点击一次即完成本条任务的人工确认和批准，计划时间到达后由 Mac 自动发送。</p></div><span className="rounded-md border border-line bg-white px-3 py-2 text-xs font-black">每次仅创建 1 条</span></div>
-          <form action={createAndQueueXAutoJob} className="mt-5 grid gap-4">
-            <div className="grid gap-4 md:grid-cols-3">
-              <label className="text-sm font-bold">X 账号<select className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3" defaultValue="" name="accountId" required><option disabled value="">请选择账号</option>{accounts.map((account) => { const readiness = accountReadiness.get(account.id); return <option disabled={!readiness?.ready} key={account.id} value={account.id}>{account.display_name} · {readiness?.reason ?? "不可用"}</option>; })}</select></label>
-              <label className="text-sm font-bold">发送类型<select className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3" defaultValue="post" name="actionType"><option value="post">发布新帖</option><option value="reply">回复指定帖子</option></select></label>
-              <label className="text-sm font-bold">计划时间（北京时间）<input className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3" defaultValue={defaultShanghaiSchedule()} name="scheduledFor" required type="datetime-local" /></label>
-            </div>
-            <label className="text-sm font-bold">目标帖子链接（仅回复时必填）<input className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3" name="targetPostUrl" placeholder="https://x.com/username/status/123..." type="url" /></label>
-            <label className="text-sm font-bold">最终发送内容<textarea className="focus-ring mt-2 min-h-32 w-full rounded-lg border border-line bg-white p-3 leading-6" maxLength={270} name="postText" placeholder="此处内容将原样公开发送，最多 270 个字符。" required /></label>
-            <label className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-bold leading-6 text-amber-950"><input className="mt-1 size-4" name="confirmed" required type="checkbox" value="confirmed" /><span>我已确认所选 X 账号、发送类型、目标链接、公开内容和计划时间；点击按钮后，本条任务无需再次批准。</span></label>
-            <div className="flex flex-wrap items-center gap-3"><FormSubmitButton className="focus-ring h-11 rounded-lg bg-accent px-5 text-sm font-black text-accent-ink disabled:cursor-not-allowed disabled:opacity-50" disabled={!hasReadyAccount} idleLabel="确认并加入自动发送" pendingLabel="正在校验并入队…" /><p className="text-xs text-muted">{hasReadyAccount ? "服务端会再次校验执行器、Cookie、出口 IP、每日上限与首条监督。" : "当前没有处于 send 模式且安全检查通过的账号。"}</p></div>
-          </form>
-        </section>
 
         <section className="mt-6 rounded-xl border border-line bg-panel/90 p-5">
           <h2 className="text-xl font-black">今日首条监督（北京时间）</h2>
@@ -151,7 +117,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
         <section className="mt-6 grid gap-4 lg:grid-cols-2">
           <div className="rounded-xl border border-blue-200 bg-blue-50 p-5">
             <h2 className="text-xl font-black text-blue-950">自动任务从候选列表创建</h2>
-            <p className="mt-2 text-sm leading-6 text-blue-900">先查看用户、原帖图片、位置证据和评分，再逐条选择账号、文案与计划时间。这里仅保留账号管理以及发送结果。</p>
+            <p className="mt-2 text-sm leading-6 text-blue-900">先在候选页查看用户、原帖图片、位置证据和评分，再加入自动队列；本页核对生成的预览图、最终文案、账号和计划时间后逐条批准。</p>
             <Link className="focus-ring mt-5 inline-flex h-11 items-center rounded-lg bg-accent px-5 font-black text-accent-ink" href="/admin/x-leads">打开待处理用户与帖子</Link>
           </div>
           <div className="rounded-xl border border-line bg-panel/90 p-5"><h2 className="text-xl font-black">账号、执行器、文案与独立出口</h2><p className="mt-2 text-sm leading-6 text-muted">账号资料、Mac 执行器绑定和 VPN/固定代理策略在独立管理页维护；自动任务会在领取前和写入前两次校验浏览器出口。</p><Link className="focus-ring mt-5 inline-flex h-11 items-center rounded-lg border border-line px-5 font-black" href="/admin/x-accounts">管理 X 账号/IP</Link></div>
@@ -160,15 +126,23 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
         <section className="mt-8">
           <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-black">自动发送队列与结果</h2><p className="mt-1 text-sm text-muted">候选任务到这里后仍需逐条批准；批准操作本身不会打开 X 或执行写入。</p></div><Link className="focus-ring rounded-lg bg-accent px-4 py-3 text-sm font-black text-accent-ink" href="/admin/x-leads">返回候选列表</Link></div>
           <div className="mt-4 space-y-4">
-            {jobs.map((job) => {
+            {cards.map(({ job, preview }) => {
               const preparing = ["pending", "processing"].includes(job.preparation_status);
               const preparationFailed = job.preparation_status === "failed";
               return <article className="rounded-xl border border-line bg-panel/90 p-5" key={job.id}>
                 <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><span className={cn("rounded-md border px-2.5 py-1 text-xs font-black", X_REPLY_STATUS_STYLES[job.status])}>{X_REPLY_STATUS_LABELS[job.status] ?? job.status}</span><span className="rounded-md border border-line bg-white px-2.5 py-1 text-xs font-black">{X_ACTION_LABELS[job.action_type] ?? job.action_type}</span><strong>{job.x_reply_accounts?.display_name ?? job.account_key_snapshot ?? "未知账号"}</strong><span className="font-mono text-xs text-muted">{job.x_reply_accounts?.account_key ?? job.account_key_snapshot}</span></div><span className="text-xs text-muted"><Clock3 className="mr-1 inline" size={13} />创建 {formatDate(job.created_at)}</span></div>
                 {preparing ? <div className="mt-4 flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 p-5 text-sm font-bold text-blue-950"><LoaderCircle className="animate-spin" size={20} /><div><p>正在生成单张预览图、专属跳转链接和营销文案</p><p className="mt-1 text-xs font-normal text-blue-800">准备完成前不能批准发送，页面会自动刷新。</p></div></div> : null}
                 {preparationFailed ? <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-900"><p className="font-bold">{job.preparation_error ?? "营销素材生成失败。"}</p><form action={retryXAutoPreparation} className="mt-3"><input name="jobId" type="hidden" value={job.id} /><FormSubmitButton className="focus-ring h-9 rounded-md bg-red-700 px-3 text-xs font-black text-white disabled:opacity-50" idleLabel="重新生成" pendingLabel="正在重新入队…" /></form></div> : null}
-                {job.preparation_status === "ready" ? <><p className="mt-4 text-sm font-bold">计划发送（北京时间）：{formatShanghaiDate(job.scheduled_for)}</p>{job.target_post_url ? <a className="mt-2 inline-block break-all text-sm font-bold text-accent" href={job.target_post_url} rel="noreferrer" target="_blank">查看目标帖子 ↗</a> : null}<blockquote className="mt-3 rounded-lg border border-line bg-white p-4 text-sm leading-6">{job.reply_text}</blockquote><div className="mt-3 grid gap-2 text-xs text-muted sm:grid-cols-3"><span>批准：{job.approved_at ? formatDate(job.approved_at) : "—"}</span><span>领取：{job.claimed_at ? formatDate(job.claimed_at) : "—"}</span><span>完成：{job.completed_at ? formatDate(job.completed_at) : "—"}</span></div></> : null}
-                {job.status === "draft" && job.preparation_status === "ready" ? <div className="mt-4 flex flex-wrap gap-2"><form action={approveXAutoDraft}><input name="jobId" type="hidden" value={job.id} /><FormSubmitButton className="focus-ring h-10 rounded-lg bg-accent px-4 text-sm font-black text-accent-ink disabled:opacity-50" idleLabel="批准并等待到时发送" pendingLabel="正在检查本机账号…" /></form><form action={rejectXAutoDraft}><input name="jobId" type="hidden" value={job.id} /><button className="focus-ring h-10 rounded-lg border border-line px-4 text-sm font-bold" type="submit">拒绝</button></form></div> : null}
+                {job.preparation_status === "ready" ? <>
+                  {job.x_leads ? <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                    <div><p className="mb-2 text-xs font-black text-muted">候选原帖图片</p><div className="aspect-square overflow-hidden rounded-lg border border-line bg-surface"><img alt="候选原帖图片" className="h-full w-full object-cover" src={job.x_leads.media_url} /></div></div>
+                    <div><p className="mb-2 text-xs font-black text-muted">自动生成的发送预览</p>{preview ? <div className="aspect-square overflow-hidden rounded-lg border border-line bg-surface"><img alt="自动生成的发送预览" className="h-full w-full object-cover" src={preview} /></div> : <div className="flex aspect-square items-center justify-center rounded-lg border border-dashed border-line p-6 text-center text-sm text-muted">预览链接已失效或暂时不可用，请重新生成后再批准。</div>}</div>
+                  </div> : null}
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-bold">计划发送（北京时间）：{formatShanghaiDate(job.scheduled_for)}</p>{job.target_post_url ? <a className="inline-flex items-center gap-1 break-all text-sm font-bold text-accent" href={job.target_post_url} rel="noreferrer" target="_blank">查看目标帖子 <ExternalLink size={14} /></a> : null}</div>
+                  <blockquote className="mt-3 whitespace-pre-wrap rounded-lg border border-line bg-white p-4 text-sm leading-6">{job.reply_text}</blockquote>
+                  <div className="mt-3 grid gap-2 text-xs text-muted sm:grid-cols-3"><span>批准：{job.approved_at ? formatDate(job.approved_at) : "—"}</span><span>领取：{job.claimed_at ? formatDate(job.claimed_at) : "—"}</span><span>完成：{job.completed_at ? formatDate(job.completed_at) : "—"}</span></div>
+                </> : null}
+                {job.status === "draft" && job.preparation_status === "ready" ? <div className="mt-4 flex flex-wrap gap-2"><form action={approveXAutoDraft}><input name="jobId" type="hidden" value={job.id} /><FormSubmitButton className="focus-ring h-10 rounded-lg bg-accent px-4 text-sm font-black text-accent-ink disabled:opacity-50" idleLabel="确认并自动发送" pendingLabel="正在检查本机账号…" /></form><form action={rejectXAutoDraft}><input name="jobId" type="hidden" value={job.id} /><button className="focus-ring h-10 rounded-lg border border-line px-4 text-sm font-bold" type="submit">拒绝</button></form></div> : null}
                 {job.status === "sent" ? <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-900"><CheckCircle2 className="mr-2 inline" size={17} />x-use 已确认本次写操作成功{job.result_url ? <> · <a className="underline" href={job.result_url} rel="noreferrer" target="_blank">打开结果</a></> : null}</p> : null}
                 {job.status === "uncertain" ? <p className="mt-4 rounded-lg border border-orange-300 bg-orange-50 p-3 text-sm font-bold text-orange-950"><AlertTriangle className="mr-2 inline" size={17} />结果不确定：必须先去 X 查看，系统不会自动重试。</p> : null}
                 {job.error_message ? <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{job.error_code ? `${job.error_code}: ` : ""}{job.error_message}</p> : null}

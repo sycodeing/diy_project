@@ -89,6 +89,14 @@ export type XReplyJob = {
   preparation_error: string | null;
   prepared_at: string | null;
   x_reply_accounts: Pick<XReplyAccount, "account_key" | "display_name" | "positioning"> | null;
+  x_leads: null | {
+    media_url: string;
+    pet_type: "cat" | "dog" | null;
+    marketing_links: null | {
+      source_hash: string;
+      expires_at: string;
+    };
+  };
 };
 
 export type XManualPost = {
