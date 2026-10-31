@@ -598,6 +598,7 @@ using (
 create table if not exists public.marketing_links (
   id uuid primary key default gen_random_uuid(),
   token_hash text not null unique check (length(token_hash) = 64),
+  short_token_hash text check (short_token_hash is null or length(short_token_hash) = 64),
   idempotency_key text not null unique,
   campaign text not null,
   channel text not null check (channel in ('consent_reply', 'public_reply', 'direct_message')),
@@ -611,6 +612,10 @@ create table if not exists public.marketing_links (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+create unique index if not exists marketing_links_short_token_hash_unique
+  on public.marketing_links (short_token_hash)
+  where short_token_hash is not null;
 
 create table if not exists public.marketing_events (
   id uuid primary key default gen_random_uuid(),

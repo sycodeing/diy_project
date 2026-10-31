@@ -32,11 +32,12 @@ export async function getActiveMarketingLinkFromCookie() {
 
   const supabase = getSupabaseServiceClient();
   if (!supabase) return null;
+  const tokenHash = hashMarketingToken(token);
 
   const { data } = await supabase
     .from("marketing_links")
     .select("id,expires_at,source_hash,source_image_url")
-    .eq("token_hash", hashMarketingToken(token))
+    .or(`token_hash.eq.${tokenHash},short_token_hash.eq.${tokenHash}`)
     .gt("expires_at", new Date().toISOString())
     .maybeSingle();
 

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getAppUrl, getMarketingIngestSecret } from "@/lib/env";
 import { hashMarketingToken, safeHexEqual } from "@/lib/marketing";
+import { createMarketingLinkTokens } from "@/lib/marketing-token";
 import { prepareMarketingPreviewCache } from "@/lib/marketing-preview-cache";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 
@@ -90,18 +91,25 @@ async function createLink(
 
   const { data: existing } = await supabase
     .from("marketing_links")
-    .select("id,token_hash,expires_at,source_hash,source_image_url")
+    .select("id,token_hash,short_token_hash,expires_at,source_hash,source_image_url")
     .eq("idempotency_key", idempotencyKey)
     .maybeSingle();
-  const token = createHmac("sha256", secret)
-    .update(`marketing-link:${idempotencyKey}`)
-    .digest("base64url");
+  const tokens = createMarketingLinkTokens(secret, idempotencyKey);
   if (existing) {
-    if (existing.token_hash !== hashMarketingToken(token)) {
+    const legacyMatches = existing.token_hash === hashMarketingToken(tokens.legacy);
+    const preferredMatches = existing.token_hash === hashMarketingToken(tokens.preferred)
+      || existing.short_token_hash === hashMarketingToken(tokens.preferred);
+    if (!legacyMatches && !preferredMatches) {
       return NextResponse.json(
         { error: "The ingestion secret changed; use a new idempotency key." },
         { status: 409 },
       );
+    }
+    if (!preferredMatches) {
+      const { error: aliasError } = await supabase.from("marketing_links").update({
+        short_token_hash: hashMarketingToken(tokens.preferred),
+      }).eq("id", existing.id);
+      if (aliasError) return NextResponse.json({ error: "Could not create the short marketing link." }, { status: 500 });
     }
     const cacheReady = await prepareMarketingPreviewCache(
       existing.source_image_url ?? payload.sourceImageUrl,
@@ -110,14 +118,16 @@ async function createLink(
       supabase,
       { replyOnly: payload.previewMode === "reply" },
     );
-    return linkResponse(token, existing.expires_at, true, cacheReady);
+    return linkResponse(tokens.preferred, existing.expires_at, true, cacheReady);
   }
 
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const token = tokens.preferred;
   const { data, error } = await supabase
     .from("marketing_links")
     .insert({
       token_hash: hashMarketingToken(token),
+      short_token_hash: hashMarketingToken(token),
       idempotency_key: idempotencyKey,
       campaign: payload.campaign,
       channel: payload.channel,
@@ -132,10 +142,22 @@ async function createLink(
   if (error || !data) {
     const { data: raced } = await supabase
       .from("marketing_links")
-      .select("expires_at,source_hash,source_image_url")
+      .select("id,token_hash,short_token_hash,expires_at,source_hash,source_image_url")
       .eq("idempotency_key", idempotencyKey)
       .maybeSingle();
     if (raced) {
+      const legacyMatches = raced.token_hash === hashMarketingToken(tokens.legacy);
+      const preferredMatches = raced.token_hash === hashMarketingToken(tokens.preferred)
+        || raced.short_token_hash === hashMarketingToken(tokens.preferred);
+      if (!legacyMatches && !preferredMatches) {
+        return NextResponse.json({ error: "The ingestion secret changed; use a new idempotency key." }, { status: 409 });
+      }
+      if (!preferredMatches) {
+        const { error: aliasError } = await supabase.from("marketing_links").update({
+          short_token_hash: hashMarketingToken(tokens.preferred),
+        }).eq("id", raced.id);
+        if (aliasError) return NextResponse.json({ error: "Could not create the short marketing link." }, { status: 500 });
+      }
       const cacheReady = await prepareMarketingPreviewCache(
         raced.source_image_url ?? payload.sourceImageUrl,
         raced.source_hash,
@@ -143,7 +165,7 @@ async function createLink(
         supabase,
       { replyOnly: payload.previewMode === "reply" },
       );
-      return linkResponse(token, raced.expires_at, true, cacheReady);
+      return linkResponse(tokens.preferred, raced.expires_at, true, cacheReady);
     }
     return NextResponse.json({ error: "Could not create marketing link." }, { status: 500 });
   }
@@ -166,7 +188,7 @@ function linkResponse(
   previewCacheReady: boolean,
 ) {
   return NextResponse.json({
-    url: `${getAppUrl()}/go/${token}`,
+    url: `${getAppUrl()}/g/${token}`,
     expiresAt,
     reused,
     previewCacheReady,

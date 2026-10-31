@@ -101,7 +101,15 @@ def test_uncertain_result_is_reported_once_and_never_retried(monkeypatch, tmp_pa
     settings = replace(Settings(), x_reply_execution_mode="send", x_reply_worker_secret="s" * 32, x_use_home=tmp_path)
     posts = []
 
-    async def uncertain_action(**_kwargs):
+    async def fake_download(url, destination):
+        assert url == "https://preview.example.test/generated.webp"
+        path = destination / "preview.webp"
+        path.write_bytes(b"preview")
+        return path, "digest"
+
+    async def uncertain_action(**kwargs):
+        assert len(kwargs["media"]) == 1
+        assert kwargs["media"][0].endswith("preview.webp")
         return ReplyResult(
             status="uncertain",
             draft_id="draft-1",
@@ -117,12 +125,14 @@ def test_uncertain_result_is_reported_once_and_never_retried(monkeypatch, tmp_pa
             return httpx.Response(200, json={"ok": True}, request=httpx.Request("POST", url))
 
     monkeypatch.setattr(x_reply_worker, "send_approved_action", uncertain_action)
+    monkeypatch.setattr(x_reply_worker, "download_image", fake_download)
     result = asyncio.run(x_reply_worker._execute_job(settings, FakeClient(), {
         "id": "job-1",
         "accountKey": "pet_account",
         "actionType": "reply",
         "targetPostUrl": "https://x.com/example/status/1",
         "postText": "Exact approved text",
+        "previewImageUrl": "https://preview.example.test/generated.webp",
         "networkMode": "vpn_direct",
         "proxyUrl": None,
     }))

@@ -2,6 +2,7 @@ import { isIP } from "node:net";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getXReplyWorkerSecret } from "@/lib/env";
+import { getMarketingReplyPreviewUrl } from "@/lib/marketing";
 import { decryptProxyUrl } from "@/lib/x-proxy-crypto";
 import { isAuthorizedXReplyWorker } from "@/lib/x-reply-worker-auth";
 import { isXAccountClaimEligible, isXDailyGateClaimAllowed, isXJobClaimEligible } from "@/lib/x-reply-safety";
@@ -139,7 +140,7 @@ export async function POST(request: Request) {
 
   let queuedQuery = supabase
     .from("x_reply_jobs")
-    .select("id,account_id,action_type,target_post_url,reply_text,scheduled_for,created_at,status,preparation_status,attempt_count,approved_at")
+    .select("id,account_id,action_type,target_post_url,reply_text,scheduled_for,created_at,status,preparation_status,attempt_count,approved_at,x_leads(marketing_links!x_leads_marketing_link_id_fkey(source_hash,expires_at))")
     .eq("status", "queued")
     .eq("preparation_status", "ready")
     .eq("attempt_count", 0)
@@ -162,6 +163,20 @@ export async function POST(request: Request) {
     scheduledFor: queued.scheduled_for,
     nowMillis: Date.parse(now),
   })) return new Response(null, { status: 204 });
+
+  const leadRelation = Array.isArray(queued.x_leads) ? queued.x_leads[0] : queued.x_leads;
+  const linkRelation = leadRelation?.marketing_links;
+  const marketingLink = Array.isArray(linkRelation) ? linkRelation[0] : linkRelation;
+  const preview = marketingLink
+    ? await getMarketingReplyPreviewUrl(marketingLink.source_hash, marketingLink.expires_at)
+    : null;
+  if (!preview) {
+    await supabase.from("x_reply_jobs").update({
+      preparation_status: "failed",
+      preparation_error: "发送预览图暂时不可用；任务未下发，请重新生成素材。",
+    }).eq("id", queued.id).eq("status", "queued").eq("preparation_status", "ready");
+    return new Response(null, { status: 204 });
+  }
 
   const route = accountRoutes.get(queued.account_id);
   if (!route) return new Response(null, { status: 204 });
@@ -251,6 +266,7 @@ export async function POST(request: Request) {
     actionType: claimed.action_type,
     targetPostUrl: claimed.target_post_url,
     postText: claimed.reply_text,
+    previewImageUrl: preview.url,
   } });
 }
 

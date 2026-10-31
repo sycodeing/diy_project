@@ -255,19 +255,22 @@ def test_approved_text_is_passed_unchanged_and_only_pending_draft_is_approved(mo
 
     monkeypatch.setattr(xuse_client, "probe_direct_egress", direct_probe)
     approved_text = "Exactly reviewed text — keep unchanged."
+    preview_path = tmp_path / "approved-preview.webp"
+    preview_path.write_bytes(b"preview")
     result = asyncio.run(send_approved_action(
         x_use_home=tmp_path,
         account="first",
         action_type="post",
         tweet_url=None,
         text=approved_text,
+        media=[str(preview_path)],
         network_mode="vpn_direct",
         ip_check_url="https://ip.example.test",
         verify_route=lambda _ip: asyncio.sleep(0, result=(True, None)),
     ))
 
     assert result.status == "sent"
-    assert calls[0] == ("post_tweet", {"account": "first", "text": approved_text})
+    assert calls[0] == ("post_tweet", {"account": "first", "text": approved_text, "media": [str(preview_path)]})
     assert calls[1] == ("approve_draft", {"draft_id": "draft-1"})
 
 

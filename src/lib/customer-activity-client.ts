@@ -64,7 +64,7 @@ function syncInternalTestCookie() {
 
 export function safeActivityRoute(pathname: string) {
   return pathname
-    .replace(/\/go\/[^/]+/g, "/go/:token")
+    .replace(/\/g(?:o)?\/[^/]+/g, "/g/:token")
     .replace(/\/orders\/[^/]+/g, "/orders/:id")
     .replace(/\/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, "/:id")
     .slice(0, 160);

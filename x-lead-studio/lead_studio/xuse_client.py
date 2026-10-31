@@ -256,6 +256,7 @@ async def send_approved_action(
     action_type: str,
     tweet_url: str | None,
     text: str,
+    media: list[str] | None = None,
     network_mode: str,
     ip_check_url: str,
     proxy_url: str | None = None,
@@ -311,6 +312,8 @@ async def send_approved_action(
                     tool_arguments = {"account": account, "text": text}
                     if tweet_url:
                         tool_arguments["tweet_url"] = tweet_url
+                    if media:
+                        tool_arguments["media"] = media
                     draft_call = await asyncio.wait_for(session.call_tool(tool_name, tool_arguments), timeout=60)
                     draft = _payload(draft_call)
                     if not draft.get("ok"):

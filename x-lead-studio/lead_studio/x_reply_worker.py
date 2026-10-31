@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import socket
+import tempfile
 import time
+from pathlib import Path
 from typing import Any
 
 import httpx
 
 from .config import Settings
+from .media import download_image
 from .xuse_client import (
     NetworkProbeResult,
     ReplyResult,
@@ -19,7 +22,7 @@ from .xuse_client import (
 )
 
 
-WORKER_VERSION = "4.0.0-macbook-xuse"
+WORKER_VERSION = "4.1.0-preview-attachment"
 HALT_ERROR_MARKERS = ("captcha", "challenge", "login", "locked", "rate_limit", "rate limit", "verification")
 
 
@@ -150,17 +153,23 @@ async def _execute_job(settings: Settings, client: httpx.AsyncClient, job: dict[
             return False, f"Network verification request failed: {type(error).__name__}"[:1000]
 
     try:
-        result = await send_approved_action(
-            x_use_home=settings.x_use_home,
-            account=str(job["accountKey"]),
-            action_type=str(job["actionType"]),
-            tweet_url=str(job["targetPostUrl"]) if job.get("targetPostUrl") else None,
-            text=str(job["postText"]),
-            network_mode=str(job["networkMode"]),
-            ip_check_url=settings.x_reply_ip_check_url,
-            proxy_url=str(job["proxyUrl"]) if job.get("proxyUrl") else None,
-            verify_route=verify_route,
-        )
+        preview_url = str(job.get("previewImageUrl") or "")
+        if not preview_url:
+            raise ValueError("The approved automatic reply has no preview image attachment.")
+        with tempfile.TemporaryDirectory(prefix="diy-x-preview-") as directory:
+            preview_path, _ = await download_image(preview_url, Path(directory))
+            result = await send_approved_action(
+                x_use_home=settings.x_use_home,
+                account=str(job["accountKey"]),
+                action_type=str(job["actionType"]),
+                tweet_url=str(job["targetPostUrl"]) if job.get("targetPostUrl") else None,
+                text=str(job["postText"]),
+                media=[str(preview_path)],
+                network_mode=str(job["networkMode"]),
+                ip_check_url=settings.x_reply_ip_check_url,
+                proxy_url=str(job["proxyUrl"]) if job.get("proxyUrl") else None,
+                verify_route=verify_route,
+            )
     except Exception as error:
         result = ReplyResult(status="failed", error_code=type(error).__name__[:100], error_message=f"{type(error).__name__}: local execution failed"[:1000])
 
