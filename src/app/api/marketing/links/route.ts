@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getAppUrl, getMarketingIngestSecret } from "@/lib/env";
 import { hashMarketingToken, safeHexEqual } from "@/lib/marketing";
-import { createMarketingLinkTokens } from "@/lib/marketing-token";
+import { createLegacyMarketingAlias, createMarketingLinkTokens } from "@/lib/marketing-token";
 import { prepareMarketingPreviewCache } from "@/lib/marketing-preview-cache";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 
@@ -96,16 +96,19 @@ async function createLink(
     .maybeSingle();
   const tokens = createMarketingLinkTokens(secret, idempotencyKey);
   if (existing) {
+    const legacyAlias = createLegacyMarketingAlias(existing.token_hash);
     const legacyMatches = existing.token_hash === hashMarketingToken(tokens.legacy);
-    const preferredMatches = existing.token_hash === hashMarketingToken(tokens.preferred)
+    const preferredStored = existing.token_hash === hashMarketingToken(tokens.preferred)
       || existing.short_token_hash === hashMarketingToken(tokens.preferred);
-    if (!legacyMatches && !preferredMatches) {
+    const legacyAliasStored = existing.short_token_hash === hashMarketingToken(legacyAlias);
+    if (!legacyMatches && !preferredStored) {
       return NextResponse.json(
         { error: "The ingestion secret changed; use a new idempotency key." },
         { status: 409 },
       );
     }
-    if (!preferredMatches) {
+    const returnedToken = preferredStored ? tokens.preferred : legacyAliasStored ? legacyAlias : tokens.preferred;
+    if (!preferredStored && !legacyAliasStored) {
       const { error: aliasError } = await supabase.from("marketing_links").update({
         short_token_hash: hashMarketingToken(tokens.preferred),
       }).eq("id", existing.id);
@@ -118,7 +121,7 @@ async function createLink(
       supabase,
       { replyOnly: payload.previewMode === "reply" },
     );
-    return linkResponse(tokens.preferred, existing.expires_at, true, cacheReady);
+    return linkResponse(returnedToken, existing.expires_at, true, cacheReady);
   }
 
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -146,13 +149,16 @@ async function createLink(
       .eq("idempotency_key", idempotencyKey)
       .maybeSingle();
     if (raced) {
+      const legacyAlias = createLegacyMarketingAlias(raced.token_hash);
       const legacyMatches = raced.token_hash === hashMarketingToken(tokens.legacy);
-      const preferredMatches = raced.token_hash === hashMarketingToken(tokens.preferred)
+      const preferredStored = raced.token_hash === hashMarketingToken(tokens.preferred)
         || raced.short_token_hash === hashMarketingToken(tokens.preferred);
-      if (!legacyMatches && !preferredMatches) {
+      const legacyAliasStored = raced.short_token_hash === hashMarketingToken(legacyAlias);
+      if (!legacyMatches && !preferredStored) {
         return NextResponse.json({ error: "The ingestion secret changed; use a new idempotency key." }, { status: 409 });
       }
-      if (!preferredMatches) {
+      const returnedToken = preferredStored ? tokens.preferred : legacyAliasStored ? legacyAlias : tokens.preferred;
+      if (!preferredStored && !legacyAliasStored) {
         const { error: aliasError } = await supabase.from("marketing_links").update({
           short_token_hash: hashMarketingToken(tokens.preferred),
         }).eq("id", raced.id);
@@ -165,7 +171,7 @@ async function createLink(
         supabase,
       { replyOnly: payload.previewMode === "reply" },
       );
-      return linkResponse(tokens.preferred, raced.expires_at, true, cacheReady);
+      return linkResponse(returnedToken, raced.expires_at, true, cacheReady);
     }
     return NextResponse.json({ error: "Could not create marketing link." }, { status: 500 });
   }
