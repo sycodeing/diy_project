@@ -193,11 +193,23 @@ function formatDiscoveryMetrics(metrics: Record<string, unknown> | null) {
   const candidatePosts = metricNumber(metrics, "candidate_posts");
   const existingCandidates = metricNumber(metrics, "existing_candidates");
   const targetingReview = metricNumber(metrics, "targeting_review_status");
+  const aboutCandidates = metricNumber(metrics, "about_candidates");
+  const aboutApiCalls = metricNumber(metrics, "about_api_calls");
+  const aboutCacheHits = metricNumber(metrics, "about_cache_hits");
+  const aboutUsAccounts = metricNumber(metrics, "about_us_accounts");
+  const aboutNonUsAccounts = metricNumber(metrics, "about_non_us_accounts");
+  const aboutMissingAccounts = metricNumber(metrics, "about_missing_accounts");
   if (uniquePosts !== null) parts.push(`去重 ${uniquePosts}`);
   if (photoPosts !== null) parts.push(`含图 ${photoPosts}`);
   if (candidatePosts !== null) parts.push(`候选 ${candidatePosts}`);
   if (existingCandidates !== null) parts.push(`历史重复 ${existingCandidates}`);
   if (targetingReview !== null) parts.push(`文本复核 ${targetingReview}`);
+  if (aboutCandidates !== null) parts.push(`位置补全 ${aboutCandidates}`);
+  if (aboutApiCalls !== null) parts.push(`About 请求 ${aboutApiCalls}`);
+  if (aboutCacheHits !== null) parts.push(`位置缓存 ${aboutCacheHits}`);
+  if (aboutUsAccounts !== null) parts.push(`确认美国 ${aboutUsAccounts}`);
+  if (aboutNonUsAccounts !== null) parts.push(`确认非美 ${aboutNonUsAccounts}`);
+  if (aboutMissingAccounts !== null) parts.push(`位置缺失 ${aboutMissingAccounts}`);
   return parts.join(" · ");
 }
 

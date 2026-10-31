@@ -279,6 +279,7 @@ def detect_us_evidence(tweet: dict[str, Any], profile_location: str) -> tuple[in
 
     user = tweet.get("user") or tweet.get("author") or {}
     account_based_in = str(user.get("accountBasedIn") or user.get("account_based_in") or "").strip()
+    account_based_in_accurate = user.get("accountBasedInAccurate", user.get("account_based_in_accurate"))
     profile_result = _profile_location_evidence(profile_location)
     if account_based_in:
         origin_us = account_based_in.casefold() in {
@@ -286,6 +287,12 @@ def detect_us_evidence(tweet: dict[str, Any], profile_location: str) -> tuple[in
         }
         profile_is_us = profile_result[0] >= 70
         profile_is_non_us = profile_result[1] == "profile_location_non_us"
+        if account_based_in_accurate is False:
+            return (
+                (65, "account_based_in_us_unverified")
+                if origin_us
+                else (25, f"account_based_in_unverified:{account_based_in[:40]}")
+            )
         if origin_us and profile_is_non_us:
             return 25, "location_conflict:profile_non_us_account_us"
         if not origin_us and profile_is_us:

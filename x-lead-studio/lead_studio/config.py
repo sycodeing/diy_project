@@ -18,6 +18,7 @@ MOCKUP_DIR = DATA_DIR / "mockups"
 APIFY_CACHE_DIR = DATA_DIR / "apify" / "runs"
 TWITTERAPI_STATE_PATH = DATA_DIR / "twitterapi" / "watermarks.json"
 TWITTERAPI_ARCHIVE_DIR = DATA_DIR / "twitterapi" / "runs"
+TWITTERAPI_ABOUT_CACHE_PATH = DATA_DIR / "twitterapi" / "user-about-cache.json"
 DB_PATH = DATA_DIR / "leads.sqlite3"
 CREDENTIAL_PATH = DATA_DIR / "x-cookie.dpapi"
 
@@ -57,6 +58,11 @@ class Settings:
     twitterapi_api_key: str = os.getenv("TWITTERAPI_API_KEY", "").strip()
     twitterapi_base_url: str = os.getenv("TWITTERAPI_BASE_URL", "https://api.twitterapi.io").rstrip("/")
     twitterapi_us_query_share: int = max(50, min(100, int(os.getenv("TWITTERAPI_US_QUERY_SHARE", "90"))))
+    twitterapi_geo_query_enabled: bool = os.getenv("TWITTERAPI_GEO_QUERY_ENABLED", "false").lower() == "true"
+    twitterapi_about_enrichment_enabled: bool = os.getenv(
+        "TWITTERAPI_ABOUT_ENRICHMENT_ENABLED", "true"
+    ).lower() == "true"
+    twitterapi_about_cache_days: int = max(1, min(90, int(os.getenv("TWITTERAPI_ABOUT_CACHE_DAYS", "30"))))
     apify_enabled: bool = os.getenv("APIFY_ENABLED", "false").lower() == "true"
     apify_api_token: str = os.getenv("APIFY_API_TOKEN", "").strip()
     apify_actor_id: str = os.getenv("APIFY_ACTOR_ID", "KvRrkwDDFm4vmklVv").strip()

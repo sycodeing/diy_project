@@ -43,14 +43,16 @@ No server-side LLM key is required because the approved text is passed explicitl
 
 ## First-phase audience
 
-Automatic collection runs two US pet-owner experiments: `new_adoption` and `pet_birthday`. Each daily run splits the configured limit across both segments and uses two searches per segment:
+Automatic collection supports five pet-owner scenes: `new_adoption`, `pet_birthday`, `pet_adventure`, `pet_costume`, and `pet_portrait`. Each run splits the configured limit across the selected scenes.
 
-1. A location-first query with `place_country:US`.
-2. A broader English query whose results are checked against the Post place and public profile location.
+TwitterAPI.io uses a dedicated two-stage read-only path:
 
-TwitterAPI.io is the default read-only discovery provider. The worker uses `Latest` searches, Unix `since_time` / `until_time` windows, per-segment local watermarks, a five-minute overlap for indexing delay, and a 90% US-place / 10% broad query split. This avoids rescanning the full lookback range on every run while preserving a small sample for profiles whose public location needs review.
+1. Broad `Latest` photo searches collect recent scene-matching posts and deduplicate authors.
+2. Authors without reliable Post or profile location evidence are enriched through `/twitter/user_about`; `account_based_in` is cached locally for 30 days before targeting is recalculated.
 
-Every successful TwitterAPI.io response page is atomically archived under `.data/twitterapi/runs/<job-id>.json` before result-limit truncation, deduplication, photo checks, location targeting, or business/ad filtering. This keeps all fetched public source data available for later reprocessing if targeting rules change (for example, if US-only targeting is removed). A failed multi-page run remains as a `partial` archive containing every page already received. Archives include the response and query metadata but never the API key or request headers.
+Geo-only `place_country:US` searches are disabled by default because geo-tagged posts are rare. They can be restored with `TWITTERAPI_GEO_QUERY_ENABLED=true`, with the old allocation controlled by `TWITTERAPI_US_QUERY_SHARE`. About enrichment is controlled by `TWITTERAPI_ABOUT_ENRICHMENT_ENABLED` and `TWITTERAPI_ABOUT_CACHE_DAYS`.
+
+Every successful TwitterAPI.io response page is atomically archived under `.data/twitterapi/runs/<job-id>.json` before result-limit truncation, deduplication, photo checks, location targeting, or business/ad filtering. The archive also records the minimal About enrichment result and whether it came from cache or the API. The API key and request headers are never archived. Cached About results live in `.data/twitterapi/user-about-cache.json`.
 
 The default daily limit is 40 candidates across both segments. Change it with `AUTO_COLLECTION_DAILY_LIMIT`. A candidate needs a US-confidence score of at least 70 by default. Candidates without enough public location evidence remain in `location_review`; pet businesses, shelters, ads, and adoption listings are put in `rejected_targeting`.
 
@@ -60,7 +62,7 @@ The Apify implementation and `.data/apify/runs/` history remain intact as a dorm
 
 Collection calculates engagement, account quality, recency, occasion, ownership, and US evidence from the source Post. Image analysis then decides whether the pet photo is suitable for a pillow. A lead reaches `review` only after passing both targeting and image checks. Manual review can correct occasion, ownership, and US evidence.
 
-The dashboard records the audience segment on each lead and uses it in the default marketing campaign name, so `new_adoption` and `pet_birthday` can be compared through the existing payment attribution funnel.
+The dashboard records the audience segment on each lead and uses it in the default marketing campaign name, so the five scenes can be compared through the existing payment attribution funnel.
 
 ## Safety boundary
 
