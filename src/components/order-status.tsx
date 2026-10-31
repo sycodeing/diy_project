@@ -87,14 +87,14 @@ export function CustomerOrderStatus({
   const delivered = fulfillmentStatus === "delivered";
   const shipped = fulfillmentStatus === "shipped";
   const label = delivered
-    ? "已送达"
+    ? "Delivered"
     : shipped
-      ? "已发货"
+      ? "Shipped"
       : isPaid
-        ? "待发货"
+        ? "Preparing for shipment"
     : paymentStatus === "pending_payment"
-      ? "等待付款"
-      : "付款未完成";
+      ? "Awaiting payment"
+      : "Payment incomplete";
 
   return (
     <div className="rounded-lg border border-accent/50 bg-accent/10 p-4">
@@ -104,7 +104,7 @@ export function CustomerOrderStatus({
         </span>
         <div>
           <p className="text-xs font-black uppercase tracking-[0.14em] text-muted">
-            订单状态
+            Order status
           </p>
           <p className="mt-1 text-lg font-black text-foreground">{label}</p>
         </div>
@@ -112,10 +112,10 @@ export function CustomerOrderStatus({
       {isPaid ? (
         <p className="mt-3 text-sm text-muted">
           {delivered
-            ? "订单已送达，感谢您的购买。"
+            ? "Your order has been delivered. Thank you for your purchase."
             : shipped
-              ? "订单已发出，请留意物流更新。"
-              : "订单已确认，正在等待发货。"}
+              ? "Your order is on the way. Check back here for delivery updates."
+              : "Your order is confirmed and being prepared for shipment."}
         </p>
       ) : null}
     </div>

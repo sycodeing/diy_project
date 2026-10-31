@@ -128,7 +128,8 @@ export function AuthForm({
         </label>
 
         <p className="text-xs leading-5 text-muted">
-          登录状态会保存在此设备，最长 7 天；在公用设备上请记得退出登录。
+          Your sign-in is saved on this device for up to 7 days. Remember to
+          sign out when using a shared device.
         </p>
 
         {message ? (
