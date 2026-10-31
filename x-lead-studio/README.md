@@ -54,6 +54,8 @@ Geo-only `place_country:US` searches are disabled by default because geo-tagged 
 
 Every successful TwitterAPI.io response page is atomically archived under `.data/twitterapi/runs/<job-id>.json` before result-limit truncation, deduplication, photo checks, location targeting, or business/ad filtering. The archive also records the minimal About enrichment result and whether it came from cache or the API. The API key and request headers are never archived. Cached About results live in `.data/twitterapi/user-about-cache.json`.
 
+For historical rows whose account origin is still missing, run `backfill_twitterapi_locations.py` with the relevant X handles. It reuses the 30-day cache, rate-limits `user_about` calls, and reports an individual lookup error without discarding the rest of the batch. The script only returns location evidence; it does not update the candidate database or perform any X write action.
+
 The default daily limit is 40 candidates across both segments. Change it with `AUTO_COLLECTION_DAILY_LIMIT`. A candidate needs a US-confidence score of at least 70 by default. Candidates without enough public location evidence remain in `location_review`; pet businesses, shelters, ads, and adoption listings are put in `rejected_targeting`.
 
 The hosted admin queues use one shared discovery worker. Set the same `X_LEAD_WORKER_SECRET` on the website and in this worker's `.env`, then set `TWITTERAPI_API_KEY` locally. Jobs created at `/admin/x-lead-search` are claimed locally and written into the single `/admin/x-leads` candidate pool. Both manual and automatic sending select from that pool; neither sending mode runs its own search.

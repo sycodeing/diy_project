@@ -282,9 +282,11 @@ def detect_us_evidence(tweet: dict[str, Any], profile_location: str) -> tuple[in
     account_based_in_accurate = user.get("accountBasedInAccurate", user.get("account_based_in_accurate"))
     profile_result = _profile_location_evidence(profile_location)
     if account_based_in:
-        origin_us = account_based_in.casefold() in {
+        normalized_origin = account_based_in.casefold()
+        origin_us = normalized_origin in {
             "united states", "united states of america", "usa", "us", "u.s.", "u.s.a.",
         }
+        origin_is_ambiguous_region = normalized_origin in {"north america"}
         profile_is_us = profile_result[0] >= 70
         profile_is_non_us = profile_result[1] == "profile_location_non_us"
         if account_based_in_accurate is False:
@@ -299,6 +301,8 @@ def detect_us_evidence(tweet: dict[str, Any], profile_location: str) -> tuple[in
             return 25, "location_conflict:profile_us_account_non_us"
         if origin_us:
             return (96, "profile_and_account_based_in:US") if profile_is_us else (88, "account_based_in:US")
+        if origin_is_ambiguous_region:
+            return 25, f"account_based_in_region_ambiguous:{account_based_in[:40]}"
         return 0, f"account_based_in_non_us:{account_based_in[:40]}"
     return profile_result
 

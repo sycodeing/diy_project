@@ -64,6 +64,16 @@ def test_explicit_non_us_account_origin_is_rejected():
     assert candidate_status(targeting, True, 70) == "rejected_targeting"
 
 
+def test_ambiguous_account_origin_region_remains_location_review():
+    targeting = build_targeting(
+        tweet(user={"username": "maple_home", "location": "", "accountBasedIn": "North America"}),
+        "new_adoption",
+    )
+    assert targeting["us_confidence"] == 25
+    assert targeting["us_evidence"] == "account_based_in_region_ambiguous:North America"
+    assert candidate_status(targeting, True, 70) == "location_review"
+
+
 def test_inaccurate_account_origin_remains_location_review():
     targeting = build_targeting(
         tweet(user={
