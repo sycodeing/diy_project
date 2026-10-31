@@ -19,6 +19,7 @@ import {
 import {
   approveXAutoDraft,
   authorizeXDailySending,
+  createAndQueueXAutoJob,
   pauseXDailySending,
   rejectXAutoDraft,
   retryXAutoPreparation,
@@ -28,6 +29,7 @@ export const dynamic = "force-dynamic";
 
 const notices: Record<string, string> = {
   "draft-created": "自动发送草稿已创建，尚未批准，也不会发送。",
+  queued: "发送任务已确认并批准；到达计划时间后由绑定 Mac 自动发送。",
   "lead-added": "已从候选列表加入自动发送草稿，尚未批准，也不会发送。",
   approved: "已逐条批准；任务将在计划时间由本机执行。",
   "daily-authorized": "已确认今日首条效果；该账号今天的后续已批准任务可以自动发送。",
@@ -46,6 +48,20 @@ function formatShanghaiDate(value: string) {
     timeStyle: "short",
     timeZone: "Asia/Shanghai",
   }).format(new Date(value));
+}
+
+function defaultShanghaiSchedule() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(Date.now() + 2 * 60_000));
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}T${value.hour}:${value.minute}`;
 }
 
 export default async function XAutoPostsPage({ searchParams }: { searchParams: Promise<{ notice?: string }> }) {
@@ -69,6 +85,18 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
   const executorOnline = freshWorkers.length > 0;
   const accounts = (accountRows ?? []) as XReplyAccount[];
   const gates = new Map(((gateRows ?? []) as XReplyDailyGate[]).map((gate) => [gate.account_id, gate]));
+  const accountReadiness = new Map(accounts.map((account) => {
+    const worker = account.executor_id ? workerByExecutor.get(account.executor_id) : undefined;
+    let reason = "可发送";
+    if (!account.executor_id) reason = "未绑定执行器";
+    else if (!worker) reason = "执行器离线";
+    else if (worker.execution_mode !== "send") reason = "执行器为 observe";
+    else if (!worker.xuse_available) reason = "x-use 异常";
+    else if (!worker.configured_accounts.includes(account.account_key)) reason = "本地账号缺失";
+    else if (account.network_mode === "vpn_direct" && (!account.expected_egress_ip || worker.network_probe_status !== "healthy" || worker.current_egress_ip !== account.expected_egress_ip)) reason = "出口未匹配";
+    return [account.id, { ready: reason === "可发送", reason }] as const;
+  }));
+  const hasReadyAccount = [...accountReadiness.values()].some((value) => value.ready);
   const notice = filters.notice ? notices[filters.notice] : null;
 
   return (
@@ -86,8 +114,23 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
         </div>
         {notice ? <p className="mt-5 rounded-lg border border-line bg-panel p-3 text-sm font-bold">{notice}</p> : null}
         {jobsError ? <p className="mt-5 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{jobsError.message}</p> : null}
-        <p className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950"><strong>发送队列隔离，候选池共用。</strong>候选用户统一由“X 用户筛选”获取；进入自动队列后仍需逐条批准。`observe` 只上报状态，不能领取任务。</p>
+        <p className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950"><strong>发送队列隔离，候选池共用。</strong>你可以在下方直接确认一条最终内容，也可以从“X 用户筛选”把候选加入草稿后再逐条批准；`observe` 只上报状态，不能领取任务。</p>
         {legacySentCount ? <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950"><strong>历史已发送记录仍在：</strong>启用本机自动发送前，已有 {legacySentCount} 条人工发送历史。<Link className="ml-1 font-black underline" href="/admin/x-manual-posts">打开历史记录</Link></p> : null}
+
+        <section className="mt-6 rounded-xl border border-accent/40 bg-panel/90 p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-2xl font-black">创建自动发送任务</h2><p className="mt-1 text-sm leading-6 text-muted">选择账号并核对最终公开内容；点击一次即完成本条任务的人工确认和批准，计划时间到达后由 Mac 自动发送。</p></div><span className="rounded-md border border-line bg-white px-3 py-2 text-xs font-black">每次仅创建 1 条</span></div>
+          <form action={createAndQueueXAutoJob} className="mt-5 grid gap-4">
+            <div className="grid gap-4 md:grid-cols-3">
+              <label className="text-sm font-bold">X 账号<select className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3" defaultValue="" name="accountId" required><option disabled value="">请选择账号</option>{accounts.map((account) => { const readiness = accountReadiness.get(account.id); return <option disabled={!readiness?.ready} key={account.id} value={account.id}>{account.display_name} · {readiness?.reason ?? "不可用"}</option>; })}</select></label>
+              <label className="text-sm font-bold">发送类型<select className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3" defaultValue="post" name="actionType"><option value="post">发布新帖</option><option value="reply">回复指定帖子</option></select></label>
+              <label className="text-sm font-bold">计划时间（北京时间）<input className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3" defaultValue={defaultShanghaiSchedule()} name="scheduledFor" required type="datetime-local" /></label>
+            </div>
+            <label className="text-sm font-bold">目标帖子链接（仅回复时必填）<input className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3" name="targetPostUrl" placeholder="https://x.com/username/status/123..." type="url" /></label>
+            <label className="text-sm font-bold">最终发送内容<textarea className="focus-ring mt-2 min-h-32 w-full rounded-lg border border-line bg-white p-3 leading-6" maxLength={270} name="postText" placeholder="此处内容将原样公开发送，最多 270 个字符。" required /></label>
+            <label className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-bold leading-6 text-amber-950"><input className="mt-1 size-4" name="confirmed" required type="checkbox" value="confirmed" /><span>我已确认所选 X 账号、发送类型、目标链接、公开内容和计划时间；点击按钮后，本条任务无需再次批准。</span></label>
+            <div className="flex flex-wrap items-center gap-3"><FormSubmitButton className="focus-ring h-11 rounded-lg bg-accent px-5 text-sm font-black text-accent-ink disabled:cursor-not-allowed disabled:opacity-50" disabled={!hasReadyAccount} idleLabel="确认并加入自动发送" pendingLabel="正在校验并入队…" /><p className="text-xs text-muted">{hasReadyAccount ? "服务端会再次校验执行器、Cookie、出口 IP、每日上限与首条监督。" : "当前没有处于 send 模式且安全检查通过的账号。"}</p></div>
+          </form>
+        </section>
 
         <section className="mt-6 rounded-xl border border-line bg-panel/90 p-5">
           <h2 className="text-xl font-black">今日首条监督（北京时间）</h2>
