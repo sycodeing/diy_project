@@ -2,42 +2,43 @@
 
 Local acquisition workbench. It binds to `127.0.0.1:8020`, keeps discovery data in `.data/`, and can execute individually approved, scheduled X posts or replies through a separate local x-use data directory. It never uploads X cookies to the website or Supabase.
 
-## Setup
+## macOS setup
 
-```powershell
-cd D:\Coding\DiyProject\x-lead-studio
-..\mockup-renderer\.venv\Scripts\python.exe -m venv .venv
-.\.venv\Scripts\pip install -r requirements.txt
-Copy-Item .env.example .env
+```sh
+cd /Users/f/Documents/DiyProject/x-lead-studio
+/Users/f/.local/bin/python3.11 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m patchright install chromium
+cp .env.example .env
+./run.sh
 ```
 
-Load `.env` in your preferred secret manager or PowerShell session, then run `./run.ps1`. Open `http://127.0.0.1:8020`. The marketing secret must match the DIY site's `MARKETING_INGEST_SECRET`.
-
-The optional `install-startup-task.ps1` registers a hidden Windows logon task. Run it only after the workbench is configured and tested.
+The service binds only to `127.0.0.1:8020`. Keep `X_REPLY_EXECUTION_MODE=observe` until one specific task is explicitly authorized for a real test. Store `X_REPLY_WORKER_SECRET` locally with a password manager or encrypted file; do not paste it into chat or commit it. No launchd job is enabled during initial observe validation.
 
 ## Reviewed x-use automatic posts and replies
 
-Install and initialize the pinned x-use release:
+Install and check the pinned x-use release:
 
-```powershell
-cd D:\Coding\DiyProject\x-lead-studio
-.\.venv\Scripts\pip install -r requirements.txt
-.\.venv\Scripts\python -m patchright install chromium
-$env:X_USE_HOME = "$env:LOCALAPPDATA\x-use"
-.\.venv\Scripts\x-use init
-.\.venv\Scripts\x-use doctor
+```sh
+cd /Users/f/Documents/DiyProject/x-lead-studio
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m patchright install chromium
+export X_USE_HOME="/Users/f/Library/Application Support/x-use"
+.venv/bin/x-use init
+.venv/bin/x-use doctor
 ```
 
-Import only accounts you operate. Each x-use `account_id` must match the account key entered at `/admin/x-accounts`. Give each account a distinct positioning, audience, topic set and voice, then assign one fixed authenticated proxy URL. Each approved task receives a deterministic micro-variation based on its account and task ID, so previewed text remains unchanged after approval.
+Import only accounts you operate. Each x-use `account_id` must match the account key entered at `/admin/x-accounts`. Cookies and browser data remain under `X_USE_HOME` and are never included in worker heartbeats.
 
 Set the same dedicated `X_REPLY_WORKER_SECRET` on the website and in this worker's `.env`, then run `./run.ps1`. The workflow is:
 
 1. An administrator creates the exact post or reply draft and selects one account.
-2. The administrator approves that individual draft.
-3. At the planned time, the local worker applies that account's fixed proxy, tests the real egress IP, and asks the website to reject any IP already assigned to another account.
-4. Only after the route passes does x-use create its own pending draft (`post_tweet` or `reply_to_tweet`), verify the draft ID, and call `approve_draft` for that same approved text.
-5. `/admin/x-manual-posts` is a separate manual-only queue. It never reaches this worker and only records operator-confirmed results.
-6. The website records `sent`, `failed`, or `uncertain`. Claimed or uncertain writes are never automatically retried.
+2. The administrator approves that individual draft only after the bound executor, local account and network policy are healthy.
+3. `observe` mode reports x-use availability, configured account IDs and a cookie-free Patchright browser egress, but always receives HTTP 204 and never claims a task.
+4. In `send` mode, `vpn_direct` requires the live Patchright egress to match the administrator-locked VPN IP. `fixed_proxy` performs a read-only x-use `test_proxy` before the job is claimed. Neither mode can fall back to another route.
+5. Immediately before the write, the route is checked again. Only then may x-use create its own pending draft (`post_tweet` or `reply_to_tweet`), verify the draft ID, and call `approve_draft` for that same approved text.
+6. `/admin/x-manual-posts` is a separate manual-only queue. It never reaches this worker and only records operator-confirmed results.
+7. The website records `sent`, `failed`, or `uncertain`. Claimed or uncertain writes are never automatically retried.
 
 No server-side LLM key is required because the approved text is passed explicitly.
 
@@ -67,7 +68,7 @@ The dashboard records the audience segment on each lead and uses it in the defau
 - Only operator-owned accounts with locally imported cookies. Cookies stay under `X_USE_HOME`.
 - Discovery remains read-only. Public replies require exact-text, per-item administrator approval.
 - No DMs, unreviewed copy changes, batch cycles, proxy rotation, fingerprint spoofing, CAPTCHA handling, or challenge bypass.
-- Every automatic item still requires exact-text administrator approval. Accounts use fixed routes; a missing, duplicate, or failed route blocks sending instead of falling back to a direct connection.
+- Every automatic item still requires exact-text administrator approval. `vpn_direct` uses only the macOS system VPN; `fixed_proxy` uses one non-rotating route per account. A missing, duplicate, changed, or failed route blocks sending.
 - CAPTCHA, Cloudflare, authentication failure, or persistent throttling pauses collection.
 - Original images and mockups are removed after seven days. Anonymous statistics and suppression records remain.
 - Routine tests mock X and do not authenticate to X.

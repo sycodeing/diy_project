@@ -13,6 +13,7 @@ const accountKeySchema = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const shortText = z.string().trim().min(1).max(500);
 const idSchema = z.string().uuid();
 const copyStyleSchema = z.enum(["warm", "playful", "concise"]);
+const networkModeSchema = z.enum(["vpn_direct", "fixed_proxy"]);
 const countrySchema = z.string().trim().toUpperCase().regex(/^[A-Z]{2}$/);
 
 function serviceClient() {
@@ -39,8 +40,8 @@ function accountPayload(formData: FormData) {
     daily_limit: z.coerce.number().int().min(1).max(20).parse(formData.get("dailyLimit")),
     copy_style: copyStyleSchema.parse(String(formData.get("copyStyle") ?? "")),
     copy_variation_notes: z.string().trim().max(500).parse(String(formData.get("copyVariationNotes") ?? "")),
-    bitbrowser_window_id: z.string().trim().max(120).nullable().parse(String(formData.get("bitbrowserWindowId") ?? "").trim() || null),
-    bitbrowser_window_name: z.string().trim().max(120).parse(String(formData.get("bitbrowserWindowName") ?? "")),
+    executor_id: z.string().trim().min(1).max(120).parse(String(formData.get("executorId") ?? "")),
+    network_mode: networkModeSchema.parse(String(formData.get("networkMode") ?? "")),
     require_daily_first_confirmation: String(formData.get("requireDailyFirstConfirmation") ?? "") === "true",
     active: String(formData.get("active") ?? "") === "true",
   };
@@ -62,20 +63,26 @@ function proxyPayload(proxyUrl: string, formData: FormData) {
 export async function createXAccount(formData: FormData) {
   const user = await requireAdmin(PAGE_PATH);
   const supabase = serviceClient();
-  const proxyUrl = z.string().trim().min(1).max(2048).parse(String(formData.get("proxyUrl") ?? ""));
+  const payload = accountPayload(formData);
+  const proxyValue = String(formData.get("proxyUrl") ?? "").trim();
+  const proxyUrl = payload.network_mode === "fixed_proxy"
+    ? z.string().min(1).max(2048).parse(proxyValue)
+    : null;
   const { data: account, error } = await supabase.from("x_reply_accounts").insert({
-    ...accountPayload(formData),
+    ...payload,
     created_by: user.id,
   }).select("id").single();
   if (error || !account) throw new Error(error?.code === "23505" ? "该 x-use 账号标识已经存在。" : error?.message ?? "账号创建失败。");
 
-  const { error: proxyError } = await supabase.from("x_reply_account_proxies").insert({
-    account_id: account.id,
-    ...proxyPayload(proxyUrl, formData),
-  });
-  if (proxyError) {
-    await supabase.from("x_reply_accounts").delete().eq("id", account.id);
-    throw new Error(proxyError.message);
+  if (proxyUrl) {
+    const { error: proxyError } = await supabase.from("x_reply_account_proxies").insert({
+      account_id: account.id,
+      ...proxyPayload(proxyUrl, formData),
+    });
+    if (proxyError) {
+      await supabase.from("x_reply_accounts").delete().eq("id", account.id);
+      throw new Error(proxyError.message);
+    }
   }
   revalidatePath(PAGE_PATH);
   revalidatePath("/admin/x-auto-posts");
@@ -86,21 +93,28 @@ export async function updateXAccount(formData: FormData) {
   await requireAdmin(PAGE_PATH);
   const supabase = serviceClient();
   const accountId = idSchema.parse(String(formData.get("accountId") ?? ""));
+  const payload = accountPayload(formData);
+  const proxyUrl = String(formData.get("proxyUrl") ?? "").trim();
+  const { data: existingProxy, error: existingProxyError } = await supabase.from("x_reply_account_proxies")
+    .select("account_id").eq("account_id", accountId).maybeSingle();
+  if (existingProxyError) throw new Error(existingProxyError.message);
+  if (payload.network_mode === "fixed_proxy" && !proxyUrl && !existingProxy) {
+    throw new Error("固定代理模式必须配置一个非轮换代理 URL。");
+  }
   const { data: updated, error } = await supabase.from("x_reply_accounts")
-    .update(accountPayload(formData))
+    .update(payload)
     .eq("id", accountId)
     .select("id")
     .maybeSingle();
   if (error || !updated) throw new Error(error?.message ?? "账号不存在或状态已经变化。");
 
-  const proxyUrl = String(formData.get("proxyUrl") ?? "").trim();
   if (proxyUrl) {
     const { error: proxyError } = await supabase.from("x_reply_account_proxies").upsert({
       account_id: accountId,
       ...proxyPayload(proxyUrl, formData),
     }, { onConflict: "account_id" });
     if (proxyError) throw new Error(proxyError.message);
-  } else {
+  } else if (payload.network_mode === "fixed_proxy" && existingProxy) {
     const { error: proxyMetaError } = await supabase.from("x_reply_account_proxies").update({
       expected_country: countrySchema.parse(String(formData.get("expectedCountry") ?? "US")),
       expected_region: z.string().trim().max(100).parse(String(formData.get("expectedRegion") ?? "")),
@@ -110,6 +124,38 @@ export async function updateXAccount(formData: FormData) {
   revalidatePath(PAGE_PATH);
   revalidatePath("/admin/x-auto-posts");
   redirect(`${PAGE_PATH}?notice=updated`);
+}
+
+export async function lockCurrentVpnEgress(formData: FormData) {
+  await requireAdmin(PAGE_PATH);
+  const supabase = serviceClient();
+  const accountId = idSchema.parse(String(formData.get("accountId") ?? ""));
+  const { data: account, error: accountError } = await supabase.from("x_reply_accounts")
+    .select("id,executor_id,network_mode")
+    .eq("id", accountId)
+    .maybeSingle();
+  if (accountError || !account) throw new Error(accountError?.message ?? "账号不存在。");
+  if (account.network_mode !== "vpn_direct") throw new Error("只有 VPN 直连模式可以锁定执行器出口。");
+  if (!account.executor_id) throw new Error("请先绑定执行器。");
+  const { data: worker, error: workerError } = await supabase.from("x_reply_workers")
+    .select("current_egress_ip,network_probe_status,last_seen_at")
+    .eq("executor_id", account.executor_id)
+    .gte("last_seen_at", new Date(Date.now() - 5 * 60_000).toISOString())
+    .maybeSingle();
+  if (workerError || !worker) throw new Error(workerError?.message ?? "绑定执行器最近五分钟没有心跳。");
+  if (worker.network_probe_status !== "healthy" || !worker.current_egress_ip) {
+    throw new Error("Patchright 浏览器尚未报告可确认的 VPN 出口 IP。");
+  }
+  const { data: updated, error } = await supabase.from("x_reply_accounts")
+    .update({ expected_egress_ip: worker.current_egress_ip })
+    .eq("id", accountId)
+    .eq("network_mode", "vpn_direct")
+    .select("id")
+    .maybeSingle();
+  if (error || !updated) throw new Error(error?.message ?? "出口 IP 锁定失败，请刷新后重试。");
+  revalidatePath(PAGE_PATH);
+  revalidatePath("/admin/x-auto-posts");
+  redirect(`${PAGE_PATH}?notice=vpn-locked`);
 }
 
 export async function deleteXAccount(formData: FormData) {

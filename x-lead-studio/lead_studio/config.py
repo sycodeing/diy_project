@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -27,7 +28,16 @@ def _default_x_use_home() -> Path:
     if configured:
         return Path(configured)
     local_app_data = os.getenv("LOCALAPPDATA", "").strip()
-    return Path(local_app_data) / "x-use" if local_app_data else DATA_DIR / "x-use"
+    if local_app_data:
+        return Path(local_app_data) / "x-use"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "x-use"
+    return DATA_DIR / "x-use"
+
+
+def _execution_mode() -> str:
+    value = os.getenv("X_REPLY_EXECUTION_MODE", "observe").strip().lower()
+    return value if value in {"observe", "send"} else "observe"
 
 
 @dataclass(frozen=True)
@@ -64,7 +74,10 @@ class Settings:
     x_reply_worker_enabled: bool = os.getenv("X_REPLY_WORKER_ENABLED", "true").lower() == "true"
     x_reply_worker_secret: str = os.getenv("X_REPLY_WORKER_SECRET", "")
     x_reply_worker_poll_seconds: int = max(10, min(300, int(os.getenv("X_REPLY_WORKER_POLL_SECONDS", "15"))))
-    bitbrowser_api_url: str = os.getenv("BITBROWSER_API_URL", "http://127.0.0.1:54345").rstrip("/")
+    x_reply_executor_id: str = os.getenv("X_REPLY_EXECUTOR_ID", "macbook-x-01").strip()[:120] or "macbook-x-01"
+    x_reply_execution_mode: str = field(default_factory=_execution_mode)
+    x_reply_device_label: str = os.getenv("X_REPLY_DEVICE_LABEL", "").strip()[:120]
+    x_reply_ip_check_url: str = os.getenv("X_REPLY_IP_CHECK_URL", "https://api.ipify.org?format=json").strip()
     x_use_home: Path = field(default_factory=_default_x_use_home)
 
 

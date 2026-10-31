@@ -7,7 +7,7 @@ import { isAuthorizedXReplyWorker } from "@/lib/x-reply-worker-auth";
 export const runtime = "nodejs";
 
 const requestSchema = z.object({
-  workerId: z.string().trim().min(1).max(120),
+  executorId: z.string().trim().min(1).max(120),
   status: z.enum(["sent", "failed", "uncertain"]),
   xUseDraftId: z.string().trim().max(120).nullable().optional(),
   actionId: z.string().trim().max(160).nullable().optional(),
@@ -15,6 +15,10 @@ const requestSchema = z.object({
   errorCode: z.string().trim().max(100).nullable().optional(),
   errorMessage: z.string().trim().max(1000).nullable().optional(),
   egressIp: z.string().trim().max(64).refine((value) => isIP(value) !== 0).nullable().optional(),
+}).superRefine((value, context) => {
+  if (value.status === "sent" && !value.egressIp) {
+    context.addIssue({ code: "custom", path: ["egressIp"], message: "A sent result requires a browser egress IP." });
+  }
 });
 
 export async function POST(request: Request, context: RouteContext<"/api/x-replies/worker/jobs/[id]/complete">) {
@@ -26,12 +30,17 @@ export async function POST(request: Request, context: RouteContext<"/api/x-repli
   if (!supabase) return NextResponse.json({ error: "Supabase is not configured." }, { status: 503 });
 
   const { data: job, error: readError } = await supabase.from("x_reply_jobs")
-    .select("id,status,worker_id,account_id")
+    .select("id,status,worker_id,account_id,x_reply_accounts!inner(network_mode,expected_egress_ip)")
     .eq("id", id)
     .maybeSingle();
   if (readError || !job) return NextResponse.json({ error: readError?.message ?? "Job not found." }, { status: 404 });
-  if (job.status !== "claimed" || job.worker_id !== parsed.data.workerId) {
+  if (job.status !== "claimed" || job.worker_id !== parsed.data.executorId) {
     return NextResponse.json({ error: "Job is not owned by this worker." }, { status: 409 });
+  }
+  const account = Array.isArray(job.x_reply_accounts) ? job.x_reply_accounts[0] : job.x_reply_accounts;
+  if (parsed.data.status === "sent" && account?.network_mode === "vpn_direct"
+    && String(account.expected_egress_ip ?? "") !== parsed.data.egressIp) {
+    return NextResponse.json({ error: "The final VPN egress does not match the administrator-locked IP." }, { status: 409 });
   }
 
   const completedAt = new Date().toISOString();
@@ -42,11 +51,12 @@ export async function POST(request: Request, context: RouteContext<"/api/x-repli
     result_url: parsed.data.resultUrl ?? null,
     error_code: parsed.data.errorCode ?? null,
     error_message: parsed.data.errorMessage ?? null,
+    egress_ip: parsed.data.egressIp ?? null,
     completed_at: completedAt,
-  }).eq("id", id).eq("status", "claimed").eq("worker_id", parsed.data.workerId);
+  }).eq("id", id).eq("status", "claimed").eq("worker_id", parsed.data.executorId);
   if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 });
 
-  if (!parsed.data.egressIp) {
+  if (account?.network_mode === "fixed_proxy" && !parsed.data.egressIp) {
     await supabase.from("x_reply_account_proxies").update({
       status: "error",
       egress_ip: null,
@@ -71,6 +81,8 @@ export async function POST(request: Request, context: RouteContext<"/api/x-repli
     current_job_id: null,
     last_error: parsed.data.errorMessage ?? null,
     last_seen_at: completedAt,
-  }).eq("worker_id", parsed.data.workerId);
+    current_egress_ip: parsed.data.egressIp ?? null,
+    network_probe_status: parsed.data.egressIp ? "healthy" : "error",
+  }).eq("executor_id", parsed.data.executorId);
   return NextResponse.json({ ok: true });
 }

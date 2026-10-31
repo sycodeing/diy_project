@@ -7,7 +7,7 @@ import { isAuthorizedXReplyWorker } from "@/lib/x-reply-worker-auth";
 export const runtime = "nodejs";
 
 const requestSchema = z.object({
-  workerId: z.string().trim().min(1).max(120),
+  executorId: z.string().trim().min(1).max(120),
   jobId: z.string().uuid(),
   accountKey: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
   egressIp: z.string().trim().max(64).refine((value) => isIP(value) !== 0),
@@ -21,15 +21,37 @@ export async function POST(request: Request) {
   if (!supabase) return NextResponse.json({ error: "Supabase is not configured." }, { status: 503 });
 
   const { data: job, error: jobError } = await supabase.from("x_reply_jobs")
-    .select("id,status,worker_id,account_id,x_reply_accounts!inner(account_key)")
+    .select("id,status,worker_id,account_id,x_reply_accounts!inner(account_key,executor_id,network_mode,expected_egress_ip)")
     .eq("id", parsed.data.jobId)
     .maybeSingle();
   const account = job && (Array.isArray(job.x_reply_accounts) ? job.x_reply_accounts[0] : job.x_reply_accounts);
-  if (jobError || !job || job.status !== "claimed" || job.worker_id !== parsed.data.workerId || account?.account_key !== parsed.data.accountKey) {
+  if (jobError || !job || job.status !== "claimed" || job.worker_id !== parsed.data.executorId
+    || account?.account_key !== parsed.data.accountKey || account.executor_id !== parsed.data.executorId) {
     return NextResponse.json({ error: "The claimed job does not belong to this worker and account." }, { status: 409 });
   }
 
   const testedAt = new Date().toISOString();
+  if (account.network_mode === "vpn_direct") {
+    if (!account.expected_egress_ip || String(account.expected_egress_ip) !== parsed.data.egressIp) {
+      await supabase.from("x_reply_workers").update({
+        current_egress_ip: parsed.data.egressIp,
+        network_probe_status: "mismatch",
+        last_error: "Patchright 浏览器出口与管理员锁定的 VPN IP 不一致。",
+        last_seen_at: testedAt,
+      }).eq("executor_id", parsed.data.executorId);
+      return NextResponse.json({ error: "The Patchright browser egress does not match the administrator-locked VPN IP." }, { status: 409 });
+    }
+    await supabase.from("x_reply_workers").update({
+      current_egress_ip: parsed.data.egressIp,
+      network_probe_status: "healthy",
+      last_error: null,
+      last_seen_at: testedAt,
+    }).eq("executor_id", parsed.data.executorId);
+    return NextResponse.json({ ok: true });
+  }
+  if (account.network_mode !== "fixed_proxy") {
+    return NextResponse.json({ error: "The account network mode is invalid." }, { status: 409 });
+  }
   const { data: updated, error } = await supabase.from("x_reply_account_proxies").update({
     status: "healthy",
     egress_ip: parsed.data.egressIp,

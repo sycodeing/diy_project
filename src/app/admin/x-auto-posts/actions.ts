@@ -7,6 +7,7 @@ import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
 import { prepareXLeadQueueTask } from "@/lib/x-lead-materials";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getXApprovalBlockReason } from "@/lib/x-reply-safety";
 
 const PAGE_PATH = "/admin/x-auto-posts";
 const idSchema = z.string().uuid();
@@ -78,27 +79,36 @@ export async function approveXAutoDraft(formData: FormData) {
   const jobId = idSchema.parse(String(formData.get("jobId") ?? ""));
   const { data: job, error } = await supabase
     .from("x_reply_jobs")
-    .select("id,status,account_id,scheduled_for,preparation_status,x_reply_accounts!inner(account_key,positioning,daily_limit,active,bitbrowser_window_id,x_reply_account_proxies(account_id,status))")
+    .select("id,status,account_id,scheduled_for,preparation_status,x_reply_accounts!inner(account_key,positioning,daily_limit,active,executor_id,network_mode,expected_egress_ip,x_reply_account_proxies(account_id,status))")
     .eq("id", jobId)
     .maybeSingle();
   if (error || !job) throw new Error(error?.message ?? "自动发送草稿不存在。");
-  if (job.status !== "draft") throw new Error("该任务已经处理，不能重复批准。");
-  if (job.preparation_status !== "ready") throw new Error("预览图、链接和文案尚未准备完成，暂不能批准发送。");
   const account = Array.isArray(job.x_reply_accounts) ? job.x_reply_accounts[0] : job.x_reply_accounts;
-  if (!account?.active) throw new Error("该账号已停用。");
-  if (!account.bitbrowser_window_id) throw new Error("该账号尚未绑定比特浏览器窗口。");
-  const proxy = Array.isArray(account.x_reply_account_proxies) ? account.x_reply_account_proxies[0] : account.x_reply_account_proxies;
-  if (!proxy) throw new Error("该账号尚未配置固定代理，请先到 X 账号/IP 页面设置。");
-  if (proxy.status === "error") throw new Error("该账号的固定代理处于异常状态，请更换或重新保存后再批准。");
+  const proxyRelation = account?.x_reply_account_proxies;
+  const proxy = Array.isArray(proxyRelation) ? proxyRelation[0] : proxyRelation;
+  if (!account?.executor_id) throw new Error(getXApprovalBlockReason({
+    jobStatus: job.status,
+    preparationStatus: job.preparation_status,
+    account: account ? { active: account.active, accountKey: account.account_key, executorId: account.executor_id, networkMode: account.network_mode, expectedEgressIp: account.expected_egress_ip, proxyStatus: proxy?.status ?? null } : null,
+    worker: null,
+    nowMillis: Date.now(),
+  }) ?? "账号配置无效。");
 
-  const { data: workers } = await supabase
+  const { data: worker, error: workerError } = await supabase
     .from("x_reply_workers")
-    .select("bitbrowser_windows,last_seen_at,bitbrowser_available")
-    .eq("bitbrowser_available", true)
-    .gte("last_seen_at", new Date(Date.now() - 5 * 60_000).toISOString());
-  const locallyConfigured = (workers ?? []).some((worker) => Array.isArray(worker.bitbrowser_windows)
-    && worker.bitbrowser_windows.some((window) => window && typeof window === "object" && "id" in window && window.id === account.bitbrowser_window_id));
-  if (!locallyConfigured) throw new Error(`本机比特浏览器尚未报告窗口 ${account.bitbrowser_window_id}，请确认客户端和 Worker 都已启动。`);
+    .select("execution_mode,xuse_available,configured_accounts,current_egress_ip,network_probe_status,last_seen_at")
+    .eq("executor_id", account.executor_id)
+    .gte("last_seen_at", new Date(Date.now() - 5 * 60_000).toISOString())
+    .maybeSingle();
+  if (workerError) throw new Error(workerError.message);
+  const safetyError = getXApprovalBlockReason({
+    jobStatus: job.status,
+    preparationStatus: job.preparation_status,
+    account: { active: account.active, accountKey: account.account_key, executorId: account.executor_id, networkMode: account.network_mode, expectedEgressIp: account.expected_egress_ip, proxyStatus: proxy?.status ?? null },
+    worker: worker ? { lastSeenAt: worker.last_seen_at, xuseAvailable: worker.xuse_available, configuredAccounts: Array.isArray(worker.configured_accounts) ? worker.configured_accounts : [], currentEgressIp: worker.current_egress_ip, networkProbeStatus: worker.network_probe_status } : null,
+    nowMillis: Date.now(),
+  });
+  if (safetyError) throw new Error(safetyError);
 
   const range = shanghaiDayRange(new Date(job.scheduled_for));
   const { count, error: countError } = await supabase

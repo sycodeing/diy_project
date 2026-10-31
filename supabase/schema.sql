@@ -854,6 +854,10 @@ create table if not exists public.x_reply_accounts (
     check (length(copy_variation_notes) <= 500),
   bitbrowser_window_id text,
   bitbrowser_window_name text not null default '',
+  executor_id text check (executor_id is null or length(executor_id) between 1 and 120),
+  network_mode text not null default 'vpn_direct'
+    check (network_mode in ('vpn_direct', 'fixed_proxy')),
+  expected_egress_ip inet,
   require_daily_first_confirmation boolean not null default true,
   active boolean not null default true,
   created_by uuid references auth.users(id) on delete set null,
@@ -899,6 +903,7 @@ create table if not exists public.x_reply_jobs (
   result_url text,
   error_code text,
   error_message text,
+  egress_ip inet,
   attempt_count integer not null default 0 check (attempt_count between 0 and 1),
   claimed_at timestamptz,
   completed_at timestamptz,
@@ -958,6 +963,13 @@ create table if not exists public.x_reply_workers (
   bitbrowser_available boolean not null default false,
   bitbrowser_version text,
   bitbrowser_windows jsonb not null default '[]'::jsonb,
+  executor_id text check (executor_id is null or length(executor_id) between 1 and 120),
+  execution_mode text not null default 'observe'
+    check (execution_mode in ('observe', 'send')),
+  device_label text,
+  current_egress_ip inet,
+  network_probe_status text not null default 'unknown'
+    check (network_probe_status in ('unknown', 'healthy', 'mismatch', 'error')),
   current_job_id uuid references public.x_reply_jobs(id) on delete set null,
   worker_version text,
   last_error text,
@@ -992,6 +1004,9 @@ create index if not exists x_reply_accounts_created_by_idx
 create unique index if not exists x_reply_accounts_bitbrowser_window_id_unique
   on public.x_reply_accounts (bitbrowser_window_id)
   where bitbrowser_window_id is not null;
+create index if not exists x_reply_accounts_executor_active_idx
+  on public.x_reply_accounts (executor_id, id)
+  where active = true and executor_id is not null;
 create index if not exists x_reply_account_proxies_status_idx
   on public.x_reply_account_proxies (status, last_tested_at desc);
 create unique index if not exists x_reply_account_proxies_unique_egress_idx
@@ -1002,6 +1017,8 @@ create index if not exists x_reply_jobs_created_by_idx
   on public.x_reply_jobs (created_by) where created_by is not null;
 create index if not exists x_reply_workers_current_job_id_idx
   on public.x_reply_workers (current_job_id) where current_job_id is not null;
+create unique index if not exists x_reply_workers_executor_id_unique
+  on public.x_reply_workers (executor_id) where executor_id is not null;
 create index if not exists x_reply_daily_gates_date_status_idx
   on public.x_reply_daily_gates (gate_date, status);
 create index if not exists x_reply_daily_gates_first_job_id_idx
@@ -1044,6 +1061,18 @@ comment on column public.x_reply_accounts.copy_variation_notes is
   'Operator guidance for the account voice; never interpreted as permission to auto-send.';
 comment on column public.x_reply_accounts.bitbrowser_window_id is
   'BitBrowser local API browser environment id. One X account must map to exactly one environment.';
+comment on column public.x_reply_accounts.executor_id is
+  'Stable local executor binding. A worker cannot claim jobs for accounts bound to another executor.';
+comment on column public.x_reply_accounts.network_mode is
+  'Network policy: vpn_direct uses the macOS system VPN; fixed_proxy uses one non-rotating per-account proxy.';
+comment on column public.x_reply_accounts.expected_egress_ip is
+  'Administrator-confirmed VPN egress. Worker observations never replace this value automatically.';
+comment on column public.x_reply_workers.execution_mode is
+  'Fail-closed local mode. observe only reports health; send is required before any job can be claimed.';
+comment on column public.x_reply_workers.current_egress_ip is
+  'Cookie-free Patchright browser egress observation. Never sourced from a plain HTTP client.';
+comment on column public.x_reply_jobs.egress_ip is
+  'Browser route observed immediately before the single X write attempt.';
 comment on table public.x_reply_daily_gates is
   'Daily first-post supervision gate in Asia/Shanghai. The first successful send waits for an admin release before later jobs can run.';
 comment on table public.x_reply_account_proxies is

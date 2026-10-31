@@ -43,6 +43,9 @@ export type XReplyAccount = {
   copy_variation_notes: string;
   bitbrowser_window_id: string | null;
   bitbrowser_window_name: string;
+  executor_id: string | null;
+  network_mode: "vpn_direct" | "fixed_proxy";
+  expected_egress_ip: string | null;
   require_daily_first_confirmation: boolean;
   active: boolean;
   created_at: string;
@@ -76,6 +79,7 @@ export type XReplyJob = {
   result_url: string | null;
   error_code: string | null;
   error_message: string | null;
+  egress_ip: string | null;
   approved_at: string | null;
   claimed_at: string | null;
   completed_at: string | null;
@@ -130,12 +134,17 @@ export function sortXManualPosts(posts: XManualPost[]) {
 
 export type XReplyWorker = {
   worker_id: string;
+  executor_id: string | null;
+  execution_mode: "observe" | "send";
+  device_label: string | null;
   status: string;
   xuse_available: boolean;
   bitbrowser_available: boolean;
   bitbrowser_version: string | null;
   bitbrowser_windows: Array<{ id: string; name: string; seq: number | null; status: number | null }>;
   configured_accounts: string[];
+  current_egress_ip: string | null;
+  network_probe_status: "unknown" | "healthy" | "mismatch" | "error";
   worker_version: string | null;
   last_error: string | null;
   last_seen_at: string;
