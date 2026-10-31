@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { getAppUrl, getMarketingIngestSecret } from "@/lib/env";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
-import { createXLeadDrafts, type XLeadCopyProfile } from "@/lib/x-lead-copy";
+import { createXLeadDrafts, getXLeadShortCopyVariant, type XLeadCopyProfile } from "@/lib/x-lead-copy";
 import { getXLeadTargetingChecks, type XLeadRow } from "@/lib/x-lead";
 
 type QueueKind = "manual" | "automatic";
@@ -41,7 +41,7 @@ export async function ensureXLeadMarketingAssets(
   const dateKey = new Date().toISOString().slice(0, 10).replaceAll("-", "");
   const campaign = `x_${lead.segment}_${dateKey}`;
   const channel = "direct_message";
-  const variant = "admin_preview_v2_product_offer";
+  const variant = getXLeadShortCopyVariant(lead.post_id);
   const sourceHash = createHmac("sha256", secret).update(`x-post:${lead.post_id}`).digest("hex");
   const linkCycle = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));
   const material = `${lead.post_id}\n${campaign}\n${channel}\n${variant}\n${linkCycle}`;
@@ -102,7 +102,10 @@ export async function ensureXLeadMarketingAssets(
     occasionConfidence: lead.occasion_confidence,
     petType: lead.pet_type,
     targetingData: lead.targeting_data,
-  }, result.url, copyProfile);
+  }, result.url, copyProfile, variant);
+  if (drafts.variantKey !== variant) {
+    throw new Error("营销文案实验版本与归因版本不一致。");
+  }
   if (!drafts.publicCopy.includes(result.url)) {
     throw new Error("营销文案未包含专属跳转链接。");
   }

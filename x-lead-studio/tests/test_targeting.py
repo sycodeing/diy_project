@@ -78,7 +78,7 @@ def test_business_account_is_rejected_before_image_analysis():
     assert candidate_status(targeting, True, 70) == "rejected_targeting"
 
 
-def test_ownership_and_occasion_are_manual_evidence_not_hard_filters():
+def test_weak_ownership_and_scene_evidence_wait_for_targeting_review():
     targeting = build_targeting(
         tweet(rawContent="A wonderful dog photo", user={
             "username": "dog_photo",
@@ -89,7 +89,34 @@ def test_ownership_and_occasion_are_manual_evidence_not_hard_filters():
     )
     assert targeting["ownership_confidence"] == 0
     assert targeting["occasion_confidence"] == 35
-    assert candidate_status(targeting, True, 70) == "new"
+    assert candidate_status(targeting, True, 70) == "targeting_review"
+
+
+def test_expanded_pet_scenes_are_detected_with_owner_evidence():
+    cases = [
+        ("pet_adventure", "Hiking with my dog was the best part of the weekend", "dog"),
+        ("pet_costume", "My cat dressed up for Halloween", "cat"),
+        ("pet_portrait", "This is my favorite photo of my dog", "dog"),
+    ]
+
+    for segment, text, pet_type in cases:
+        targeting = build_targeting(tweet(
+            rawContent=text,
+            user={"username": "pet_owner", "rawDescription": "Proud pet parent", "location": "Austin, TX"},
+        ), segment)
+        assert targeting["occasion"] == segment
+        assert targeting["occasion_confidence"] >= 82
+        assert targeting["ownership_confidence"] >= 88
+        assert targeting["pet_type"] == pet_type
+        assert candidate_status(targeting, True, 70) == "new"
+
+
+def test_existing_queries_now_produce_strong_scene_evidence():
+    adoption = build_targeting(tweet(rawContent="Our new puppy is finally home"), "new_adoption")
+    birthday = build_targeting(tweet(rawContent="It is my dog's birthday today"), "pet_birthday")
+
+    assert adoption["occasion_confidence"] >= 82
+    assert birthday["occasion_confidence"] >= 82
 
 
 def test_targeting_keeps_matching_phrases_as_review_evidence():

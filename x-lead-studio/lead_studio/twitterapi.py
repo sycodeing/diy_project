@@ -45,6 +45,7 @@ class CollectionMetrics:
     candidate_posts: int = 0
     new_status: int = 0
     location_review_status: int = 0
+    targeting_review_status: int = 0
     rejected_targeting_status: int = 0
     reallocated_broad_limit: int = 0
     query_modes: dict[str, int] = field(default_factory=lambda: {"us": 0, "broad": 0})
@@ -64,6 +65,7 @@ class CollectionMetrics:
             "candidate_posts": self.candidate_posts,
             "new_status": self.new_status,
             "location_review_status": self.location_review_status,
+            "targeting_review_status": self.targeting_review_status,
             "rejected_targeting_status": self.rejected_targeting_status,
             "reallocated_broad_limit": self.reallocated_broad_limit,
             "query_modes": self.query_modes,
@@ -212,6 +214,8 @@ async def collect_twitterapi_search(
             metrics.new_status += 1
         elif status == "location_review":
             metrics.location_review_status += 1
+        elif status == "targeting_review":
+            metrics.targeting_review_status += 1
         elif status == "rejected_targeting":
             metrics.rejected_targeting_status += 1
     archive["status"] = "completed"

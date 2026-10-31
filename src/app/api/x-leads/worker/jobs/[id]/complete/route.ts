@@ -7,6 +7,7 @@ import {
   filterXLeadDiscoveryCandidates,
   type ExistingXLeadDiscoveryRow,
 } from "@/lib/x-lead-discovery-upsert";
+import { X_LEAD_DISCOVERY_SEGMENTS } from "@/lib/x-lead";
 
 export const runtime = "nodejs";
 
@@ -18,7 +19,7 @@ const candidateSchema = z.object({
   mediaUrl: z.url().max(2048).refine((value) => value.startsWith("https://")),
   postedAt: z.string().datetime({ offset: true }).nullable().optional(),
   selectionStatus: z.enum(["new", "location_review", "targeting_review", "rejected_targeting"]),
-  segment: z.enum(["new_adoption", "pet_birthday", "custom"]),
+  segment: z.enum(X_LEAD_DISCOVERY_SEGMENTS),
   petType: z.enum(["cat", "dog"]),
   occasion: z.string().max(60).nullable().optional(),
   occasionConfidence: z.number().int().min(0).max(100).nullable().optional(),

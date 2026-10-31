@@ -39,6 +39,40 @@ SEARCH_SEGMENTS = (
             'filter:images -filter:replies lang:en'
         ),
     ),
+    SearchSegment(
+        key="pet_adventure",
+        label="Pet adventure / outdoors",
+        query=(
+            '("hiking with my dog" OR "hiking with my cat" OR "beach day with my dog" '
+            'OR "beach day with my cat" OR "road trip with my dog" OR "road trip with my cat" '
+            'OR "camping with my dog" OR "camping with my cat" OR "adventure with my dog" '
+            'OR "adventure with my cat" OR "hiking with our dog" OR "hiking with our cat") '
+            'filter:images -filter:replies lang:en'
+        ),
+    ),
+    SearchSegment(
+        key="pet_costume",
+        label="Pet costume / holiday outfit",
+        query=(
+            '("my dog in costume" OR "my cat in costume" OR "our dog in costume" '
+            'OR "our cat in costume" OR "my dog dressed up" OR "my cat dressed up" '
+            'OR "our dog dressed up" OR "our cat dressed up" OR "my dog halloween costume" '
+            'OR "my cat halloween costume" OR "my dog holiday outfit" OR "my cat holiday outfit") '
+            'filter:images -filter:replies lang:en'
+        ),
+    ),
+    SearchSegment(
+        key="pet_portrait",
+        label="Pet portrait / proud moment",
+        query=(
+            '("favorite photo of my dog" OR "favorite photo of my cat" '
+            'OR "best photo of my dog" OR "best photo of my cat" '
+            'OR "my handsome dog" OR "my handsome cat" OR "my beautiful dog" '
+            'OR "my beautiful cat" OR "my photogenic dog" OR "my photogenic cat" '
+            'OR "look at my dog" OR "look at my cat") '
+            'filter:images -filter:replies lang:en'
+        ),
+    ),
 )
 
 
@@ -74,11 +108,37 @@ NON_US_COUNTRY_TERMS = {
 ADOPTION_TERMS = (
     "gotcha day", "adoption anniversary", "adopted today", "we adopted", "i adopted",
     "just adopted", "welcome home", "foster fail", "new family member", "meet our", "meet my",
+    "my new dog", "my new cat", "my new puppy", "my new kitten", "our new dog",
+    "our new cat", "our new puppy", "our new kitten",
 )
 BIRTHDAY_TERMS = (
     "happy birthday", "birthday boy", "birthday girl", "barkday", "birthday pup",
     "birthday kitty", "turns one", "turned one", "first birthday", "1st birthday",
+    "my dog's birthday", "my dog birthday", "my cat's birthday", "my cat birthday",
+    "our dog's birthday", "our dog birthday", "our cat's birthday", "our cat birthday",
 )
+ADVENTURE_TERMS = (
+    "hiking with my", "hiking with our", "beach day with my", "beach day with our",
+    "road trip with my", "road trip with our", "camping with my", "camping with our",
+    "adventure with my", "adventure with our",
+)
+COSTUME_TERMS = (
+    "in costume", "dressed up", "halloween costume", "holiday outfit", "christmas outfit",
+)
+PORTRAIT_TERMS = (
+    "favorite photo of my", "favorite photo of our", "best photo of my", "best photo of our",
+    "my handsome", "our handsome", "my beautiful", "our beautiful", "my photogenic",
+    "our photogenic", "look at my", "look at our",
+)
+SCENE_TERMS = {
+    "new_adoption": ADOPTION_TERMS,
+    "pet_birthday": BIRTHDAY_TERMS,
+    "pet_adventure": ADVENTURE_TERMS,
+    "pet_costume": COSTUME_TERMS,
+    "pet_portrait": PORTRAIT_TERMS,
+}
+MIN_OWNERSHIP_CONFIDENCE = 70
+MIN_SCENE_CONFIDENCE = 70
 OWNERSHIP_PATTERNS = (
     r"\b(?:my|our)\s+(?:dog|cat|puppy|kitten|pup|kitty|pet)\b",
     r"\b(?:we|i)\s+(?:just\s+)?adopted\b",
@@ -146,13 +206,22 @@ def build_targeting(tweet: dict[str, Any], source_segment: str) -> dict[str, Any
 
 def detect_occasion(text: str, source_segment: str = "custom") -> tuple[str, int, list[str]]:
     lowered = text.casefold()
-    adoption_matches = [term for term in ADOPTION_TERMS if term in lowered]
-    birthday_matches = [term for term in BIRTHDAY_TERMS if term in lowered]
-    if adoption_matches and len(adoption_matches) >= len(birthday_matches):
-        return "new_adoption", min(100, 82 + 6 * len(adoption_matches)), adoption_matches
-    if birthday_matches:
-        return "pet_birthday", min(100, 82 + 6 * len(birthday_matches)), birthday_matches
-    if source_segment in {"new_adoption", "pet_birthday"}:
+    matches_by_scene = {
+        scene: [term for term in terms if term in lowered]
+        for scene, terms in SCENE_TERMS.items()
+    }
+    matched_scenes = [
+        (scene, matches)
+        for scene, matches in matches_by_scene.items()
+        if matches
+    ]
+    if matched_scenes:
+        scene, matches = max(
+            matched_scenes,
+            key=lambda item: (len(item[1]), item[0] == source_segment),
+        )
+        return scene, min(100, 82 + 6 * len(matches)), matches
+    if source_segment in SCENE_TERMS:
         return source_segment, 35, []
     return "unknown", 0, []
 
@@ -261,6 +330,11 @@ def candidate_status(targeting: dict[str, Any], us_required: bool, us_min_confid
         return "rejected_targeting"
     if us_required and int(targeting.get("us_confidence", 0)) < us_min_confidence:
         return "location_review"
+    if (
+        int(targeting.get("ownership_confidence", 0)) < MIN_OWNERSHIP_CONFIDENCE
+        or int(targeting.get("occasion_confidence", 0)) < MIN_SCENE_CONFIDENCE
+    ):
+        return "targeting_review"
     return "new"
 
 

@@ -1,3 +1,5 @@
+import type { X_LEAD_DISCOVERY_SEGMENTS } from "@/lib/x-lead";
+
 export const HUMAN_X_LEAD_STATUSES = new Set([
   "review",
   "approved",
@@ -14,7 +16,7 @@ export type XLeadDiscoveryCandidate = {
   mediaUrl: string;
   postedAt?: string | null;
   selectionStatus: "new" | "location_review" | "targeting_review" | "rejected_targeting";
-  segment: "new_adoption" | "pet_birthday" | "custom";
+  segment: (typeof X_LEAD_DISCOVERY_SEGMENTS)[number];
   petType: "cat" | "dog";
   occasion?: string | null;
   occasionConfidence?: number | null;
