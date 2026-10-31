@@ -31,7 +31,7 @@ export const dynamic = "force-dynamic";
 const notices: Record<string, string> = {
   "draft-created": "自动发送草稿已创建，尚未批准，也不会发送。",
   "lead-added": "已从候选列表加入自动发送草稿，尚未批准，也不会发送。",
-  approved: "已逐条批准；任务将在计划时间由本机执行。",
+  approved: "已批准；Mac Worker 将立即领取并自动发送。",
   "daily-authorized": "已确认今日首条效果；该账号今天的后续已批准任务可以自动发送。",
   "daily-paused": "该账号今天已暂停，Worker 不会再领取它的任务。",
 };
@@ -124,13 +124,16 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
         </section>
 
         <section className="mt-8">
-          <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-black">自动发送队列与结果</h2><p className="mt-1 text-sm text-muted">候选任务到这里后仍需逐条批准；批准操作本身不会打开 X 或执行写入。</p></div><Link className="focus-ring rounded-lg bg-accent px-4 py-3 text-sm font-black text-accent-ink" href="/admin/x-leads">返回候选列表</Link></div>
+          <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-black">自动发送队列与结果</h2><p className="mt-1 text-sm text-muted">候选任务到这里后仍需逐条批准；批准后 Mac Worker 会立即领取并发送。</p></div><Link className="focus-ring rounded-lg bg-accent px-4 py-3 text-sm font-black text-accent-ink" href="/admin/x-leads">返回候选列表</Link></div>
           <div className="mt-4 space-y-4">
             {cards.map(({ job, preview }) => {
               const preparing = ["pending", "processing"].includes(job.preparation_status);
               const preparationFailed = job.preparation_status === "failed";
+              const xResultUrl = job.result_url ?? job.target_post_url;
+              const xResultLabel = job.result_url ? "查看已发送回复" : "查看对应原帖";
               return <article className="rounded-xl border border-line bg-panel/90 p-5" key={job.id}>
                 <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><span className={cn("rounded-md border px-2.5 py-1 text-xs font-black", X_REPLY_STATUS_STYLES[job.status])}>{X_REPLY_STATUS_LABELS[job.status] ?? job.status}</span><span className="rounded-md border border-line bg-white px-2.5 py-1 text-xs font-black">{X_ACTION_LABELS[job.action_type] ?? job.action_type}</span><strong>{job.x_reply_accounts?.display_name ?? job.account_key_snapshot ?? "未知账号"}</strong><span className="font-mono text-xs text-muted">{job.x_reply_accounts?.account_key ?? job.account_key_snapshot}</span></div><span className="text-xs text-muted"><Clock3 className="mr-1 inline" size={13} />创建 {formatDate(job.created_at)}</span></div>
+                {xResultUrl ? <a className="focus-ring mt-4 inline-flex h-10 items-center gap-2 rounded-lg bg-accent px-4 text-sm font-black text-accent-ink" href={xResultUrl} rel="noreferrer" target="_blank"><ExternalLink size={16} />{xResultLabel}</a> : null}
                 {preparing ? <div className="mt-4 flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 p-5 text-sm font-bold text-blue-950"><LoaderCircle className="animate-spin" size={20} /><div><p>正在生成单张预览图、专属跳转链接和营销文案</p><p className="mt-1 text-xs font-normal text-blue-800">准备完成前不能批准发送，页面会自动刷新。</p></div></div> : null}
                 {preparationFailed ? <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-900"><p className="font-bold">{job.preparation_error ?? "营销素材生成失败。"}</p><form action={retryXAutoPreparation} className="mt-3"><input name="jobId" type="hidden" value={job.id} /><FormSubmitButton className="focus-ring h-9 rounded-md bg-red-700 px-3 text-xs font-black text-white disabled:opacity-50" idleLabel="重新生成" pendingLabel="正在重新入队…" /></form></div> : null}
                 {job.preparation_status === "ready" ? <>
@@ -138,7 +141,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
                     <div><p className="mb-2 text-xs font-black text-muted">候选原帖图片</p><div className="aspect-square overflow-hidden rounded-lg border border-line bg-surface"><img alt="候选原帖图片" className="h-full w-full object-cover" src={job.x_leads.media_url} /></div></div>
                     <div><p className="mb-2 text-xs font-black text-muted">自动生成的发送预览</p>{preview ? <div className="aspect-square overflow-hidden rounded-lg border border-line bg-surface"><img alt="自动生成的发送预览" className="h-full w-full object-cover" src={preview} /></div> : <div className="flex aspect-square items-center justify-center rounded-lg border border-dashed border-line p-6 text-center text-sm text-muted">预览链接已失效或暂时不可用，请重新生成后再批准。</div>}</div>
                   </div> : null}
-                  <div className="mt-4 flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-bold">计划发送（北京时间）：{formatShanghaiDate(job.scheduled_for)}</p>{job.target_post_url ? <a className="inline-flex items-center gap-1 break-all text-sm font-bold text-accent" href={job.target_post_url} rel="noreferrer" target="_blank">查看目标帖子 <ExternalLink size={14} /></a> : null}</div>
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-bold">{job.status === "draft" ? "原计划发送" : "进入发送队列"}（北京时间）：{formatShanghaiDate(job.scheduled_for)}</p></div>
                   <blockquote className="mt-3 whitespace-pre-wrap rounded-lg border border-line bg-white p-4 text-sm leading-6">{job.reply_text}</blockquote>
                   <div className="mt-3 grid gap-2 text-xs text-muted sm:grid-cols-3"><span>批准：{job.approved_at ? formatDate(job.approved_at) : "—"}</span><span>领取：{job.claimed_at ? formatDate(job.claimed_at) : "—"}</span><span>完成：{job.completed_at ? formatDate(job.completed_at) : "—"}</span></div>
                 </> : null}

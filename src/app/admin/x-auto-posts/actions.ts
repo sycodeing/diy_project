@@ -64,7 +64,8 @@ export async function approveXAutoDraft(formData: FormData) {
   });
   if (safetyError) throw new Error(safetyError);
 
-  const range = shanghaiDayRange(new Date(job.scheduled_for));
+  const approvedAt = new Date();
+  const range = shanghaiDayRange(approvedAt);
   const { count, error: countError } = await supabase
     .from("x_reply_jobs")
     .select("id", { count: "exact", head: true })
@@ -82,7 +83,8 @@ export async function approveXAutoDraft(formData: FormData) {
       account_key_snapshot: account.account_key,
       positioning_snapshot: account.positioning,
       approved_by: user.id,
-      approved_at: new Date().toISOString(),
+      approved_at: approvedAt.toISOString(),
+      scheduled_for: approvedAt.toISOString(),
     })
     .eq("id", jobId)
     .eq("status", "draft")
