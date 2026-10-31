@@ -40,6 +40,35 @@ def test_observe_mode_reports_heartbeat_but_never_executes(monkeypatch, tmp_path
     assert halt is False
 
 
+def test_observe_heartbeat_reuses_cached_egress_probe(monkeypatch, tmp_path):
+    settings = replace(
+        Settings(),
+        x_reply_execution_mode="observe",
+        x_reply_worker_secret="s" * 32,
+        x_use_home=tmp_path,
+    )
+
+    async def forbidden_probe(_url):
+        raise AssertionError("a cached heartbeat must not open another browser")
+
+    async def post_claim(_settings, _client, payload):
+        assert payload["currentEgressIp"] == "203.0.113.10"
+        assert payload["networkProbeStatus"] == "healthy"
+        return httpx.Response(204)
+
+    monkeypatch.setattr(x_reply_worker, "probe_direct_egress", forbidden_probe)
+    monkeypatch.setattr(x_reply_worker, "xuse_is_installed", lambda: True)
+    monkeypatch.setattr(x_reply_worker, "configured_account_keys", lambda _home: ["pet_account"])
+    monkeypatch.setattr(x_reply_worker, "_post_claim", post_claim)
+
+    last_error, halt = asyncio.run(x_reply_worker.run_x_reply_iteration(
+        settings,
+        direct_probe=NetworkProbeResult(True, egress_ip="203.0.113.10"),
+    ))
+    assert last_error is None
+    assert halt is False
+
+
 def test_observe_mode_refuses_even_a_nonempty_server_response(monkeypatch, tmp_path):
     settings = replace(Settings(), x_reply_execution_mode="observe", x_reply_worker_secret="s" * 32, x_use_home=tmp_path)
 

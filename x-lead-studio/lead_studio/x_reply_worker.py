@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+import time
 from typing import Any
 
 import httpx
@@ -27,9 +28,20 @@ async def run_x_reply_worker(settings: Settings) -> None:
         return
     await asyncio.sleep(5)
     last_error: str | None = None
+    cached_direct_probe: NetworkProbeResult | None = None
+    direct_probe_checked_at = 0.0
     while True:
         try:
-            last_error, halt = await run_x_reply_iteration(settings, last_error=last_error)
+            now = time.monotonic()
+            probe_max_age = settings.x_reply_egress_probe_seconds if cached_direct_probe and cached_direct_probe.ok else 60
+            if cached_direct_probe is None or now - direct_probe_checked_at >= probe_max_age:
+                cached_direct_probe = await probe_direct_egress(settings.x_reply_ip_check_url)
+                direct_probe_checked_at = time.monotonic()
+            last_error, halt = await run_x_reply_iteration(
+                settings,
+                last_error=last_error,
+                direct_probe=cached_direct_probe,
+            )
             if halt:
                 return
         except asyncio.CancelledError:
@@ -41,9 +53,15 @@ async def run_x_reply_worker(settings: Settings) -> None:
             await asyncio.sleep(settings.x_reply_worker_poll_seconds)
 
 
-async def run_x_reply_iteration(settings: Settings, *, last_error: str | None = None) -> tuple[str | None, bool]:
+async def run_x_reply_iteration(
+    settings: Settings,
+    *,
+    last_error: str | None = None,
+    direct_probe: NetworkProbeResult | None = None,
+) -> tuple[str | None, bool]:
     """Report one heartbeat and, only in send mode, execute at most one approved write."""
-    direct_probe = await probe_direct_egress(settings.x_reply_ip_check_url)
+    if direct_probe is None:
+        direct_probe = await probe_direct_egress(settings.x_reply_ip_check_url)
     xuse_available = xuse_is_installed()
     configured_accounts = configured_account_keys(settings.x_use_home) if xuse_available else []
     probe_error = direct_probe.error_message if not direct_probe.ok else None
