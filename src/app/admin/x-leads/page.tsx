@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AdminAsyncImage } from "@/components/admin-async-image";
 import { AdminListPagination } from "@/components/admin-list-pagination";
 import { AppShell } from "@/components/app-shell";
 import { SetupWarning } from "@/components/setup-warning";
@@ -179,8 +180,7 @@ export default async function XLeadsPage({
               <div className="grid gap-4 p-4 lg:grid-cols-[140px_minmax(300px,0.72fr)_minmax(520px,1.55fr)]">
                 <div>
                   <div className="aspect-square overflow-hidden rounded-lg border border-line bg-surface">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img alt={`@${lead.x_handle} 的帖子图片`} className="h-full w-full object-cover" decoding="async" loading="lazy" src={lead.media_url} />
+                    <AdminAsyncImage alt={`@${lead.x_handle} 的帖子图片`} proxyThroughSite sizes="140px" src={lead.media_url} />
                   </div>
                   <a className="mt-2 inline-block text-xs font-bold text-accent" href={lead.post_url} rel="noreferrer" target="_blank">打开原帖 ↗</a>
                 </div>

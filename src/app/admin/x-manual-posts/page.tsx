@@ -1,5 +1,6 @@
 import { CheckCircle2, ExternalLink, Hand, LoaderCircle, RotateCcw } from "lucide-react";
 import Link from "next/link";
+import { AdminAsyncImage } from "@/components/admin-async-image";
 import { AdminListPagination } from "@/components/admin-list-pagination";
 import { AppShell } from "@/components/app-shell";
 import { CopyImageButton } from "@/components/copy-image-button";
@@ -14,8 +15,6 @@ import { cn, formatDate } from "@/lib/utils";
 import { sortXManualPosts, X_ACTION_LABELS, X_MANUAL_STATUS_LABELS, type XManualPost } from "@/lib/x-reply";
 import { discardXManualDraft, retryXManualPreparation } from "./actions";
 import { MarkSentForm } from "./mark-sent-form";
-
-/* eslint-disable @next/next/no-img-element */
 
 export const dynamic = "force-dynamic";
 
@@ -101,8 +100,8 @@ export default async function XManualPostsPage({ searchParams }: { searchParams:
                 return <article className="rounded-xl border border-line bg-panel/90 p-5" key={post.id}>
                   <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><span className={cn("rounded-md border px-2.5 py-1 text-xs font-black", statusStyles[post.status])}>{X_MANUAL_STATUS_LABELS[post.status] ?? post.status}</span><span className="rounded-md border border-line bg-white px-2.5 py-1 text-xs font-black">{X_ACTION_LABELS[post.action_type]}</span><strong>手动发送（不绑定账号）</strong></div><span className="text-xs text-muted">{formatDate(post.created_at)}</span></div>
                   {post.x_leads ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    <figure className="overflow-hidden rounded-lg border border-line bg-white"><div className="aspect-square overflow-hidden bg-surface"><img alt="原帖宠物图片" className="h-full w-full object-cover" decoding="async" loading="lazy" src={post.x_leads.media_url} /></div><figcaption className="p-3 text-xs font-black">原帖宠物图 · {post.x_leads.pet_type === "cat" ? "猫" : "狗"}</figcaption></figure>
-                    {preview ? <figure className="overflow-hidden rounded-lg border border-emerald-200 bg-white"><div className="aspect-square overflow-hidden bg-surface"><img alt="生成的抱枕预览图" className="h-full w-full object-cover" decoding="async" loading="lazy" src={preview} /></div><figcaption className="p-3"><div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-black">待发送预览图</span><CopyImageButton status={post.preview_download_status} taskId={post.id} /></div>{post.preview_download_status === "completed" && post.preview_download_path ? <p className="mt-2 break-all text-[11px] text-emerald-800">已保存：{post.preview_download_path}</p> : null}{post.preview_download_status === "failed" ? <p className="mt-2 text-[11px] text-red-700">{post.preview_download_error ?? "本机下载失败，请确认 X worker 正在运行。"}</p> : null}</figcaption></figure> : <div className="flex aspect-square items-center justify-center rounded-lg border border-dashed border-red-300 bg-red-50 p-5 text-center text-sm font-bold text-red-900"><RotateCcw className="mr-2" size={18} />素材记录已完成，但预览图暂不可读取。</div>}
+                    <figure className="overflow-hidden rounded-lg border border-line bg-white"><div className="aspect-square overflow-hidden bg-surface"><AdminAsyncImage alt="原帖宠物图片" proxyThroughSite src={post.x_leads.media_url} /></div><figcaption className="p-3 text-xs font-black">原帖宠物图 · {post.x_leads.pet_type === "cat" ? "猫" : "狗"}</figcaption></figure>
+                    {preview ? <figure className="overflow-hidden rounded-lg border border-emerald-200 bg-white"><div className="aspect-square overflow-hidden bg-surface"><AdminAsyncImage alt="生成的抱枕预览图" src={preview} /></div><figcaption className="p-3"><div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-black">待发送预览图</span><CopyImageButton status={post.preview_download_status} taskId={post.id} /></div>{post.preview_download_status === "completed" && post.preview_download_path ? <p className="mt-2 break-all text-[11px] text-emerald-800">已保存：{post.preview_download_path}</p> : null}{post.preview_download_status === "failed" ? <p className="mt-2 text-[11px] text-red-700">{post.preview_download_error ?? "本机下载失败，请确认 X worker 正在运行。"}</p> : null}</figcaption></figure> : <div className="flex aspect-square items-center justify-center rounded-lg border border-dashed border-red-300 bg-red-50 p-5 text-center text-sm font-bold text-red-900"><RotateCcw className="mr-2" size={18} />素材记录已完成，但预览图暂不可读取。</div>}
                   </div> : <p className="mt-4 rounded-lg border border-dashed border-line bg-surface p-3 text-xs text-muted">这是改版前创建的旧任务，没有关联宠物原图和预览图。</p>}
                   {post.target_post_url ? <a className="mt-3 inline-block break-all text-sm font-bold text-accent" href={post.target_post_url} rel="noreferrer" target="_blank">查看目标帖子 ↗</a> : null}
                   <blockquote className="mt-3 whitespace-pre-wrap rounded-lg border border-line bg-white p-4 text-sm leading-6">{post.post_text}</blockquote>

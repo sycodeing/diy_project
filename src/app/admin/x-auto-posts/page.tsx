@@ -1,6 +1,6 @@
-/* eslint-disable @next/next/no-img-element */
 import { AlertTriangle, CheckCircle2, Clock3, ExternalLink, LoaderCircle, Monitor, Send } from "lucide-react";
 import Link from "next/link";
+import { AdminAsyncImage } from "@/components/admin-async-image";
 import { AppShell } from "@/components/app-shell";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { QueueAutoRefresh } from "@/components/queue-auto-refresh";
@@ -141,8 +141,8 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
                 {preparationFailed ? <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-900"><p className="font-bold">{job.preparation_error ?? "营销素材生成失败。"}</p><form action={retryXAutoPreparation} className="mt-3"><input name="jobId" type="hidden" value={job.id} /><FormSubmitButton className="focus-ring h-9 rounded-md bg-red-700 px-3 text-xs font-black text-white disabled:opacity-50" idleLabel="重新生成" pendingLabel="正在重新入队…" /></form></div> : null}
                 {job.preparation_status === "ready" ? <>
                   {job.x_leads ? <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                    <div><p className="mb-2 text-xs font-black text-muted">候选原帖图片</p><div className="aspect-square overflow-hidden rounded-lg border border-line bg-surface"><img alt="候选原帖图片" className="h-full w-full object-cover" src={job.x_leads.media_url} /></div></div>
-                    <div><p className="mb-2 text-xs font-black text-muted">自动生成的发送预览</p>{preview ? <div className="aspect-square overflow-hidden rounded-lg border border-line bg-surface"><img alt="自动生成的发送预览" className="h-full w-full object-cover" src={preview} /></div> : <div className="flex aspect-square items-center justify-center rounded-lg border border-dashed border-line p-6 text-center text-sm text-muted">预览链接已失效或暂时不可用，请重新生成后再批准。</div>}</div>
+                    <div><p className="mb-2 text-xs font-black text-muted">候选原帖图片</p><div className="aspect-square overflow-hidden rounded-lg border border-line bg-surface"><AdminAsyncImage alt="候选原帖图片" proxyThroughSite src={job.x_leads.media_url} /></div></div>
+                    <div><p className="mb-2 text-xs font-black text-muted">自动生成的发送预览</p>{preview ? <div className="aspect-square overflow-hidden rounded-lg border border-line bg-surface"><AdminAsyncImage alt="自动生成的发送预览" src={preview} /></div> : <div className="flex aspect-square items-center justify-center rounded-lg border border-dashed border-line p-6 text-center text-sm text-muted">预览链接已失效或暂时不可用，请重新生成后再批准。</div>}</div>
                   </div> : null}
                   <div className="mt-4 flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-bold">{job.status === "draft" ? "原计划发送" : "进入发送队列"}（北京时间）：{formatShanghaiDate(job.scheduled_for)}</p></div>
                   <blockquote className="mt-3 whitespace-pre-wrap rounded-lg border border-line bg-white p-4 text-sm leading-6">{job.reply_text}</blockquote>
