@@ -1,16 +1,20 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 export function QueueAutoRefresh({ active }: { active: boolean }) {
   const router = useRouter();
+  const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
     if (!active) return;
-    const timer = window.setInterval(() => router.refresh(), 3000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible" || isPending) return;
+      startTransition(() => router.refresh());
+    }, 10_000);
     return () => window.clearInterval(timer);
-  }, [active, router]);
+  }, [active, isPending, router]);
 
   return null;
 }

@@ -31,6 +31,7 @@ export function AdminNavigation({ mobile = false }: { mobile?: boolean }) {
                 className={`focus-ring shrink-0 rounded-lg px-3 py-2 text-sm font-bold ${active ? "bg-accent-soft text-accent-strong" : "text-muted hover:bg-surface hover:text-foreground"}`}
                 href={link.href}
                 key={link.href}
+                prefetch={false}
               >
                 {link.label}
               </Link>
@@ -52,6 +53,7 @@ export function AdminNavigation({ mobile = false }: { mobile?: boolean }) {
               className={`focus-ring rounded-lg px-3 py-2 font-bold ${active ? "bg-accent-soft text-accent-strong" : "text-muted hover:bg-surface hover:text-foreground"}`}
               href={link.href}
               key={link.href}
+              prefetch={false}
             >
               {link.label}
             </Link>
