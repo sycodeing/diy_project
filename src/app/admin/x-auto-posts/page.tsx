@@ -19,13 +19,12 @@ import {
   type XReplyWorker,
 } from "@/lib/x-reply";
 import {
-  approveXAutoBatch,
-  approveXAutoDraft,
   authorizeXDailySending,
   pauseXDailySending,
   rejectXAutoDraft,
   retryXAutoPreparation,
 } from "./actions";
+import { ApprovalForm } from "./approval-form";
 
 export const dynamic = "force-dynamic";
 
@@ -127,7 +126,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
         </section>
 
         <section className="mt-8">
-          <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-black">自动发送队列与结果</h2><p className="mt-1 text-sm text-muted">勾选多个已就绪草稿可一次批准；Worker 串行发送并在成功任务之间随机等待 3–7 秒。</p></div><div className="flex flex-wrap gap-2"><form action={approveXAutoBatch} id="batch-approve-form"><FormSubmitButton className="focus-ring h-11 rounded-lg bg-accent px-4 text-sm font-black text-accent-ink disabled:opacity-50" disabled={!batchReadyCount} idleLabel={`批准选中并批量发送${batchReadyCount ? `（可选 ${batchReadyCount} 条）` : ""}`} pendingLabel="正在批量检查账号与队列…" /></form><Link className="focus-ring rounded-lg border border-line bg-white px-4 py-3 text-sm font-black" href="/admin/x-leads">返回候选列表</Link></div></div>
+          <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-black">自动发送队列与结果</h2><p className="mt-1 text-sm text-muted">勾选多个已就绪草稿可一次批准；Worker 串行发送并在成功任务之间随机等待 3–7 秒。</p></div><div className="flex max-w-full flex-wrap justify-end gap-2"><ApprovalForm mode="batch" readyCount={batchReadyCount} /><Link className="focus-ring rounded-lg border border-line bg-white px-4 py-3 text-sm font-black" href="/admin/x-leads">返回候选列表</Link></div></div>
           <div className="mt-4 space-y-4">
             {cards.map(({ job, preview }) => {
               const preparing = ["pending", "processing"].includes(job.preparation_status);
@@ -148,7 +147,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
                   <blockquote className="mt-3 whitespace-pre-wrap rounded-lg border border-line bg-white p-4 text-sm leading-6">{job.reply_text}</blockquote>
                   <div className="mt-3 grid gap-2 text-xs text-muted sm:grid-cols-3"><span>批准：{job.approved_at ? formatDate(job.approved_at) : "—"}</span><span>领取：{job.claimed_at ? formatDate(job.claimed_at) : "—"}</span><span>完成：{job.completed_at ? formatDate(job.completed_at) : "—"}</span></div>
                 </> : null}
-                {job.status === "draft" && job.preparation_status === "ready" ? <div className="mt-4 flex flex-wrap items-center gap-2"><label className="focus-ring inline-flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-accent bg-white px-3 text-sm font-black text-accent"><input form="batch-approve-form" name="jobId" type="checkbox" value={job.id} />加入本次批量</label><form action={approveXAutoDraft}><input name="jobId" type="hidden" value={job.id} /><FormSubmitButton className="focus-ring h-10 rounded-lg bg-accent px-4 text-sm font-black text-accent-ink disabled:opacity-50" idleLabel="仅发送这一条" pendingLabel="正在检查本机账号…" /></form><form action={rejectXAutoDraft}><input name="jobId" type="hidden" value={job.id} /><button className="focus-ring h-10 rounded-lg border border-line px-4 text-sm font-bold" type="submit">拒绝</button></form></div> : null}
+                {job.status === "draft" && job.preparation_status === "ready" ? <div className="mt-4 flex flex-wrap items-center gap-2"><label className="focus-ring inline-flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-accent bg-white px-3 text-sm font-black text-accent"><input form="batch-approve-form" name="jobId" type="checkbox" value={job.id} />加入本次批量</label><ApprovalForm jobId={job.id} mode="single" /><form action={rejectXAutoDraft}><input name="jobId" type="hidden" value={job.id} /><button className="focus-ring h-10 rounded-lg border border-line px-4 text-sm font-bold" type="submit">拒绝</button></form></div> : null}
                 {job.status === "sent" ? <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-900"><CheckCircle2 className="mr-2 inline" size={17} />x-use 已确认本次写操作成功{job.result_url ? <> · <a className="underline" href={job.result_url} rel="noreferrer" target="_blank">打开结果</a></> : null}</p> : null}
                 {job.status === "uncertain" ? <p className="mt-4 rounded-lg border border-orange-300 bg-orange-50 p-3 text-sm font-bold text-orange-950"><AlertTriangle className="mr-2 inline" size={17} />结果不确定：必须先去 X 查看，系统不会自动重试。</p> : null}
                 {job.error_message ? <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{job.error_code ? `${job.error_code}: ` : ""}{job.error_message}</p> : null}

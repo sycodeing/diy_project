@@ -13,6 +13,12 @@ const PAGE_PATH = "/admin/x-auto-posts";
 const idSchema = z.string().uuid();
 const batchIdsSchema = z.array(idSchema).min(1).max(100);
 
+export type XAutoApprovalResult =
+  | { ok: true; approvedCount: number }
+  | { ok: false; error: string };
+
+class XAutoApprovalError extends Error {}
+
 function serviceClient() {
   const supabase = getSupabaseServiceClient();
   if (!supabase) throw new Error("Supabase 服务端连接尚未配置。");
@@ -28,20 +34,37 @@ function shanghaiDayRange(value: Date) {
   };
 }
 
-export async function approveXAutoDraft(formData: FormData) {
+export async function approveXAutoDraft(formData: FormData): Promise<XAutoApprovalResult> {
   const user = await requireAdmin(PAGE_PATH);
-  const jobId = idSchema.parse(String(formData.get("jobId") ?? ""));
-  await approveXAutoJobs([jobId], user.id);
-  revalidatePath(PAGE_PATH);
-  redirect(`${PAGE_PATH}?notice=approved`);
+  try {
+    const jobId = idSchema.parse(String(formData.get("jobId") ?? ""));
+    const approvedCount = await approveXAutoJobs([jobId], user.id);
+    revalidatePath(PAGE_PATH);
+    return { ok: true, approvedCount };
+  } catch (error) {
+    return approvalFailure(error, "批准失败，请刷新页面后重试。");
+  }
 }
 
-export async function approveXAutoBatch(formData: FormData) {
+export async function approveXAutoBatch(formData: FormData): Promise<XAutoApprovalResult> {
   const user = await requireAdmin(PAGE_PATH);
-  const jobIds = batchIdsSchema.parse(formData.getAll("jobId").map(String));
-  const approvedCount = await approveXAutoJobs(jobIds, user.id);
-  revalidatePath(PAGE_PATH);
-  redirect(`${PAGE_PATH}?notice=batch-approved&count=${approvedCount}`);
+  try {
+    const jobIds = batchIdsSchema.parse(formData.getAll("jobId").map(String));
+    const approvedCount = await approveXAutoJobs(jobIds, user.id);
+    revalidatePath(PAGE_PATH);
+    return { ok: true, approvedCount };
+  } catch (error) {
+    return approvalFailure(error, "批量批准失败，请刷新页面后重试。");
+  }
+}
+
+function approvalFailure(error: unknown, fallback: string): XAutoApprovalResult {
+  if (error instanceof z.ZodError) {
+    return { ok: false, error: "请至少勾选一条已就绪的草稿，单次最多选择 100 条。" };
+  }
+  if (error instanceof XAutoApprovalError) return { ok: false, error: error.message };
+  console.error("X auto approval failed", error);
+  return { ok: false, error: fallback };
 }
 
 async function approveXAutoJobs(requestedJobIds: string[], userId: string) {
@@ -52,7 +75,7 @@ async function approveXAutoJobs(requestedJobIds: string[], userId: string) {
     .select("id,status,account_id,scheduled_for,preparation_status,x_reply_accounts!inner(account_key,positioning,daily_limit,active,executor_id,network_mode,expected_egress_ip,x_reply_account_proxies(account_id,status))")
     .in("id", jobIds);
   if (error) throw new Error(error.message);
-  if (!jobs || jobs.length !== jobIds.length) throw new Error("部分自动发送草稿不存在，请刷新页面后重试。");
+  if (!jobs || jobs.length !== jobIds.length) throw new XAutoApprovalError("部分自动发送草稿不存在，请刷新页面后重试。");
 
   const executorIds = [...new Set(jobs.flatMap((job) => {
     const account = Array.isArray(job.x_reply_accounts) ? job.x_reply_accounts[0] : job.x_reply_accounts;
@@ -88,8 +111,8 @@ async function approveXAutoJobs(requestedJobIds: string[], userId: string) {
       worker: worker ? { lastSeenAt: worker.last_seen_at, xuseAvailable: worker.xuse_available, configuredAccounts: Array.isArray(worker.configured_accounts) ? worker.configured_accounts : [], currentEgressIp: worker.current_egress_ip, networkProbeStatus: worker.network_probe_status } : null,
       nowMillis: approvedAt.getTime(),
     });
-    if (safetyError) throw new Error(safetyError);
-    if (!account || worker?.execution_mode !== "send") throw new Error("绑定的 Mac Worker 当前不是发送模式。");
+    if (safetyError) throw new XAutoApprovalError(safetyError);
+    if (!account || worker?.execution_mode !== "send") throw new XAutoApprovalError("绑定的 Mac Worker 当前不是发送模式。");
     const group = groups.get(job.account_id) ?? {
       accountKey: account.account_key,
       positioning: account.positioning,
@@ -110,7 +133,7 @@ async function approveXAutoJobs(requestedJobIds: string[], userId: string) {
       .lt("scheduled_for", range.end);
     if (countError) throw new Error(countError.message);
     if ((count ?? 0) + group.jobIds.length > group.dailyLimit) {
-      throw new Error(`${group.accountKey} 的所选任务会超过今日发送上限。`);
+      throw new XAutoApprovalError(`${group.accountKey} 的所选任务会超过今日发送上限。`);
     }
   }
 
@@ -130,7 +153,8 @@ async function approveXAutoJobs(requestedJobIds: string[], userId: string) {
       .eq("preparation_status", "ready")
       .select("id");
     if (updateError || updated?.length !== group.jobIds.length) {
-      throw new Error(updateError?.message ?? "部分任务状态已经变化，请刷新页面后重试。");
+      if (updateError) throw new Error(updateError.message);
+      throw new XAutoApprovalError("部分任务状态已经变化，请刷新页面后重试。");
     }
   }
   return jobIds.length;

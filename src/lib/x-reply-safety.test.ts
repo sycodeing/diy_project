@@ -43,7 +43,10 @@ test("vpn_direct cannot be approved before an administrator locks the egress IP"
 test("vpn_direct cannot be approved when the live browser egress changes", () => {
   const input = healthyInput();
   input.worker!.currentEgressIp = "203.0.113.11";
-  assert.match(getXApprovalBlockReason(input) ?? "", /不一致/);
+  const reason = getXApprovalBlockReason(input) ?? "";
+  assert.match(reason, /203\.0\.113\.11/);
+  assert.match(reason, /203\.0\.113\.10/);
+  assert.match(reason, /X 账号\/IP/);
 });
 
 test("an executor mismatch or missing local x-use account blocks approval", () => {

@@ -89,7 +89,8 @@ export function getXApprovalBlockReason(input: ApprovalSafetyInput): string | nu
   if (input.account.networkMode === "vpn_direct") {
     if (!input.account.expectedEgressIp) return "VPN 出口 IP 尚未由管理员确认锁定。";
     if (input.worker.networkProbeStatus !== "healthy" || input.worker.currentEgressIp !== input.account.expectedEgressIp) {
-      return "当前 Patchright 浏览器出口与管理员锁定的 VPN IP 不一致。";
+      const currentIp = input.worker.currentEgressIp ?? "未探测到";
+      return `当前 Patchright 浏览器出口 ${currentIp} 与管理员锁定的 VPN IP ${input.account.expectedEgressIp} 不一致。请恢复已锁定的 VPN，或前往“X 账号/IP”人工确认后重新锁定。`;
     }
     return null;
   }
