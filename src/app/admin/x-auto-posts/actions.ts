@@ -58,11 +58,13 @@ async function approveXAutoJobs(requestedJobIds: string[], userId: string) {
     const account = Array.isArray(job.x_reply_accounts) ? job.x_reply_accounts[0] : job.x_reply_accounts;
     return account?.executor_id ? [account.executor_id] : [];
   }))];
-  const { data: workers, error: workerError } = await supabase
-    .from("x_reply_workers")
-    .select("executor_id,execution_mode,xuse_available,configured_accounts,current_egress_ip,network_probe_status,last_seen_at")
-    .in("executor_id", executorIds)
-    .gte("last_seen_at", new Date(Date.now() - 5 * 60_000).toISOString());
+  const { data: workers, error: workerError } = executorIds.length
+    ? await supabase
+      .from("x_reply_workers")
+      .select("executor_id,execution_mode,xuse_available,configured_accounts,current_egress_ip,network_probe_status,last_seen_at")
+      .in("executor_id", executorIds)
+      .gte("last_seen_at", new Date(Date.now() - 5 * 60_000).toISOString())
+    : { data: [], error: null };
   if (workerError) throw new Error(workerError.message);
   const approvedAt = new Date();
   const range = shanghaiDayRange(approvedAt);
