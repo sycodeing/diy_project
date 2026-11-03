@@ -32,7 +32,7 @@ const notices: Record<string, string> = {
   "draft-created": "自动发送草稿已创建，尚未批准，也不会发送。",
   "lead-added": "已从候选列表加入自动发送草稿，尚未批准，也不会发送。",
   approved: "已批准；Mac Worker 将立即领取并自动发送。",
-  "batch-approved": "所选任务已批量批准；首条确认后，Worker 将按 3–7 秒随机间隔继续发送。",
+  "batch-approved": "所选任务已批量批准；首条确认后，Worker 将按 15–30 秒随机间隔继续发送。",
   "daily-authorized": "已确认今日首条效果；该账号今天的后续已批准任务可以自动发送。",
   "daily-paused": "该账号今天已暂停，Worker 不会再领取它的任务。",
 };
@@ -97,7 +97,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
         </div>
         {notice ? <p className="mt-5 rounded-lg border border-line bg-panel p-3 text-sm font-bold">{notice}</p> : null}
         {jobsError ? <p className="mt-5 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{jobsError.message}</p> : null}
-        <p className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950"><strong>发送队列隔离，候选池共用。</strong>自动任务只从“X 待处理用户与帖子”选择加入；素材准备完成后可逐条批准，也可勾选多条批量批准。每日首条仍会停下等待确认，放行后每次成功发送间隔随机 3–7 秒。`observe` 只上报状态，不能领取任务。</p>
+        <p className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950"><strong>发送队列隔离，候选池共用。</strong>自动任务只从“X 待处理用户与帖子”选择加入；素材准备完成后可逐条批准，也可勾选多条批量批准。每日首条仍会停下等待确认，放行后每次成功发送间隔随机 15–30 秒。`observe` 只上报状态，不能领取任务。</p>
         {legacySentCount ? <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950"><strong>历史已发送记录仍在：</strong>启用本机自动发送前，已有 {legacySentCount} 条人工发送历史。<Link className="ml-1 font-black underline" href="/admin/x-manual-posts">打开历史记录</Link></p> : null}
 
         <section className="mt-6 rounded-xl border border-line bg-panel/90 p-5">
@@ -126,7 +126,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
         </section>
 
         <section className="mt-8">
-          <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-black">自动发送队列与结果</h2><p className="mt-1 text-sm text-muted">勾选多个已就绪草稿可一次批准；Worker 串行发送并在成功任务之间随机等待 3–7 秒。</p></div><div className="flex max-w-full flex-wrap justify-end gap-2"><ApprovalForm mode="batch" readyCount={batchReadyCount} /><Link className="focus-ring rounded-lg border border-line bg-white px-4 py-3 text-sm font-black" href="/admin/x-leads">返回候选列表</Link></div></div>
+          <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-black">自动发送队列与结果</h2><p className="mt-1 text-sm text-muted">勾选多个已就绪草稿可一次批准；Worker 串行发送并在成功任务之间随机等待 15–30 秒。</p></div><div className="flex max-w-full flex-wrap justify-end gap-2"><ApprovalForm mode="batch" readyCount={batchReadyCount} /><Link className="focus-ring rounded-lg border border-line bg-white px-4 py-3 text-sm font-black" href="/admin/x-leads">返回候选列表</Link></div></div>
           <div className="mt-4 space-y-4">
             {cards.map(({ job, preview }) => {
               const preparing = ["pending", "processing"].includes(job.preparation_status);

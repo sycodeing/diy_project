@@ -95,17 +95,17 @@ def test_observe_mode_refuses_even_a_nonempty_server_response(monkeypatch, tmp_p
     assert completed_status is None
 
 
-def test_batch_delay_is_randomized_between_three_and_seven_seconds(monkeypatch):
+def test_batch_delay_is_randomized_between_fifteen_and_thirty_seconds(monkeypatch):
     calls = []
 
     def uniform(low, high):
         calls.append((low, high))
-        return 5.25
+        return 22.5
 
     monkeypatch.setattr(x_reply_worker.random, "uniform", uniform)
 
-    assert x_reply_worker._batch_delay_seconds() == 5.25
-    assert calls == [(3.0, 7.0)]
+    assert x_reply_worker._batch_delay_seconds() == 22.5
+    assert calls == [(15.0, 30.0)]
 
 
 def test_invalid_execution_mode_fails_closed_to_observe(monkeypatch):
