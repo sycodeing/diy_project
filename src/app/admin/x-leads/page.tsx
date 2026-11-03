@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AdminListPagination } from "@/components/admin-list-pagination";
 import { AppShell } from "@/components/app-shell";
 import { SetupWarning } from "@/components/setup-warning";
 import { requireAdmin } from "@/lib/auth";
@@ -26,6 +27,8 @@ import { CandidateActions } from "./candidate-actions";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+const X_LEADS_PAGE_SIZE = 40;
+
 type ManualQueueTaskSummary = {
   id: string;
   status: string;
@@ -43,7 +46,7 @@ type AutomaticQueueTaskSummary = {
 export default async function XLeadsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ conclusion?: string; segment?: string; review?: string; reason?: string; notice?: string }>;
+  searchParams: Promise<{ conclusion?: string; segment?: string; review?: string; reason?: string; notice?: string; page?: string }>;
 }) {
   await requireAdmin("/admin/x-leads");
   const supabase = getSupabaseServiceClient();
@@ -86,7 +89,17 @@ export default async function XLeadsPage({
   const usMinConfidence = searchConfig?.us_min_confidence ?? 70;
   const conclusionFilter = filters.conclusion || (filters.review === "rejected" || filters.review === "all" || filters.reason ? "all" : "");
   const filteredLeads = filterXLeadsForQueue(reasonFilteredLeads, conclusionFilter, usMinConfidence);
-  const leads = sortXLeadsByPriority(filteredLeads, usMinConfidence);
+  const sortedLeads = sortXLeadsByPriority(filteredLeads, usMinConfidence);
+  const requestedPage = Number.parseInt(filters.page ?? "1", 10);
+  const totalPages = Math.max(1, Math.ceil(sortedLeads.length / X_LEADS_PAGE_SIZE));
+  const currentPage = Math.min(Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1, totalPages);
+  const leads = sortedLeads.slice((currentPage - 1) * X_LEADS_PAGE_SIZE, currentPage * X_LEADS_PAGE_SIZE);
+  const paginationFilters = {
+    conclusion: filters.conclusion,
+    segment: filters.segment,
+    review: filters.review,
+    reason: filters.reason,
+  };
   const conclusionCounts = new Map<XLeadConclusion, number>();
   for (const lead of reasonFilteredLeads) {
     const conclusion = getXLeadReferenceConclusion(lead, usMinConfidence);
@@ -142,6 +155,9 @@ export default async function XLeadsPage({
 
         {error || accountsError ? <p className="mt-6 rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">读取候选列表失败：{error?.message ?? accountsError?.message}</p> : null}
         {!accountsError && !activeAccountCount ? <p className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-900">当前没有启用的自动发送账号，因此只能加入手动队列；手动队列不绑定账号。</p> : null}
+        <div className="mt-6">
+          <AdminListPagination basePath="/admin/x-leads" currentPage={currentPage} pageSize={X_LEADS_PAGE_SIZE} searchParams={paginationFilters} totalItems={sortedLeads.length} totalPages={totalPages} />
+        </div>
         <div className="mt-6 space-y-5">
           {leads.map((lead) => {
             const targetingChecks = getXLeadTargetingChecks(lead, usMinConfidence);
@@ -164,7 +180,7 @@ export default async function XLeadsPage({
                 <div>
                   <div className="aspect-square overflow-hidden rounded-lg border border-line bg-surface">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img alt={`@${lead.x_handle} 的帖子图片`} className="h-full w-full object-cover" src={lead.media_url} />
+                    <img alt={`@${lead.x_handle} 的帖子图片`} className="h-full w-full object-cover" decoding="async" loading="lazy" src={lead.media_url} />
                   </div>
                   <a className="mt-2 inline-block text-xs font-bold text-accent" href={lead.post_url} rel="noreferrer" target="_blank">打开原帖 ↗</a>
                 </div>
@@ -200,6 +216,9 @@ export default async function XLeadsPage({
             </article>;
           })}
           {!leads.length ? <div className="rounded-xl border border-line bg-panel/90 p-10 text-center"><p className="text-lg font-black">当前没有待处理且达到硬性条件的候选。</p><p className="mt-2 text-sm text-muted">列表不会继续混入不符合数据。可以启动新的筛选任务，或主动选择“全部结论”检查历史记录。</p></div> : null}
+        </div>
+        <div className="mt-6">
+          <AdminListPagination basePath="/admin/x-leads" currentPage={currentPage} pageSize={X_LEADS_PAGE_SIZE} searchParams={paginationFilters} totalItems={sortedLeads.length} totalPages={totalPages} />
         </div>
       </main>
     </AppShell>

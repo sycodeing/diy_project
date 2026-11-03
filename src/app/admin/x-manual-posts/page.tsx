@@ -1,5 +1,6 @@
 import { CheckCircle2, ExternalLink, Hand, LoaderCircle, RotateCcw } from "lucide-react";
 import Link from "next/link";
+import { AdminListPagination } from "@/components/admin-list-pagination";
 import { AppShell } from "@/components/app-shell";
 import { CopyImageButton } from "@/components/copy-image-button";
 import { CopyButton } from "@/components/copy-field";
@@ -18,6 +19,8 @@ import { MarkSentForm } from "./mark-sent-form";
 
 export const dynamic = "force-dynamic";
 
+const X_MANUAL_POSTS_PAGE_SIZE = 20;
+
 const notices: Record<string, string> = {
   "draft-created": "手动草稿已保存。系统不会自动发送。",
   "lead-added": "已从候选列表加入手动发送队列。系统不会自动发送。",
@@ -31,7 +34,7 @@ const statusStyles: Record<string, string> = {
   discarded: "border-line bg-surface text-muted",
 };
 
-export default async function XManualPostsPage({ searchParams }: { searchParams: Promise<{ notice?: string }> }) {
+export default async function XManualPostsPage({ searchParams }: { searchParams: Promise<{ notice?: string; page?: string }> }) {
   await requireAdmin("/admin/x-manual-posts");
   const supabase = getSupabaseServiceClient();
   if (!supabase) return <AppShell admin><main className="mx-auto w-full max-w-3xl px-4 py-10"><SetupWarning /></main></AppShell>;
@@ -42,8 +45,12 @@ export default async function XManualPostsPage({ searchParams }: { searchParams:
     supabase.from("x_manual_posts").select(postSelect).in("status", ["sent", "discarded"]).order("created_at", { ascending: false }).limit(2000),
   ]);
   const postsError = activeError ?? historyError;
-  const posts = sortXManualPosts([...(activeRows ?? []), ...(historyRows ?? [])] as unknown as XManualPost[]);
-  const sentCount = posts.filter((post) => post.status === "sent").length;
+  const allPosts = sortXManualPosts([...(activeRows ?? []), ...(historyRows ?? [])] as unknown as XManualPost[]);
+  const requestedPage = Number.parseInt(filters.page ?? "1", 10);
+  const totalPages = Math.max(1, Math.ceil(allPosts.length / X_MANUAL_POSTS_PAGE_SIZE));
+  const currentPage = Math.min(Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1, totalPages);
+  const posts = allPosts.slice((currentPage - 1) * X_MANUAL_POSTS_PAGE_SIZE, currentPage * X_MANUAL_POSTS_PAGE_SIZE);
+  const sentCount = allPosts.filter((post) => post.status === "sent").length;
   const cards = await Promise.all(posts.map(async (post) => {
     const link = post.x_leads?.marketing_links;
     const preview = post.status !== "discarded" && post.preparation_status === "ready" && link
@@ -51,7 +58,7 @@ export default async function XManualPostsPage({ searchParams }: { searchParams:
       : null;
     return { post, preview: preview?.url ?? null };
   }));
-  const isPreparing = posts.some((post) => post.status !== "discarded" && (["pending", "processing"].includes(post.preparation_status) || ["pending", "processing"].includes(post.preview_download_status)));
+  const isPreparing = allPosts.some((post) => post.status !== "discarded" && (["pending", "processing"].includes(post.preparation_status) || ["pending", "processing"].includes(post.preview_download_status)));
   const notice = filters.notice ? notices[filters.notice] : null;
 
   return (
@@ -70,7 +77,10 @@ export default async function XManualPostsPage({ searchParams }: { searchParams:
         <p className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950"><strong>发送队列隔离，候选池共用：</strong>手动草稿写入独立数据表，本机发送执行器不会读取；候选用户统一由“X 用户筛选”获取，和自动发送使用同一份待筛选结果。</p>
 
         <section className="mt-6">
-          <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-black">手动发送队列与结果</h2><p className="mt-1 text-sm text-muted">待发送 {posts.filter((post) => post.status === "draft").length} 条 · 历史已发送 {sentCount} 条。历史记录会独立完整加载，不再被新任务挤出。</p></div><Link className="focus-ring rounded-lg bg-accent px-4 py-3 text-sm font-black text-accent-ink" href="/admin/x-leads?conclusion=contacted">查看全部已进入发送流程</Link></div>
+          <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-black">手动发送队列与结果</h2><p className="mt-1 text-sm text-muted">待发送 {allPosts.filter((post) => post.status === "draft").length} 条 · 历史已发送 {sentCount} 条。历史记录会独立完整加载，不再被新任务挤出。</p></div><Link className="focus-ring rounded-lg bg-accent px-4 py-3 text-sm font-black text-accent-ink" href="/admin/x-leads?conclusion=contacted">查看全部已进入发送流程</Link></div>
+            <div className="mt-4">
+              <AdminListPagination basePath="/admin/x-manual-posts" currentPage={currentPage} pageSize={X_MANUAL_POSTS_PAGE_SIZE} totalItems={allPosts.length} totalPages={totalPages} />
+            </div>
             <div className="mt-4 space-y-4">
               {cards.map(({ post, preview }) => {
                 const openUrl = post.action_type === "post" ? "https://x.com/compose/post" : post.target_post_url ?? "https://x.com/home";
@@ -91,8 +101,8 @@ export default async function XManualPostsPage({ searchParams }: { searchParams:
                 return <article className="rounded-xl border border-line bg-panel/90 p-5" key={post.id}>
                   <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><span className={cn("rounded-md border px-2.5 py-1 text-xs font-black", statusStyles[post.status])}>{X_MANUAL_STATUS_LABELS[post.status] ?? post.status}</span><span className="rounded-md border border-line bg-white px-2.5 py-1 text-xs font-black">{X_ACTION_LABELS[post.action_type]}</span><strong>手动发送（不绑定账号）</strong></div><span className="text-xs text-muted">{formatDate(post.created_at)}</span></div>
                   {post.x_leads ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    <figure className="overflow-hidden rounded-lg border border-line bg-white"><div className="aspect-square overflow-hidden bg-surface"><img alt="原帖宠物图片" className="h-full w-full object-cover" src={post.x_leads.media_url} /></div><figcaption className="p-3 text-xs font-black">原帖宠物图 · {post.x_leads.pet_type === "cat" ? "猫" : "狗"}</figcaption></figure>
-                    {preview ? <figure className="overflow-hidden rounded-lg border border-emerald-200 bg-white"><div className="aspect-square overflow-hidden bg-surface"><img alt="生成的抱枕预览图" className="h-full w-full object-cover" src={preview} /></div><figcaption className="p-3"><div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-black">待发送预览图</span><CopyImageButton status={post.preview_download_status} taskId={post.id} /></div>{post.preview_download_status === "completed" && post.preview_download_path ? <p className="mt-2 break-all text-[11px] text-emerald-800">已保存：{post.preview_download_path}</p> : null}{post.preview_download_status === "failed" ? <p className="mt-2 text-[11px] text-red-700">{post.preview_download_error ?? "本机下载失败，请确认 X worker 正在运行。"}</p> : null}</figcaption></figure> : <div className="flex aspect-square items-center justify-center rounded-lg border border-dashed border-red-300 bg-red-50 p-5 text-center text-sm font-bold text-red-900"><RotateCcw className="mr-2" size={18} />素材记录已完成，但预览图暂不可读取。</div>}
+                    <figure className="overflow-hidden rounded-lg border border-line bg-white"><div className="aspect-square overflow-hidden bg-surface"><img alt="原帖宠物图片" className="h-full w-full object-cover" decoding="async" loading="lazy" src={post.x_leads.media_url} /></div><figcaption className="p-3 text-xs font-black">原帖宠物图 · {post.x_leads.pet_type === "cat" ? "猫" : "狗"}</figcaption></figure>
+                    {preview ? <figure className="overflow-hidden rounded-lg border border-emerald-200 bg-white"><div className="aspect-square overflow-hidden bg-surface"><img alt="生成的抱枕预览图" className="h-full w-full object-cover" decoding="async" loading="lazy" src={preview} /></div><figcaption className="p-3"><div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-black">待发送预览图</span><CopyImageButton status={post.preview_download_status} taskId={post.id} /></div>{post.preview_download_status === "completed" && post.preview_download_path ? <p className="mt-2 break-all text-[11px] text-emerald-800">已保存：{post.preview_download_path}</p> : null}{post.preview_download_status === "failed" ? <p className="mt-2 text-[11px] text-red-700">{post.preview_download_error ?? "本机下载失败，请确认 X worker 正在运行。"}</p> : null}</figcaption></figure> : <div className="flex aspect-square items-center justify-center rounded-lg border border-dashed border-red-300 bg-red-50 p-5 text-center text-sm font-bold text-red-900"><RotateCcw className="mr-2" size={18} />素材记录已完成，但预览图暂不可读取。</div>}
                   </div> : <p className="mt-4 rounded-lg border border-dashed border-line bg-surface p-3 text-xs text-muted">这是改版前创建的旧任务，没有关联宠物原图和预览图。</p>}
                   {post.target_post_url ? <a className="mt-3 inline-block break-all text-sm font-bold text-accent" href={post.target_post_url} rel="noreferrer" target="_blank">查看目标帖子 ↗</a> : null}
                   <blockquote className="mt-3 whitespace-pre-wrap rounded-lg border border-line bg-white p-4 text-sm leading-6">{post.post_text}</blockquote>
@@ -101,6 +111,9 @@ export default async function XManualPostsPage({ searchParams }: { searchParams:
                 </article>;
               })}
               {!cards.length ? <p className="rounded-xl border border-dashed border-line p-10 text-center text-muted">尚无手动发送记录。</p> : null}
+            </div>
+            <div className="mt-4">
+              <AdminListPagination basePath="/admin/x-manual-posts" currentPage={currentPage} pageSize={X_MANUAL_POSTS_PAGE_SIZE} totalItems={allPosts.length} totalPages={totalPages} />
             </div>
         </section>
       </main>
