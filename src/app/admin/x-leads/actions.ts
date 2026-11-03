@@ -25,9 +25,16 @@ export type QueueActionResult =
   | { ok: false; error: string };
 
 function queueActionError(error: unknown, fallback: string): QueueActionResult {
+  const message = error instanceof Error ? error.message : "";
+  const safeMessage = [
+    "该候选",
+    "第一期",
+    "候选未达到发送标准",
+    "当前没有绑定 Mac 执行器",
+  ].some((prefix) => message.startsWith(prefix));
   return {
     ok: false,
-    error: error instanceof Error && error.message ? error.message : fallback,
+    error: safeMessage ? message : fallback,
   };
 }
 
@@ -164,6 +171,8 @@ export async function createXLeadAutoTask(formData: FormData): Promise<QueueActi
       .from("x_reply_jobs")
       .select("id")
       .eq("x_lead_id", leadId)
+      .order("created_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
     if (existingTaskError) throw new Error(existingTaskError.message);
     if (existingTask) return { ok: true };
