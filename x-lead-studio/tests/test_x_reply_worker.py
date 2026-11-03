@@ -35,9 +35,10 @@ def test_observe_mode_reports_heartbeat_but_never_executes(monkeypatch, tmp_path
     monkeypatch.setattr(x_reply_worker, "_post_claim", post_claim)
     monkeypatch.setattr(x_reply_worker, "_execute_job", forbidden_execute)
 
-    last_error, halt = asyncio.run(x_reply_worker.run_x_reply_iteration(settings))
+    last_error, halt, completed_status = asyncio.run(x_reply_worker.run_x_reply_iteration(settings))
     assert last_error is None
     assert halt is False
+    assert completed_status is None
 
 
 def test_observe_heartbeat_reuses_cached_egress_probe(monkeypatch, tmp_path):
@@ -61,12 +62,13 @@ def test_observe_heartbeat_reuses_cached_egress_probe(monkeypatch, tmp_path):
     monkeypatch.setattr(x_reply_worker, "configured_account_keys", lambda _home: ["pet_account"])
     monkeypatch.setattr(x_reply_worker, "_post_claim", post_claim)
 
-    last_error, halt = asyncio.run(x_reply_worker.run_x_reply_iteration(
+    last_error, halt, completed_status = asyncio.run(x_reply_worker.run_x_reply_iteration(
         settings,
         direct_probe=NetworkProbeResult(True, egress_ip="203.0.113.10"),
     ))
     assert last_error is None
     assert halt is False
+    assert completed_status is None
 
 
 def test_observe_mode_refuses_even_a_nonempty_server_response(monkeypatch, tmp_path):
@@ -87,9 +89,23 @@ def test_observe_mode_refuses_even_a_nonempty_server_response(monkeypatch, tmp_p
     monkeypatch.setattr(x_reply_worker, "_post_claim", post_claim)
     monkeypatch.setattr(x_reply_worker, "_execute_job", forbidden_execute)
 
-    last_error, halt = asyncio.run(x_reply_worker.run_x_reply_iteration(settings))
+    last_error, halt, completed_status = asyncio.run(x_reply_worker.run_x_reply_iteration(settings))
     assert "refused" in (last_error or "")
     assert halt is False
+    assert completed_status is None
+
+
+def test_batch_delay_is_randomized_between_three_and_seven_seconds(monkeypatch):
+    calls = []
+
+    def uniform(low, high):
+        calls.append((low, high))
+        return 5.25
+
+    monkeypatch.setattr(x_reply_worker.random, "uniform", uniform)
+
+    assert x_reply_worker._batch_delay_seconds() == 5.25
+    assert calls == [(3.0, 7.0)]
 
 
 def test_invalid_execution_mode_fails_closed_to_observe(monkeypatch):

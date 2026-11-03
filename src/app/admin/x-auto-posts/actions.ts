@@ -11,6 +11,7 @@ import { getXApprovalBlockReason } from "@/lib/x-reply-safety";
 
 const PAGE_PATH = "/admin/x-auto-posts";
 const idSchema = z.string().uuid();
+const batchIdsSchema = z.array(idSchema).min(1).max(100);
 
 function serviceClient() {
   const supabase = getSupabaseServiceClient();
@@ -29,70 +30,108 @@ function shanghaiDayRange(value: Date) {
 
 export async function approveXAutoDraft(formData: FormData) {
   const user = await requireAdmin(PAGE_PATH);
-  const supabase = serviceClient();
   const jobId = idSchema.parse(String(formData.get("jobId") ?? ""));
-  const { data: job, error } = await supabase
-    .from("x_reply_jobs")
-    .select("id,status,account_id,scheduled_for,preparation_status,x_reply_accounts!inner(account_key,positioning,daily_limit,active,executor_id,network_mode,expected_egress_ip,x_reply_account_proxies(account_id,status))")
-    .eq("id", jobId)
-    .maybeSingle();
-  if (error || !job) throw new Error(error?.message ?? "自动发送草稿不存在。");
-  const account = Array.isArray(job.x_reply_accounts) ? job.x_reply_accounts[0] : job.x_reply_accounts;
-  const proxyRelation = account?.x_reply_account_proxies;
-  const proxy = Array.isArray(proxyRelation) ? proxyRelation[0] : proxyRelation;
-  if (!account?.executor_id) throw new Error(getXApprovalBlockReason({
-    jobStatus: job.status,
-    preparationStatus: job.preparation_status,
-    account: account ? { active: account.active, accountKey: account.account_key, executorId: account.executor_id, networkMode: account.network_mode, expectedEgressIp: account.expected_egress_ip, proxyStatus: proxy?.status ?? null } : null,
-    worker: null,
-    nowMillis: Date.now(),
-  }) ?? "账号配置无效。");
-
-  const { data: worker, error: workerError } = await supabase
-    .from("x_reply_workers")
-    .select("execution_mode,xuse_available,configured_accounts,current_egress_ip,network_probe_status,last_seen_at")
-    .eq("executor_id", account.executor_id)
-    .gte("last_seen_at", new Date(Date.now() - 5 * 60_000).toISOString())
-    .maybeSingle();
-  if (workerError) throw new Error(workerError.message);
-  const safetyError = getXApprovalBlockReason({
-    jobStatus: job.status,
-    preparationStatus: job.preparation_status,
-    account: { active: account.active, accountKey: account.account_key, executorId: account.executor_id, networkMode: account.network_mode, expectedEgressIp: account.expected_egress_ip, proxyStatus: proxy?.status ?? null },
-    worker: worker ? { lastSeenAt: worker.last_seen_at, xuseAvailable: worker.xuse_available, configuredAccounts: Array.isArray(worker.configured_accounts) ? worker.configured_accounts : [], currentEgressIp: worker.current_egress_ip, networkProbeStatus: worker.network_probe_status } : null,
-    nowMillis: Date.now(),
-  });
-  if (safetyError) throw new Error(safetyError);
-
-  const approvedAt = new Date();
-  const range = shanghaiDayRange(approvedAt);
-  const { count, error: countError } = await supabase
-    .from("x_reply_jobs")
-    .select("id", { count: "exact", head: true })
-    .eq("account_id", job.account_id)
-    .in("status", ["queued", "claimed", "sent", "uncertain"])
-    .gte("scheduled_for", range.start)
-    .lt("scheduled_for", range.end);
-  if (countError) throw new Error(countError.message);
-  if ((count ?? 0) >= account.daily_limit) throw new Error("该账号在计划发送日已达到人工设置的发送上限。");
-
-  const { data: updated, error: updateError } = await supabase
-    .from("x_reply_jobs")
-    .update({
-      status: "queued",
-      account_key_snapshot: account.account_key,
-      positioning_snapshot: account.positioning,
-      approved_by: user.id,
-      approved_at: approvedAt.toISOString(),
-      scheduled_for: approvedAt.toISOString(),
-    })
-    .eq("id", jobId)
-    .eq("status", "draft")
-    .select("id")
-    .maybeSingle();
-  if (updateError || !updated) throw new Error(updateError?.message ?? "任务状态已经变化，请刷新页面。");
+  await approveXAutoJobs([jobId], user.id);
   revalidatePath(PAGE_PATH);
   redirect(`${PAGE_PATH}?notice=approved`);
+}
+
+export async function approveXAutoBatch(formData: FormData) {
+  const user = await requireAdmin(PAGE_PATH);
+  const jobIds = batchIdsSchema.parse(formData.getAll("jobId").map(String));
+  const approvedCount = await approveXAutoJobs(jobIds, user.id);
+  revalidatePath(PAGE_PATH);
+  redirect(`${PAGE_PATH}?notice=batch-approved&count=${approvedCount}`);
+}
+
+async function approveXAutoJobs(requestedJobIds: string[], userId: string) {
+  const supabase = serviceClient();
+  const jobIds = [...new Set(requestedJobIds)];
+  const { data: jobs, error } = await supabase
+    .from("x_reply_jobs")
+    .select("id,status,account_id,scheduled_for,preparation_status,x_reply_accounts!inner(account_key,positioning,daily_limit,active,executor_id,network_mode,expected_egress_ip,x_reply_account_proxies(account_id,status))")
+    .in("id", jobIds);
+  if (error) throw new Error(error.message);
+  if (!jobs || jobs.length !== jobIds.length) throw new Error("部分自动发送草稿不存在，请刷新页面后重试。");
+
+  const executorIds = [...new Set(jobs.flatMap((job) => {
+    const account = Array.isArray(job.x_reply_accounts) ? job.x_reply_accounts[0] : job.x_reply_accounts;
+    return account?.executor_id ? [account.executor_id] : [];
+  }))];
+  const { data: workers, error: workerError } = await supabase
+    .from("x_reply_workers")
+    .select("executor_id,execution_mode,xuse_available,configured_accounts,current_egress_ip,network_probe_status,last_seen_at")
+    .in("executor_id", executorIds)
+    .gte("last_seen_at", new Date(Date.now() - 5 * 60_000).toISOString());
+  if (workerError) throw new Error(workerError.message);
+  const approvedAt = new Date();
+  const range = shanghaiDayRange(approvedAt);
+  const workersByExecutor = new Map((workers ?? []).map((worker) => [worker.executor_id, worker]));
+  const groups = new Map<string, {
+    accountKey: string;
+    positioning: string;
+    dailyLimit: number;
+    jobIds: string[];
+  }>();
+
+  for (const job of jobs) {
+    const account = Array.isArray(job.x_reply_accounts) ? job.x_reply_accounts[0] : job.x_reply_accounts;
+    const proxyRelation = account?.x_reply_account_proxies;
+    const proxy = Array.isArray(proxyRelation) ? proxyRelation[0] : proxyRelation;
+    const worker = account?.executor_id ? workersByExecutor.get(account.executor_id) : null;
+    const safetyError = getXApprovalBlockReason({
+      jobStatus: job.status,
+      preparationStatus: job.preparation_status,
+      account: account ? { active: account.active, accountKey: account.account_key, executorId: account.executor_id, networkMode: account.network_mode, expectedEgressIp: account.expected_egress_ip, proxyStatus: proxy?.status ?? null } : null,
+      worker: worker ? { lastSeenAt: worker.last_seen_at, xuseAvailable: worker.xuse_available, configuredAccounts: Array.isArray(worker.configured_accounts) ? worker.configured_accounts : [], currentEgressIp: worker.current_egress_ip, networkProbeStatus: worker.network_probe_status } : null,
+      nowMillis: approvedAt.getTime(),
+    });
+    if (safetyError) throw new Error(safetyError);
+    if (!account || worker?.execution_mode !== "send") throw new Error("绑定的 Mac Worker 当前不是发送模式。");
+    const group = groups.get(job.account_id) ?? {
+      accountKey: account.account_key,
+      positioning: account.positioning,
+      dailyLimit: account.daily_limit,
+      jobIds: [] as string[],
+    };
+    group.jobIds.push(job.id);
+    groups.set(job.account_id, group);
+  }
+
+  for (const [accountId, group] of groups) {
+    const { count, error: countError } = await supabase
+      .from("x_reply_jobs")
+      .select("id", { count: "exact", head: true })
+      .eq("account_id", accountId)
+      .in("status", ["queued", "claimed", "sent", "uncertain"])
+      .gte("scheduled_for", range.start)
+      .lt("scheduled_for", range.end);
+    if (countError) throw new Error(countError.message);
+    if ((count ?? 0) + group.jobIds.length > group.dailyLimit) {
+      throw new Error(`${group.accountKey} 的所选任务会超过今日发送上限。`);
+    }
+  }
+
+  for (const group of groups.values()) {
+    const { data: updated, error: updateError } = await supabase
+      .from("x_reply_jobs")
+      .update({
+        status: "queued",
+        account_key_snapshot: group.accountKey,
+        positioning_snapshot: group.positioning,
+        approved_by: userId,
+        approved_at: approvedAt.toISOString(),
+        scheduled_for: approvedAt.toISOString(),
+      })
+      .in("id", group.jobIds)
+      .eq("status", "draft")
+      .eq("preparation_status", "ready")
+      .select("id");
+    if (updateError || updated?.length !== group.jobIds.length) {
+      throw new Error(updateError?.message ?? "部分任务状态已经变化，请刷新页面后重试。");
+    }
+  }
+  return jobIds.length;
 }
 
 export async function rejectXAutoDraft(formData: FormData) {

@@ -19,6 +19,7 @@ import {
   type XReplyWorker,
 } from "@/lib/x-reply";
 import {
+  approveXAutoBatch,
   approveXAutoDraft,
   authorizeXDailySending,
   pauseXDailySending,
@@ -32,6 +33,7 @@ const notices: Record<string, string> = {
   "draft-created": "自动发送草稿已创建，尚未批准，也不会发送。",
   "lead-added": "已从候选列表加入自动发送草稿，尚未批准，也不会发送。",
   approved: "已批准；Mac Worker 将立即领取并自动发送。",
+  "batch-approved": "所选任务已批量批准；首条确认后，Worker 将按 3–7 秒随机间隔继续发送。",
   "daily-authorized": "已确认今日首条效果；该账号今天的后续已批准任务可以自动发送。",
   "daily-paused": "该账号今天已暂停，Worker 不会再领取它的任务。",
 };
@@ -50,7 +52,7 @@ function formatShanghaiDate(value: string) {
   }).format(new Date(value));
 }
 
-export default async function XAutoPostsPage({ searchParams }: { searchParams: Promise<{ notice?: string }> }) {
+export default async function XAutoPostsPage({ searchParams }: { searchParams: Promise<{ notice?: string; count?: string }> }) {
   await requireAdmin("/admin/x-auto-posts");
   const supabase = getSupabaseServiceClient();
   if (!supabase) return <AppShell admin><main className="mx-auto w-full max-w-3xl px-4 py-10"><SetupWarning /></main></AppShell>;
@@ -71,6 +73,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
     return { job, preview: preview?.url ?? null };
   }));
   const isPreparing = jobs.some((job) => ["pending", "processing"].includes(job.preparation_status));
+  const batchReadyCount = jobs.filter((job) => job.status === "draft" && job.preparation_status === "ready").length;
   const workers = (workerRows ?? []) as XReplyWorker[];
   const renderedAt = getServerNowMillis();
   const freshWorkers = workers.filter((worker) => renderedAt - new Date(worker.last_seen_at).getTime() < 5 * 60_000);
@@ -95,7 +98,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
         </div>
         {notice ? <p className="mt-5 rounded-lg border border-line bg-panel p-3 text-sm font-bold">{notice}</p> : null}
         {jobsError ? <p className="mt-5 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{jobsError.message}</p> : null}
-        <p className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950"><strong>发送队列隔离，候选池共用。</strong>自动任务只从“X 待处理用户与帖子”选择加入；素材准备完成后在本页逐条核对并批准。`observe` 只上报状态，不能领取任务。</p>
+        <p className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950"><strong>发送队列隔离，候选池共用。</strong>自动任务只从“X 待处理用户与帖子”选择加入；素材准备完成后可逐条批准，也可勾选多条批量批准。每日首条仍会停下等待确认，放行后每次成功发送间隔随机 3–7 秒。`observe` 只上报状态，不能领取任务。</p>
         {legacySentCount ? <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950"><strong>历史已发送记录仍在：</strong>启用本机自动发送前，已有 {legacySentCount} 条人工发送历史。<Link className="ml-1 font-black underline" href="/admin/x-manual-posts">打开历史记录</Link></p> : null}
 
         <section className="mt-6 rounded-xl border border-line bg-panel/90 p-5">
@@ -124,7 +127,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
         </section>
 
         <section className="mt-8">
-          <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-black">自动发送队列与结果</h2><p className="mt-1 text-sm text-muted">候选任务到这里后仍需逐条批准；批准后 Mac Worker 会立即领取并发送。</p></div><Link className="focus-ring rounded-lg bg-accent px-4 py-3 text-sm font-black text-accent-ink" href="/admin/x-leads">返回候选列表</Link></div>
+          <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-black">自动发送队列与结果</h2><p className="mt-1 text-sm text-muted">勾选多个已就绪草稿可一次批准；Worker 串行发送并在成功任务之间随机等待 3–7 秒。</p></div><div className="flex flex-wrap gap-2"><form action={approveXAutoBatch} id="batch-approve-form"><FormSubmitButton className="focus-ring h-11 rounded-lg bg-accent px-4 text-sm font-black text-accent-ink disabled:opacity-50" disabled={!batchReadyCount} idleLabel={`批准选中并批量发送${batchReadyCount ? `（可选 ${batchReadyCount} 条）` : ""}`} pendingLabel="正在批量检查账号与队列…" /></form><Link className="focus-ring rounded-lg border border-line bg-white px-4 py-3 text-sm font-black" href="/admin/x-leads">返回候选列表</Link></div></div>
           <div className="mt-4 space-y-4">
             {cards.map(({ job, preview }) => {
               const preparing = ["pending", "processing"].includes(job.preparation_status);
@@ -145,7 +148,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
                   <blockquote className="mt-3 whitespace-pre-wrap rounded-lg border border-line bg-white p-4 text-sm leading-6">{job.reply_text}</blockquote>
                   <div className="mt-3 grid gap-2 text-xs text-muted sm:grid-cols-3"><span>批准：{job.approved_at ? formatDate(job.approved_at) : "—"}</span><span>领取：{job.claimed_at ? formatDate(job.claimed_at) : "—"}</span><span>完成：{job.completed_at ? formatDate(job.completed_at) : "—"}</span></div>
                 </> : null}
-                {job.status === "draft" && job.preparation_status === "ready" ? <div className="mt-4 flex flex-wrap gap-2"><form action={approveXAutoDraft}><input name="jobId" type="hidden" value={job.id} /><FormSubmitButton className="focus-ring h-10 rounded-lg bg-accent px-4 text-sm font-black text-accent-ink disabled:opacity-50" idleLabel="确认并自动发送" pendingLabel="正在检查本机账号…" /></form><form action={rejectXAutoDraft}><input name="jobId" type="hidden" value={job.id} /><button className="focus-ring h-10 rounded-lg border border-line px-4 text-sm font-bold" type="submit">拒绝</button></form></div> : null}
+                {job.status === "draft" && job.preparation_status === "ready" ? <div className="mt-4 flex flex-wrap items-center gap-2"><label className="focus-ring inline-flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-accent bg-white px-3 text-sm font-black text-accent"><input form="batch-approve-form" name="jobId" type="checkbox" value={job.id} />加入本次批量</label><form action={approveXAutoDraft}><input name="jobId" type="hidden" value={job.id} /><FormSubmitButton className="focus-ring h-10 rounded-lg bg-accent px-4 text-sm font-black text-accent-ink disabled:opacity-50" idleLabel="仅发送这一条" pendingLabel="正在检查本机账号…" /></form><form action={rejectXAutoDraft}><input name="jobId" type="hidden" value={job.id} /><button className="focus-ring h-10 rounded-lg border border-line px-4 text-sm font-bold" type="submit">拒绝</button></form></div> : null}
                 {job.status === "sent" ? <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-900"><CheckCircle2 className="mr-2 inline" size={17} />x-use 已确认本次写操作成功{job.result_url ? <> · <a className="underline" href={job.result_url} rel="noreferrer" target="_blank">打开结果</a></> : null}</p> : null}
                 {job.status === "uncertain" ? <p className="mt-4 rounded-lg border border-orange-300 bg-orange-50 p-3 text-sm font-bold text-orange-950"><AlertTriangle className="mr-2 inline" size={17} />结果不确定：必须先去 X 查看，系统不会自动重试。</p> : null}
                 {job.error_message ? <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{job.error_code ? `${job.error_code}: ` : ""}{job.error_message}</p> : null}

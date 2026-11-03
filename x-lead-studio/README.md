@@ -67,8 +67,9 @@ The dashboard records the audience segment on each lead and uses it in the defau
 
 - Only operator-owned accounts with locally imported cookies. Cookies stay under `X_USE_HOME`.
 - Discovery remains read-only. Public replies require exact-text, per-item administrator approval.
-- No DMs, unreviewed copy changes, batch cycles, proxy rotation, fingerprint spoofing, CAPTCHA handling, or challenge bypass.
+- No DMs, unreviewed copy changes, unapproved batch cycles, proxy rotation, fingerprint spoofing, CAPTCHA handling, or challenge bypass.
 - Every automatic item still requires exact-text administrator approval. `vpn_direct` uses only the macOS system VPN; `fixed_proxy` uses one non-rotating route per account. A missing, duplicate, changed, or failed route blocks sending.
+- Administrators can approve multiple prepared drafts in one batch. The worker still sends serially, preserves the daily first-send confirmation gate, and waits a fresh random 3–7 seconds after each confirmed send before claiming the next item.
 - CAPTCHA, Cloudflare, authentication failure, or persistent throttling pauses collection.
 - Original images and mockups are removed after seven days. Anonymous statistics and suppression records remain.
 - Routine tests mock X and do not authenticate to X.
