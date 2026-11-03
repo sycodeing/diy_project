@@ -23,7 +23,7 @@ from .xuse_client import (
 )
 
 
-WORKER_VERSION = "4.2.0-batch-random-delay"
+WORKER_VERSION = "4.2.1-queue-probe-fallback"
 BATCH_DELAY_MIN_SECONDS = 3.0
 BATCH_DELAY_MAX_SECONDS = 7.0
 HALT_ERROR_MARKERS = ("captcha", "challenge", "login", "locked", "rate_limit", "rate limit", "verification")

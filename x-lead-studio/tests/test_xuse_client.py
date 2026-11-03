@@ -24,6 +24,59 @@ def _install_fake_mcp(monkeypatch, session):
     monkeypatch.setitem(sys.modules, "mcp.client.stdio", fake_stdio)
 
 
+def test_direct_browser_probe_uses_fallback_after_primary_failure(monkeypatch):
+    visited = []
+
+    class FakePage:
+        def __init__(self):
+            self.url = ""
+
+        async def goto(self, url, **_kwargs):
+            self.url = url
+            visited.append(url)
+            if url == "https://primary.example.test/ip":
+                raise RuntimeError("primary unavailable")
+
+        async def text_content(self, _selector):
+            return '{"ip":"203.0.113.10"}'
+
+        async def close(self):
+            return None
+
+    class FakeContext:
+        async def new_page(self):
+            return FakePage()
+
+    class FakeBrowser:
+        async def new_context(self):
+            return FakeContext()
+
+        async def close(self):
+            return None
+
+    class FakeChromium:
+        async def launch(self, **_kwargs):
+            return FakeBrowser()
+
+    class FakePlaywright:
+        chromium = FakeChromium()
+
+    class FakeManager:
+        async def __aenter__(self):
+            return FakePlaywright()
+
+        async def __aexit__(self, *_args):
+            return None
+
+    import patchright.async_api
+
+    monkeypatch.setattr(patchright.async_api, "async_playwright", lambda: FakeManager())
+    result = asyncio.run(xuse_client.probe_direct_egress("https://primary.example.test/ip"))
+
+    assert result == NetworkProbeResult(True, egress_ip="203.0.113.10")
+    assert visited == ["https://primary.example.test/ip", "https://api64.ipify.org?format=json"]
+
+
 def test_configured_accounts_require_active_local_cookie_file(tmp_path):
     config = tmp_path / "config"
     config.mkdir()

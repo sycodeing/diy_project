@@ -20,6 +20,17 @@ const RESTORABLE_SELECTION_STATUSES = new Set([
   "review",
 ]);
 
+export type QueueActionResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+function queueActionError(error: unknown, fallback: string): QueueActionResult {
+  return {
+    ok: false,
+    error: error instanceof Error && error.message ? error.message : fallback,
+  };
+}
+
 async function getEligibleLead(leadId: string) {
   const supabase = getSupabaseServiceClient();
   if (!supabase) throw new Error("Supabase 服务端连接尚未配置。");
@@ -62,7 +73,11 @@ async function getLeadAndAssignedAccount(leadId: string) {
     : { data: [], error: null };
   if (workers.error) throw new Error(workers.error.message);
   const workerByExecutor = new Map((workers.data ?? []).flatMap((worker) => worker.executor_id ? [[worker.executor_id, worker] as const] : []));
-  const routableAccounts = (accounts ?? []).filter((account) => {
+  const assignableAccounts = (accounts ?? []).filter((account) => Boolean(account.executor_id));
+  if (!assignableAccounts.length) {
+    throw new Error("当前没有绑定 Mac 执行器的启用账号，请先前往“X 账号/IP”完成绑定。");
+  }
+  const routableAccounts = assignableAccounts.filter((account) => {
     const proxy = Array.isArray(account.x_reply_account_proxies)
       ? account.x_reply_account_proxies[0]
       : account.x_reply_account_proxies;
@@ -85,9 +100,11 @@ async function getLeadAndAssignedAccount(leadId: string) {
       },
     });
   });
-  if (!routableAccounts.length) throw new Error("当前没有通过 Mac 执行器、x-use 账号和出口检查的自动发送账号。");
-
-  const accountIds = routableAccounts.map((account) => account.id);
+  // Creating a draft does not send anything. Prefer a currently routable account,
+  // but allow preparation to continue while its worker or VPN is temporarily
+  // unavailable. Approval and worker claim still repeat the strict route checks.
+  const candidateAccounts = routableAccounts.length ? routableAccounts : assignableAccounts;
+  const accountIds = candidateAccounts.map((account) => account.id);
   const since = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
   const { data: automaticRows } = await supabase
     .from("x_reply_jobs")
@@ -99,62 +116,77 @@ async function getLeadAndAssignedAccount(leadId: string) {
   for (const row of automaticRows ?? []) {
     load.set(row.account_id, (load.get(row.account_id) ?? 0) + 1);
   }
-  const account = [...routableAccounts].sort((left, right) => (load.get(left.id) ?? 0) - (load.get(right.id) ?? 0))[0];
+  const account = [...candidateAccounts].sort((left, right) => (load.get(left.id) ?? 0) - (load.get(right.id) ?? 0))[0];
   return { supabase, lead, account };
 }
 
-export async function createXLeadManualTask(formData: FormData) {
+export async function createXLeadManualTask(formData: FormData): Promise<QueueActionResult> {
   const user = await requireAdmin("/admin/x-leads");
-  const leadId = leadIdSchema.parse(String(formData.get("leadId") ?? ""));
-  const supabase = getSupabaseServiceClient();
-  if (!supabase) throw new Error("Supabase 服务端连接尚未配置。");
-  const { data: existingTask, error: existingTaskError } = await supabase
-    .from("x_manual_posts")
-    .select("id")
-    .eq("x_lead_id", leadId)
-    .maybeSingle();
-  if (existingTaskError) throw new Error(existingTaskError.message);
-  if (existingTask) {
-    return;
-  }
+  try {
+    const leadId = leadIdSchema.parse(String(formData.get("leadId") ?? ""));
+    const supabase = getSupabaseServiceClient();
+    if (!supabase) throw new Error("Supabase 服务端连接尚未配置。");
+    const { data: existingTask, error: existingTaskError } = await supabase
+      .from("x_manual_posts")
+      .select("id")
+      .eq("x_lead_id", leadId)
+      .maybeSingle();
+    if (existingTaskError) throw new Error(existingTaskError.message);
+    if (existingTask) return { ok: true };
 
-  const { lead } = await getEligibleLead(leadId);
-  const { data: task, error } = await supabase.from("x_manual_posts").insert({
-    x_lead_id: leadId,
-    action_type: "reply",
-    target_post_url: lead.post_url,
-    post_text: PREPARING_COPY,
-    status: "draft",
-    preparation_status: "pending",
-    created_by: user.id,
-  }).select("id").single();
-  if (error?.code === "23505") {
-    return;
+    const { lead } = await getEligibleLead(leadId);
+    const { data: task, error } = await supabase.from("x_manual_posts").insert({
+      x_lead_id: leadId,
+      action_type: "reply",
+      target_post_url: lead.post_url,
+      post_text: PREPARING_COPY,
+      status: "draft",
+      preparation_status: "pending",
+      created_by: user.id,
+    }).select("id").single();
+    if (error?.code === "23505") return { ok: true };
+    if (error || !task) throw new Error(error?.message ?? "手动发送任务创建失败。");
+    const { error: updateLeadError } = await supabase.from("x_leads").update({ selection_status: "approved" }).eq("id", leadId);
+    if (updateLeadError) throw new Error(`手动任务已创建，但候选状态更新失败：${updateLeadError.message}`);
+    after(() => prepareXLeadQueueTask({ queue: "manual", taskId: task.id, leadId }));
+    return { ok: true };
+  } catch (error) {
+    return queueActionError(error, "手动发送任务创建失败，请稍后重试。");
   }
-  if (error || !task) throw new Error(error?.message ?? "手动发送任务创建失败。");
-  const { error: updateLeadError } = await supabase.from("x_leads").update({ selection_status: "approved" }).eq("id", leadId);
-  if (updateLeadError) throw new Error(`手动任务已创建，但候选状态更新失败：${updateLeadError.message}`);
-  after(() => prepareXLeadQueueTask({ queue: "manual", taskId: task.id, leadId }));
 }
 
-export async function createXLeadAutoTask(formData: FormData) {
+export async function createXLeadAutoTask(formData: FormData): Promise<QueueActionResult> {
   const user = await requireAdmin("/admin/x-leads");
-  const leadId = leadIdSchema.parse(String(formData.get("leadId") ?? ""));
-  const { supabase, lead, account } = await getLeadAndAssignedAccount(leadId);
-  const { data: task, error } = await supabase.from("x_reply_jobs").insert({
-    account_id: account.id,
-    x_lead_id: leadId,
-    action_type: "reply",
-    target_post_url: lead.post_url,
-    reply_text: PREPARING_COPY,
-    scheduled_for: new Date(Date.now() + 30 * 60_000).toISOString(),
-    status: "draft",
-    preparation_status: "pending",
-    created_by: user.id,
-  }).select("id").single();
-  if (error || !task) throw new Error(error?.message ?? "自动发送草稿创建失败。");
-  await supabase.from("x_leads").update({ selection_status: "approved" }).eq("id", leadId);
-  after(() => prepareXLeadQueueTask({ queue: "automatic", taskId: task.id, leadId }));
+  try {
+    const leadId = leadIdSchema.parse(String(formData.get("leadId") ?? ""));
+    const { supabase, lead, account } = await getLeadAndAssignedAccount(leadId);
+    const { data: existingTask, error: existingTaskError } = await supabase
+      .from("x_reply_jobs")
+      .select("id")
+      .eq("x_lead_id", leadId)
+      .maybeSingle();
+    if (existingTaskError) throw new Error(existingTaskError.message);
+    if (existingTask) return { ok: true };
+    const { data: task, error } = await supabase.from("x_reply_jobs").insert({
+      account_id: account.id,
+      x_lead_id: leadId,
+      action_type: "reply",
+      target_post_url: lead.post_url,
+      reply_text: PREPARING_COPY,
+      scheduled_for: new Date(Date.now() + 30 * 60_000).toISOString(),
+      status: "draft",
+      preparation_status: "pending",
+      created_by: user.id,
+    }).select("id").single();
+    if (error?.code === "23505") return { ok: true };
+    if (error || !task) throw new Error(error?.message ?? "自动发送草稿创建失败。");
+    const { error: updateLeadError } = await supabase.from("x_leads").update({ selection_status: "approved" }).eq("id", leadId);
+    if (updateLeadError) throw new Error(`自动草稿已创建，但候选状态更新失败：${updateLeadError.message}`);
+    after(() => prepareXLeadQueueTask({ queue: "automatic", taskId: task.id, leadId }));
+    return { ok: true };
+  } catch (error) {
+    return queueActionError(error, "自动发送草稿创建失败，请稍后重试。");
+  }
 }
 
 export async function blacklistXLeadAccount(formData: FormData) {

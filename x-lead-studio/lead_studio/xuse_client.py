@@ -13,6 +13,12 @@ from typing import Any, Awaitable, Callable
 
 
 NETWORK_MODES = {"vpn_direct", "fixed_proxy"}
+IP_CHECK_FALLBACK_URLS = (
+    "https://api64.ipify.org?format=json",
+    "https://ifconfig.me/ip",
+    "https://icanhazip.com",
+    "https://checkip.amazonaws.com",
+)
 
 
 @dataclass(frozen=True)
@@ -154,19 +160,32 @@ async def probe_direct_egress(ip_check_url: str) -> NetworkProbeResult:
             browser = await playwright.chromium.launch(headless=False)
             try:
                 context = await browser.new_context()
-                page = await context.new_page()
-                await page.goto(ip_check_url, wait_until="domcontentloaded", timeout=60_000)
-                body = (await page.text_content("body") or "").strip()
+                urls = list(dict.fromkeys((ip_check_url, *IP_CHECK_FALLBACK_URLS)))
+                errors: list[str] = []
+                for url in urls:
+                    page = await context.new_page()
+                    try:
+                        await page.goto(url, wait_until="domcontentloaded", timeout=20_000)
+                        body = (await page.text_content("body") or "").strip()
+                        try:
+                            decoded: Any = json.loads(body)
+                        except ValueError:
+                            decoded = body
+                        egress_ip = _extract_ip(decoded)
+                        if egress_ip:
+                            return NetworkProbeResult(True, egress_ip=egress_ip)
+                        errors.append(f"{url}: invalid IP response")
+                    except Exception as error:
+                        errors.append(f"{url}: {type(error).__name__}")
+                    finally:
+                        await page.close()
             finally:
                 await browser.close()
-        try:
-            decoded: Any = json.loads(body)
-        except ValueError:
-            decoded = body
-        egress_ip = _extract_ip(decoded)
-        if not egress_ip:
-            return NetworkProbeResult(False, error_code="browser_ip_unconfirmed", error_message="Patchright browser did not return a valid egress IP.")
-        return NetworkProbeResult(True, egress_ip=egress_ip)
+        return NetworkProbeResult(
+            False,
+            error_code="browser_ip_unconfirmed",
+            error_message=_redact_sensitive(f"Patchright browser could not confirm its egress IP ({'; '.join(errors)})."),
+        )
     except Exception as error:
         return NetworkProbeResult(
             False,

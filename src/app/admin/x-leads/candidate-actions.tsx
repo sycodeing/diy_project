@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { X_LEAD_REJECTION_REASON_LABELS, X_LEAD_REJECTION_REASONS } from "@/lib/x-lead";
-import { blacklistXLeadAccount, createXLeadAutoTask, createXLeadManualTask, setXLeadSuitability } from "./actions";
+import { blacklistXLeadAccount, createXLeadAutoTask, createXLeadManualTask, setXLeadSuitability, type QueueActionResult } from "./actions";
 
 type QueueState = {
   href: string;
@@ -55,15 +55,29 @@ export function CandidateActions({
     }
   }
 
+  async function runQueueAction(action: () => Promise<QueueActionResult>, onSuccess: () => void) {
+    setError(null);
+    try {
+      const result = await action();
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      onSuccess();
+    } catch {
+      setError("操作失败，请稍后重试。");
+    }
+  }
+
   async function addToManualQueue(formData: FormData) {
-    await runAction(
+    await runQueueAction(
       () => createXLeadManualTask(formData),
       () => setQueueState({ href: "/admin/x-manual-posts", label: "已加入手动队列 · 素材准备中" }),
     );
   }
 
   async function addToAutoQueue(formData: FormData) {
-    await runAction(
+    await runQueueAction(
       () => createXLeadAutoTask(formData),
       () => setQueueState({ href: "/admin/x-auto-posts", label: "已加入自动队列 · 素材准备中" }),
     );
