@@ -5,6 +5,7 @@ import { createXLeadDrafts, getXLeadShortCopyVariant, type XLeadCopyProfile } fr
 import { getXLeadTargetingChecks, type XLeadRow } from "@/lib/x-lead";
 
 type QueueKind = "manual" | "automatic";
+export const X_LEAD_MARKETING_CHANNEL = "public_reply" as const;
 
 export async function ensureXLeadMarketingAssets(
   leadId: string,
@@ -40,7 +41,7 @@ export async function ensureXLeadMarketingAssets(
 
   const dateKey = new Date().toISOString().slice(0, 10).replaceAll("-", "");
   const campaign = `x_${lead.segment}_${dateKey}`;
-  const channel = "direct_message";
+  const channel = X_LEAD_MARKETING_CHANNEL;
   const variant = getXLeadShortCopyVariant(lead.post_id);
   const sourceHash = createHmac("sha256", secret).update(`x-post:${lead.post_id}`).digest("hex");
   const linkCycle = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));

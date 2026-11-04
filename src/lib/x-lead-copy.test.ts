@@ -5,6 +5,11 @@ import {
   getXLeadCopyOccasion,
   getXLeadShortCopyVariant,
 } from "./x-lead-copy.ts";
+import { X_LEAD_MARKETING_CHANNEL } from "./x-lead-materials.ts";
+
+test("attributes the X lead workflow to public replies", () => {
+  assert.equal(X_LEAD_MARKETING_CHANNEL, "public_reply");
+});
 
 test("keeps scene-specific discovery separate from direct sales copy", () => {
   const context = {
