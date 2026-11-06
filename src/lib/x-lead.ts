@@ -226,10 +226,31 @@ export function sortXLeadsByPriority(leads: XLeadRow[], usMinConfidence = 70) {
     const conclusionDifference = X_LEAD_CONCLUSION_ORDER[getXLeadReferenceConclusion(left, usMinConfidence)]
       - X_LEAD_CONCLUSION_ORDER[getXLeadReferenceConclusion(right, usMinConfidence)];
     if (conclusionDifference) return conclusionDifference;
-    const scoreDifference = (right.lead_score ?? -1) - (left.lead_score ?? -1);
+    const scoreDifference = getXLeadPriorityScore(right) - getXLeadPriorityScore(left);
     if (scoreDifference) return scoreDifference;
     return right.discovered_at.localeCompare(left.discovered_at) || right.id.localeCompare(left.id);
   });
+}
+
+export function getXLeadPriorityScore(lead: XLeadRow) {
+  if (lead.lead_score !== null && lead.lead_score !== undefined) return lead.lead_score;
+  const engagement = numericTargetingValue(lead.targeting_data?.engagement_quality, 0);
+  const account = numericTargetingValue(lead.targeting_data?.account_quality, 0);
+  const recency = numericTargetingValue(lead.targeting_data?.recency_score, 0);
+  return Math.round(
+    numericTargetingValue(lead.ownership_confidence, 0) * 0.25
+      + numericTargetingValue(lead.occasion_confidence, 0) * 0.2
+      + numericTargetingValue(lead.us_confidence, 0) * 0.2
+      + engagement * 0.15
+      + account * 0.1
+      + recency * 0.1,
+  );
+}
+
+function numericTargetingValue(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.min(100, value))
+    : fallback;
 }
 
 export function filterXLeadsForQueue(
@@ -311,6 +332,7 @@ export type XLeadRow = {
   x_handle: string;
   post_url: string;
   media_url: string;
+  media_urls: string[] | null;
   posted_at: string | null;
   discovered_at: string;
   selection_status: string;

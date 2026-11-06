@@ -17,6 +17,7 @@ const candidateSchema = z.object({
   handle: z.string().trim().regex(/^[A-Za-z0-9_]{1,50}$/),
   postUrl: z.url().max(2048).refine((value) => /^https:\/\/(?:www\.)?(?:x|twitter)\.com\//i.test(value)),
   mediaUrl: z.url().max(2048).refine((value) => value.startsWith("https://")),
+  mediaUrls: z.array(z.url().max(2048).refine((value) => value.startsWith("https://"))).min(1).max(4).optional(),
   postedAt: z.string().datetime({ offset: true }).nullable().optional(),
   selectionStatus: z.enum(["new", "location_review", "targeting_review", "rejected_targeting"]),
   segment: z.enum(X_LEAD_DISCOVERY_SEGMENTS),
@@ -79,7 +80,7 @@ export async function POST(request: Request, context: RouteContext<"/api/x-leads
     const [{ data: existing, error: existingError }, { data: blacklist, error: blacklistError }] = await Promise.all([
       supabase
         .from("x_leads")
-        .select("post_id,author_hash,selection_status,source_job_id,discovered_at,targeting_data")
+        .select("post_id,author_hash,selection_status,source_job_id,discovered_at,targeting_data,media_url,media_urls")
         .in("author_hash", authorHashes),
       supabase
         .from("x_lead_account_blacklist")

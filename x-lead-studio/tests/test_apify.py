@@ -95,3 +95,32 @@ def test_profile_actor_input_never_fetches_timelines():
     assert payload["includeProfile"] is True
     assert payload["includeAccountOrigin"] is True
     assert payload["includeTweets"] is False
+
+
+def test_apify_keeps_all_post_photos_for_operator_selection():
+    items = [{
+        "tweetId": "210000000000000003",
+        "text": "It is my cat's birthday today!",
+        "createdAt": "2026-10-13T12:00:00Z",
+        "isRetweet": False,
+        "isReply": False,
+        "photos": [
+            "https://pbs.twimg.com/media/first.jpg",
+            {"url": "https://pbs.twimg.com/media/second.jpg"},
+        ],
+        "authorHandle": "birthday_cat",
+        "searchQuery": '"my cat birthday" lang:en filter:media place_country:US',
+    }]
+
+    _, candidates = normalize_apify_items(
+        items,
+        run_id="run-3",
+        dataset_id="dataset-3",
+        us_required=True,
+        us_min_confidence=70,
+    )
+
+    assert candidates[0]["media_urls"] == [
+        "https://pbs.twimg.com/media/first.jpg",
+        "https://pbs.twimg.com/media/second.jpg",
+    ]

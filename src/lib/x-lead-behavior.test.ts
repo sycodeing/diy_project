@@ -3,7 +3,7 @@ import test from "node:test";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { buildXLeadDiscoveryUpsertRow, filterXLeadDiscoveryCandidates, type XLeadDiscoveryCandidate } from "./x-lead-discovery-upsert.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { filterXLeadsForQueue, getXLeadRejectionNote, getXLeadRejectionReason, sortXLeadsByPriority, type XLeadRow } from "./x-lead.ts";
+import { filterXLeadsForQueue, getXLeadPriorityScore, getXLeadRejectionNote, getXLeadRejectionReason, sortXLeadsByPriority, type XLeadRow } from "./x-lead.ts";
 
 function candidate(overrides: Partial<XLeadDiscoveryCandidate> = {}): XLeadDiscoveryCandidate {
   return {
@@ -12,6 +12,7 @@ function candidate(overrides: Partial<XLeadDiscoveryCandidate> = {}): XLeadDisco
     handle: "pet_owner",
     postUrl: "https://x.com/pet_owner/status/1",
     mediaUrl: "https://example.com/pet.jpg",
+    mediaUrls: ["https://example.com/pet.jpg"],
     selectionStatus: "new",
     segment: "new_adoption",
     petType: "cat",
@@ -36,6 +37,8 @@ test("discovery refresh preserves an existing human decision and original discov
       source_job_id: "original-job",
       discovered_at: "2026-10-20T01:00:00Z",
       targeting_data: { manual_note: "sent" },
+      media_url: "https://example.com/chosen.jpg",
+      media_urls: ["https://example.com/pet.jpg", "https://example.com/chosen.jpg"],
     },
   });
 
@@ -43,6 +46,8 @@ test("discovery refresh preserves an existing human decision and original discov
   assert.equal(row.source_job_id, "original-job");
   assert.equal(row.discovered_at, "2026-10-20T01:00:00Z");
   assert.deepEqual(row.targeting_data, { manual_note: "sent" });
+  assert.equal(row.media_url, "https://example.com/chosen.jpg");
+  assert.deepEqual(row.media_urls, ["https://example.com/pet.jpg", "https://example.com/chosen.jpg"]);
 });
 
 test("discovery excludes blacklisted accounts and keeps only one post per account", () => {
@@ -126,6 +131,14 @@ test("candidate sorting uses lead score before discovery time within the same co
   const highScore = { ...lead("high", "new", { ownership_terms: ["my cat"], matched_terms: ["just adopted"] }, "2026-10-23T01:00:00Z"), lead_score: 90 };
 
   assert.deepEqual(sortXLeadsByPriority([lowScore, highScore]).map((row) => row.id), ["high", "low"]);
+});
+
+test("candidate sorting falls back to targeting quality when vision score is absent", () => {
+  const stale = { ...lead("stale", "new", { ownership_terms: ["my cat"], matched_terms: ["just adopted"], engagement_quality: 20, account_quality: 40, recency_score: 10 }, "2026-10-23T03:00:00Z"), ownership_confidence: 88, occasion_confidence: 88 };
+  const strong = { ...lead("strong", "new", { ownership_terms: ["my cat"], matched_terms: ["just adopted"], engagement_quality: 80, account_quality: 80, recency_score: 90 }, "2026-10-23T01:00:00Z"), ownership_confidence: 88, occasion_confidence: 88 };
+
+  assert.ok(getXLeadPriorityScore(strong) > getXLeadPriorityScore(stale));
+  assert.deepEqual(sortXLeadsByPriority([stale, strong]).map((row) => row.id), ["strong", "stale"]);
 });
 
 test("default candidate queue contains only actionable conclusions", () => {

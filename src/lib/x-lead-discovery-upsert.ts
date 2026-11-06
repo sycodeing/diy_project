@@ -14,6 +14,7 @@ export type XLeadDiscoveryCandidate = {
   handle: string;
   postUrl: string;
   mediaUrl: string;
+  mediaUrls?: string[];
   postedAt?: string | null;
   selectionStatus: "new" | "location_review" | "targeting_review" | "rejected_targeting";
   segment: (typeof X_LEAD_DISCOVERY_SEGMENTS)[number];
@@ -42,6 +43,8 @@ export type ExistingXLeadDiscoveryRow = {
   source_job_id: string | null;
   discovered_at: string;
   targeting_data: Record<string, unknown> | null;
+  media_url?: string;
+  media_urls?: string[] | null;
 };
 
 export function filterXLeadDiscoveryCandidates({
@@ -95,13 +98,16 @@ export function buildXLeadDiscoveryUpsertRow({
   existing?: ExistingXLeadDiscoveryRow;
 }) {
   const preserveHumanDecision = Boolean(existing && HUMAN_X_LEAD_STATUSES.has(existing.selection_status));
+  const candidateMediaUrls = uniqueMediaUrls(candidate.mediaUrls, candidate.mediaUrl);
+  const mediaUrls = uniqueMediaUrls(existing?.media_urls, ...candidateMediaUrls);
   return {
     source_job_id: existing?.source_job_id ?? jobId,
     post_id: candidate.postId,
     author_hash: candidate.authorHash,
     x_handle: candidate.handle,
     post_url: candidate.postUrl,
-    media_url: candidate.mediaUrl,
+    media_url: preserveHumanDecision && existing?.media_url ? existing.media_url : candidate.mediaUrl,
+    media_urls: mediaUrls,
     posted_at: candidate.postedAt ?? null,
     discovered_at: existing?.discovered_at ?? discoveredAt,
     selection_status: preserveHumanDecision ? existing!.selection_status : candidate.selectionStatus,
@@ -123,4 +129,10 @@ export function buildXLeadDiscoveryUpsertRow({
     public_copy: candidate.publicCopy ?? null,
     direct_message_copy: candidate.directMessageCopy ?? null,
   };
+}
+
+function uniqueMediaUrls(values: string[] | null | undefined, fallback: string): string[];
+function uniqueMediaUrls(values: string[] | null | undefined, ...fallback: string[]): string[];
+function uniqueMediaUrls(values: string[] | null | undefined, ...fallback: string[]) {
+  return [...new Set([...(values ?? []), ...fallback].filter((value) => value.startsWith("https://")))].slice(0, 4);
 }
