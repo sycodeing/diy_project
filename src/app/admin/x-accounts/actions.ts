@@ -158,7 +158,16 @@ export async function lockCurrentVpnEgress(formData: FormData) {
     throw new Error("Patchright 浏览器尚未报告可确认的 VPN 出口 IP。");
   }
   const { data: updated, error } = await supabase.from("x_reply_accounts")
-    .update({ expected_egress_ip: worker.current_egress_ip })
+    .update({
+      expected_egress_ip: worker.current_egress_ip,
+      verification_status: "unverified",
+      verification_requested_at: null,
+      verification_started_at: null,
+      verification_completed_at: null,
+      verified_x_handle: null,
+      verified_egress_ip: null,
+      verification_error: null,
+    })
     .eq("id", accountId)
     .eq("network_mode", "vpn_direct")
     .select("id")
