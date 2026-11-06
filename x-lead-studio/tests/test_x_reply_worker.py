@@ -95,6 +95,36 @@ def test_observe_mode_refuses_even_a_nonempty_server_response(monkeypatch, tmp_p
     assert completed_status is None
 
 
+def test_observe_mode_executes_explicit_read_only_mapping_verification(monkeypatch, tmp_path):
+    settings = replace(Settings(), x_reply_execution_mode="observe", x_reply_worker_secret="s" * 32, x_use_home=tmp_path)
+    verification = {"id": "account-1", "accountKey": "pet_account", "networkMode": "vpn_direct", "proxyUrl": None}
+
+    async def direct_probe(_url):
+        return NetworkProbeResult(True, egress_ip="203.0.113.10")
+
+    async def post_claim(_settings, _client, _payload):
+        return httpx.Response(200, json={"verification": verification})
+
+    async def execute_mapping(_settings, _client, value):
+        assert value == verification
+        return None
+
+    async def forbidden_execute(*_args, **_kwargs):
+        raise AssertionError("observe mode must never execute a write job")
+
+    monkeypatch.setattr(x_reply_worker, "probe_direct_egress", direct_probe)
+    monkeypatch.setattr(x_reply_worker, "xuse_is_installed", lambda: True)
+    monkeypatch.setattr(x_reply_worker, "configured_account_keys", lambda _home: ["pet_account"])
+    monkeypatch.setattr(x_reply_worker, "_post_claim", post_claim)
+    monkeypatch.setattr(x_reply_worker, "_execute_mapping_verification", execute_mapping)
+    monkeypatch.setattr(x_reply_worker, "_execute_job", forbidden_execute)
+
+    last_error, halt, completed_status = asyncio.run(x_reply_worker.run_x_reply_iteration(settings))
+    assert last_error is None
+    assert halt is False
+    assert completed_status is None
+
+
 def test_batch_delay_is_randomized_between_fifteen_and_thirty_seconds(monkeypatch):
     calls = []
 

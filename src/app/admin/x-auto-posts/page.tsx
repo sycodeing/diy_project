@@ -72,6 +72,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
     return { job, preview: preview?.url ?? null };
   }));
   const isPreparing = jobs.some((job) => ["pending", "processing"].includes(job.preparation_status));
+  const queueActive = isPreparing || jobs.some((job) => ["queued", "claimed"].includes(job.status));
   const batchReadyCount = jobs.filter((job) => job.status === "draft" && job.preparation_status === "ready").length;
   const workers = (workerRows ?? []) as XReplyWorker[];
   const renderedAt = getServerNowMillis();
@@ -84,10 +85,10 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
 
   return (
     <AppShell admin>
-      <QueueAutoRefresh active={isPreparing} />
+      <QueueAutoRefresh active={queueActive} />
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
-          <div><p className="text-xs font-black uppercase tracking-[0.18em] text-accent-strong">Mac x-use execution chain</p><h1 className="mt-1 text-4xl font-black">X 自动发送</h1><p className="mt-2 text-sm text-muted">每条内容先审核，计划时间到达后由绑定 Mac 的 x-use + Patchright 可见浏览器执行；Cookie 只保存在本机。</p></div>
+          <div><p className="text-xs font-black uppercase tracking-[0.18em] text-accent-strong">Mac x-use execution chain</p><h1 className="mt-1 text-4xl font-black">X 自动发送</h1><p className="mt-2 text-sm text-muted">从候选页选择账号并加入后，素材就绪即由绑定 Mac 的 x-use + Patchright 可见浏览器自动执行；Cookie 只保存在本机。</p></div>
           <div className="flex flex-wrap items-center gap-2">
             <Link className="focus-ring rounded-lg bg-accent px-4 py-3 text-sm font-black text-accent-ink" href="/admin/x-lead-search">获取待筛选用户</Link>
             <div className={cn("rounded-lg border px-4 py-3 text-sm font-bold", executorOnline ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-200 bg-amber-50 text-amber-900")}>
@@ -97,7 +98,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
         </div>
         {notice ? <p className="mt-5 rounded-lg border border-line bg-panel p-3 text-sm font-bold">{notice}</p> : null}
         {jobsError ? <p className="mt-5 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{jobsError.message}</p> : null}
-        <p className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950"><strong>发送队列隔离，候选池共用。</strong>自动任务只从“X 待处理用户与帖子”选择加入；素材准备完成后可逐条批准，也可勾选多条批量批准。每日首条仍会停下等待确认，放行后每次成功发送间隔随机 15–30 秒。`observe` 只上报状态，不能领取任务。</p>
+        <p className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950"><strong>发送队列隔离，候选池共用。</strong>自动任务只从“X 待处理用户与帖子”选择账号后加入；素材准备完成即自动发送。成功任务之间随机等待 15–30 秒，每完成 12 条强制休息 45 分钟。每日首条监督若启用，仍会在首条后等待确认；`observe` 模式只允许账号/IP 的只读验证，不能领取写任务。</p>
         {legacySentCount ? <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950"><strong>历史已发送记录仍在：</strong>启用本机自动发送前，已有 {legacySentCount} 条人工发送历史。<Link className="ml-1 font-black underline" href="/admin/x-manual-posts">打开历史记录</Link></p> : null}
 
         <section className="mt-6 rounded-xl border border-line bg-panel/90 p-5">
@@ -111,7 +112,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
               const egressMatches = account.network_mode === "fixed_proxy" || Boolean(account.expected_egress_ip && worker?.current_egress_ip === account.expected_egress_ip && worker.network_probe_status === "healthy");
               const status = !account.require_daily_first_confirmation ? "disabled" : gate?.status ?? "pending";
               const label = status === "authorized" ? "今日已放行" : status === "awaiting_confirmation" ? (gate?.first_sent_at ? "首条已发，等待确认" : "首条正在发送") : status === "paused" ? "今日已暂停" : status === "disabled" ? "未启用监督" : "等待今日首条";
-              return <div className="rounded-lg border border-line bg-white p-4" key={account.id}><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-black">{account.display_name}</p><p className="text-xs text-muted">{account.executor_id ?? "未绑定执行器"} · {account.network_mode}</p></div><span className="rounded-md border border-line px-2 py-1 text-xs font-bold">{label}</span></div><div className="mt-2 grid gap-1 text-xs text-muted sm:grid-cols-2"><span>执行模式：{worker?.execution_mode ?? "离线"}</span><span>x-use：{worker?.xuse_available ? "正常" : "异常"}</span><span>本地账号：{localAccount ? "存在" : "缺失"}</span><span>当前出口：{worker?.current_egress_ip ?? "未确认"}</span><span>网络：{egressMatches ? "匹配" : "未锁定或不匹配"}</span><span>检查：{worker?.network_probe_status ?? "unknown"}</span></div>{account.require_daily_first_confirmation ? <div className="mt-3 flex gap-2">{status === "awaiting_confirmation" && gate?.first_sent_at ? <form action={authorizeXDailySending}><input name="accountId" type="hidden" value={account.id} /><FormSubmitButton className="focus-ring h-9 rounded-md bg-accent px-3 text-xs font-black text-accent-ink" idleLabel="效果正常，放行今日后续" pendingLabel="正在放行…" /></form> : null}<form action={pauseXDailySending}><input name="accountId" type="hidden" value={account.id} /><FormSubmitButton className="focus-ring h-9 rounded-md border border-line px-3 text-xs font-bold" idleLabel="暂停今日发送" pendingLabel="正在暂停…" /></form></div> : null}</div>;
+              return <div className="rounded-lg border border-line bg-white p-4" key={account.id}><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-black">{account.display_name}</p><p className="text-xs text-muted">{account.executor_id ?? "未绑定执行器"} · {account.network_mode}</p></div><span className="rounded-md border border-line px-2 py-1 text-xs font-bold">{label}</span></div><div className="mt-2 grid gap-1 text-xs text-muted sm:grid-cols-2"><span>执行模式：{worker?.execution_mode ?? "离线"}</span><span>x-use：{worker?.xuse_available ? "正常" : "异常"}</span><span>本地账号：{localAccount ? "存在" : "缺失"}</span><span>当前出口：{worker?.current_egress_ip ?? "未确认"}</span><span>网络：{egressMatches ? "匹配" : "未锁定或不匹配"}</span><span>本轮已发送：{worker?.batch_sent_count ?? 0} / 12</span><span>批次休息：{worker?.cooldown_until && Date.parse(worker.cooldown_until) > renderedAt ? `至 ${formatShanghaiDate(worker.cooldown_until)}` : "未休息"}</span><span>检查：{worker?.network_probe_status ?? "unknown"}</span></div>{account.require_daily_first_confirmation ? <div className="mt-3 flex gap-2">{status === "awaiting_confirmation" && gate?.first_sent_at ? <form action={authorizeXDailySending}><input name="accountId" type="hidden" value={account.id} /><FormSubmitButton className="focus-ring h-9 rounded-md bg-accent px-3 text-xs font-black text-accent-ink" idleLabel="效果正常，放行今日后续" pendingLabel="正在放行…" /></form> : null}<form action={pauseXDailySending}><input name="accountId" type="hidden" value={account.id} /><FormSubmitButton className="focus-ring h-9 rounded-md border border-line px-3 text-xs font-bold" idleLabel="暂停今日发送" pendingLabel="正在暂停…" /></form></div> : null}</div>;
             })}
           </div>
         </section>
@@ -119,14 +120,14 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
         <section className="mt-6 grid gap-4 lg:grid-cols-2">
           <div className="rounded-xl border border-blue-200 bg-blue-50 p-5">
             <h2 className="text-xl font-black text-blue-950">自动任务从候选列表创建</h2>
-            <p className="mt-2 text-sm leading-6 text-blue-900">先在候选页查看用户、原帖图片、位置证据和评分，再加入自动队列；本页核对生成的预览图、最终文案、账号和计划时间后逐条批准。</p>
+            <p className="mt-2 text-sm leading-6 text-blue-900">先在候选页查看用户、原帖图片、位置证据和评分，选择发送账号后加入自动队列；素材就绪后无需再次批准，会按队列节奏自动发送。</p>
             <Link className="focus-ring mt-5 inline-flex h-11 items-center rounded-lg bg-accent px-5 font-black text-accent-ink" href="/admin/x-leads">打开待处理用户与帖子</Link>
           </div>
           <div className="rounded-xl border border-line bg-panel/90 p-5"><h2 className="text-xl font-black">账号、执行器、文案与独立出口</h2><p className="mt-2 text-sm leading-6 text-muted">账号资料、Mac 执行器绑定和 VPN/固定代理策略在独立管理页维护；自动任务会在领取前和写入前两次校验浏览器出口。</p><Link className="focus-ring mt-5 inline-flex h-11 items-center rounded-lg border border-line px-5 font-black" href="/admin/x-accounts">管理 X 账号/IP</Link></div>
         </section>
 
         <section className="mt-8">
-          <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-black">自动发送队列与结果</h2><p className="mt-1 text-sm text-muted">勾选多个已就绪草稿可一次批准；Worker 串行发送并在成功任务之间随机等待 15–30 秒。</p></div><div className="flex max-w-full flex-wrap justify-end gap-2"><ApprovalForm mode="batch" readyCount={batchReadyCount} /><Link className="focus-ring rounded-lg border border-line bg-white px-4 py-3 text-sm font-black" href="/admin/x-leads">返回候选列表</Link></div></div>
+          <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-black">自动发送队列与结果</h2><p className="mt-1 text-sm text-muted">Worker 串行发送：每条间隔 15–30 秒，每 12 条休息 45 分钟。下方批量批准仅用于兼容此前遗留草稿。</p></div><div className="flex max-w-full flex-wrap justify-end gap-2">{batchReadyCount ? <ApprovalForm mode="batch" readyCount={batchReadyCount} /> : null}<Link className="focus-ring rounded-lg border border-line bg-white px-4 py-3 text-sm font-black" href="/admin/x-leads">返回候选列表</Link></div></div>
           <div className="mt-4 space-y-4">
             {cards.map(({ job, preview }) => {
               const preparing = ["pending", "processing"].includes(job.preparation_status);

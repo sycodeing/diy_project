@@ -44,6 +44,12 @@ type AutomaticQueueTaskSummary = {
   created_at: string;
 };
 
+export type XLeadAccountOption = {
+  id: string;
+  accountKey: string;
+  displayName: string;
+};
+
 export default async function XLeadsPage({
   searchParams,
 }: {
@@ -65,12 +71,17 @@ export default async function XLeadsPage({
   if (filters.segment) query = query.eq("segment", filters.segment);
   if (filters.review === "rejected" || filters.reason) query = query.eq("selection_status", "rejected");
   else if (filters.review !== "all") query = query.neq("selection_status", "rejected");
-  const [{ data, error }, { count: activeAccountCount, error: accountsError }, { data: searchConfig }, { data: rejectedRows }] = await Promise.all([
+  const [{ data, error }, { data: activeAccountRows, error: accountsError }, { data: searchConfig }, { data: rejectedRows }] = await Promise.all([
     query,
-    supabase.from("x_reply_accounts").select("id", { count: "exact", head: true }).eq("active", true),
+    supabase.from("x_reply_accounts").select("id,account_key,display_name").eq("active", true).order("display_name"),
     supabase.from("x_lead_search_configs").select("us_min_confidence").eq("config_key", "default").maybeSingle(),
     supabase.from("x_leads").select("targeting_data").eq("selection_status", "rejected").limit(1000),
   ]);
+  const accountOptions: XLeadAccountOption[] = (activeAccountRows ?? []).map((account) => ({
+    id: account.id,
+    accountKey: account.account_key,
+    displayName: account.display_name,
+  }));
   const leadsWithQueueTasks = (data ?? []) as unknown as Array<XLeadRow & {
     x_manual_posts: ManualQueueTaskSummary[] | null;
     x_reply_jobs: AutomaticQueueTaskSummary[] | null;
@@ -155,7 +166,7 @@ export default async function XLeadsPage({
         </div>
 
         {error || accountsError ? <p className="mt-6 rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">读取候选列表失败：{error?.message ?? accountsError?.message}</p> : null}
-        {!accountsError && !activeAccountCount ? <p className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-900">当前没有启用的自动发送账号，因此只能加入手动队列；手动队列不绑定账号。</p> : null}
+        {!accountsError && !accountOptions.length ? <p className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-900">当前没有启用的自动发送账号，因此只能加入手动队列；手动队列不绑定账号。</p> : null}
         <div className="mt-6">
           <AdminListPagination basePath="/admin/x-leads" currentPage={currentPage} pageSize={X_LEADS_PAGE_SIZE} searchParams={paginationFilters} totalItems={sortedLeads.length} totalPages={totalPages} />
         </div>
@@ -203,7 +214,7 @@ export default async function XLeadsPage({
                   <ReferenceConclusion conclusion={conclusion} failedChecks={failedChecks} reviewEvidence={reviewEvidence} />
                   <CandidateActions
                     actionable={actionable}
-                    activeAccountCount={activeAccountCount ?? 0}
+                    accountOptions={accountOptions}
                     existingAutomaticTaskLabel={automaticTask ? describeAutomaticQueueTask(automaticTask) : undefined}
                     existingManualTaskLabel={manualTask ? describeManualQueueTask(manualTask) : undefined}
                     initialRejectionNote={getXLeadRejectionNote(lead)}

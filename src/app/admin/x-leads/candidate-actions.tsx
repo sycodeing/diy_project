@@ -5,6 +5,7 @@ import { useState } from "react";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { X_LEAD_REJECTION_REASON_LABELS, X_LEAD_REJECTION_REASONS } from "@/lib/x-lead";
 import { blacklistXLeadAccount, createXLeadAutoTask, createXLeadManualTask, setXLeadSuitability, type QueueActionResult } from "./actions";
+import type { XLeadAccountOption } from "./page";
 
 type QueueState = {
   href: string;
@@ -13,7 +14,7 @@ type QueueState = {
 
 export function CandidateActions({
   actionable,
-  activeAccountCount,
+  accountOptions,
   existingAutomaticTaskLabel,
   existingManualTaskLabel,
   initialRejectionNote,
@@ -22,7 +23,7 @@ export function CandidateActions({
   selectionStatus,
 }: {
   actionable: boolean;
-  activeAccountCount: number;
+  accountOptions: XLeadAccountOption[];
   existingAutomaticTaskLabel?: string;
   existingManualTaskLabel?: string;
   initialRejectionNote: string;
@@ -79,7 +80,7 @@ export function CandidateActions({
   async function addToAutoQueue(formData: FormData) {
     await runQueueAction(
       () => createXLeadAutoTask(formData),
-      () => setQueueState({ href: "/admin/x-auto-posts", label: "已加入自动队列 · 素材准备中" }),
+      () => setQueueState({ href: "/admin/x-auto-posts", label: "已加入自动队列 · 素材就绪后自动发送" }),
     );
   }
 
@@ -113,7 +114,8 @@ export function CandidateActions({
       </form>
       <form action={addToAutoQueue}>
         <input name="leadId" type="hidden" value={leadId} />
-        <FormSubmitButton className="focus-ring h-11 w-full rounded-lg bg-accent px-4 text-sm font-black text-accent-ink disabled:opacity-50" disabled={!activeAccountCount} idleLabel="加入自动队列" pendingLabel="正在入队…" />
+        <label className="mb-2 block text-xs font-bold">发送 X 账号<select className="focus-ring mt-1.5 h-10 w-full rounded-lg border border-line bg-white px-3 text-sm" defaultValue="" disabled={!accountOptions.length} name="accountId" required><option disabled value="">请选择账号</option>{accountOptions.map((account) => <option key={account.id} value={account.id}>{account.displayName} · @{account.accountKey}</option>)}</select></label>
+        <FormSubmitButton className="focus-ring h-11 w-full rounded-lg bg-accent px-4 text-sm font-black text-accent-ink disabled:opacity-50" disabled={!accountOptions.length} idleLabel="加入并自动发送" pendingLabel="正在入队…" />
       </form>
     </div> : !filtered ? <p className="border-t border-line pt-3 text-xs font-bold text-red-700">参考结论不建议处理，不能加入发送队列。</p> : null}
 

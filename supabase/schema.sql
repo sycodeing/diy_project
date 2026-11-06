@@ -863,6 +863,15 @@ create table if not exists public.x_reply_accounts (
   network_mode text not null default 'vpn_direct'
     check (network_mode in ('vpn_direct', 'fixed_proxy')),
   expected_egress_ip inet,
+  expected_x_handle text check (expected_x_handle is null or expected_x_handle ~ '^[A-Za-z0-9_]{1,15}$'),
+  verification_status text not null default 'unverified'
+    check (verification_status in ('unverified', 'pending', 'running', 'passed', 'failed')),
+  verification_requested_at timestamptz,
+  verification_started_at timestamptz,
+  verification_completed_at timestamptz,
+  verified_x_handle text check (verified_x_handle is null or verified_x_handle ~ '^[A-Za-z0-9_]{1,15}$'),
+  verified_egress_ip inet,
+  verification_error text check (verification_error is null or length(verification_error) <= 1000),
   require_daily_first_confirmation boolean not null default true,
   active boolean not null default true,
   created_by uuid references auth.users(id) on delete set null,
@@ -975,6 +984,8 @@ create table if not exists public.x_reply_workers (
   current_egress_ip inet,
   network_probe_status text not null default 'unknown'
     check (network_probe_status in ('unknown', 'healthy', 'mismatch', 'error')),
+  batch_sent_count integer not null default 0 check (batch_sent_count between 0 and 11),
+  cooldown_until timestamptz,
   current_job_id uuid references public.x_reply_jobs(id) on delete set null,
   worker_version text,
   last_error text,
@@ -1012,6 +1023,9 @@ create unique index if not exists x_reply_accounts_bitbrowser_window_id_unique
 create index if not exists x_reply_accounts_executor_active_idx
   on public.x_reply_accounts (executor_id, id)
   where active = true and executor_id is not null;
+create index if not exists x_reply_accounts_pending_verification_idx
+  on public.x_reply_accounts (executor_id, verification_requested_at)
+  where verification_status = 'pending' and executor_id is not null;
 create index if not exists x_reply_account_proxies_status_idx
   on public.x_reply_account_proxies (status, last_tested_at desc);
 create unique index if not exists x_reply_account_proxies_unique_egress_idx

@@ -6,9 +6,9 @@ import { requireAdmin } from "@/lib/auth";
 import { prepareXLeadQueueTask } from "@/lib/x-lead-materials";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { getXLeadTargetingChecks, X_LEAD_REJECTION_REASONS, type XLeadRow } from "@/lib/x-lead";
-import { isXAccountClaimEligible } from "@/lib/x-reply-safety";
 
 const leadIdSchema = z.uuid();
+const accountIdSchema = z.uuid();
 const suitabilityDecisionSchema = z.enum(["reject", "restore"]);
 const rejectionReasonSchema = z.enum(X_LEAD_REJECTION_REASONS);
 const PREPARING_COPY = "Preparing your personalized pet-pillow preview and link…";
@@ -31,6 +31,8 @@ function queueActionError(error: unknown, fallback: string): QueueActionResult {
     "第一期",
     "候选未达到发送标准",
     "当前没有绑定 Mac 执行器",
+    "选择的 X 账号",
+    "该 X 账号",
   ].some((prefix) => message.startsWith(prefix));
   return {
     ok: false,
@@ -62,68 +64,28 @@ async function getEligibleLead(leadId: string) {
   return { supabase, lead };
 }
 
-async function getLeadAndAssignedAccount(leadId: string) {
+async function getLeadAndSelectedAccount(leadId: string, accountId: string) {
   const { supabase, lead } = await getEligibleLead(leadId);
-  const { data: accounts, error: accountsError } = await supabase
+  const { data: account, error: accountError } = await supabase
     .from("x_reply_accounts")
-    .select("id,created_at,account_key,executor_id,network_mode,expected_egress_ip,x_reply_account_proxies(status)")
+    .select("id,account_key,display_name,positioning,daily_limit,active,executor_id")
+    .eq("id", accountId)
     .eq("active", true)
-    .order("created_at", { ascending: true });
-  if (accountsError) throw new Error(accountsError.message);
-  const executorIds = Array.from(new Set((accounts ?? []).flatMap((account) => account.executor_id ? [account.executor_id] : [])));
-  const workers = executorIds.length
-    ? await supabase
-      .from("x_reply_workers")
-      .select("executor_id,execution_mode,xuse_available,configured_accounts,current_egress_ip,network_probe_status,last_seen_at")
-      .in("executor_id", executorIds)
-      .gte("last_seen_at", new Date(Date.now() - 5 * 60_000).toISOString())
-    : { data: [], error: null };
-  if (workers.error) throw new Error(workers.error.message);
-  const workerByExecutor = new Map((workers.data ?? []).flatMap((worker) => worker.executor_id ? [[worker.executor_id, worker] as const] : []));
-  const assignableAccounts = (accounts ?? []).filter((account) => Boolean(account.executor_id));
-  if (!assignableAccounts.length) {
-    throw new Error("当前没有绑定 Mac 执行器的启用账号，请先前往“X 账号/IP”完成绑定。");
-  }
-  const routableAccounts = assignableAccounts.filter((account) => {
-    const proxy = Array.isArray(account.x_reply_account_proxies)
-      ? account.x_reply_account_proxies[0]
-      : account.x_reply_account_proxies;
-    const worker = account.executor_id ? workerByExecutor.get(account.executor_id) : undefined;
-    if (!worker) return false;
-    return isXAccountClaimEligible({
-      executionMode: worker.execution_mode,
-      executorId: worker.executor_id ?? "",
-      xuseAvailable: worker.xuse_available,
-      configuredAccounts: Array.isArray(worker.configured_accounts) ? worker.configured_accounts : [],
-      currentEgressIp: worker.current_egress_ip,
-      networkProbeStatus: worker.network_probe_status,
-      account: {
-        executorId: account.executor_id,
-        accountKey: account.account_key,
-        networkMode: account.network_mode,
-        expectedEgressIp: account.expected_egress_ip,
-        hasProxy: Boolean(proxy),
-        proxyStatus: proxy?.status ?? null,
-      },
-    });
-  });
-  // Creating a draft does not send anything. Prefer a currently routable account,
-  // but allow preparation to continue while its worker or VPN is temporarily
-  // unavailable. Approval and worker claim still repeat the strict route checks.
-  const candidateAccounts = routableAccounts.length ? routableAccounts : assignableAccounts;
-  const accountIds = candidateAccounts.map((account) => account.id);
-  const since = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
-  const { data: automaticRows } = await supabase
+    .maybeSingle();
+  if (accountError || !account) throw new Error(accountError?.message ?? "选择的 X 账号不存在或已经停用。");
+  if (!account.executor_id) throw new Error("选择的 X 账号尚未绑定 Mac 执行器。");
+
+  const local = new Date(Date.now() + 8 * 60 * 60_000);
+  const start = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()) - 8 * 60 * 60_000;
+  const { count, error: countError } = await supabase
     .from("x_reply_jobs")
-    .select("account_id")
-    .in("account_id", accountIds)
-    .gte("created_at", since)
-    .neq("status", "rejected");
-  const load = new Map(accountIds.map((id) => [id, 0]));
-  for (const row of automaticRows ?? []) {
-    load.set(row.account_id, (load.get(row.account_id) ?? 0) + 1);
-  }
-  const account = [...candidateAccounts].sort((left, right) => (load.get(left.id) ?? 0) - (load.get(right.id) ?? 0))[0];
+    .select("id", { count: "exact", head: true })
+    .eq("account_id", account.id)
+    .in("status", ["queued", "claimed", "sent", "uncertain"])
+    .gte("scheduled_for", new Date(start).toISOString())
+    .lt("scheduled_for", new Date(start + 24 * 60 * 60_000).toISOString());
+  if (countError) throw new Error(countError.message);
+  if ((count ?? 0) >= account.daily_limit) throw new Error(`该 X 账号 @${account.account_key} 已达到今日发送上限。`);
   return { supabase, lead, account };
 }
 
@@ -166,7 +128,8 @@ export async function createXLeadAutoTask(formData: FormData): Promise<QueueActi
   const user = await requireAdmin("/admin/x-leads");
   try {
     const leadId = leadIdSchema.parse(String(formData.get("leadId") ?? ""));
-    const { supabase, lead, account } = await getLeadAndAssignedAccount(leadId);
+    const accountId = accountIdSchema.parse(String(formData.get("accountId") ?? ""));
+    const { supabase, lead, account } = await getLeadAndSelectedAccount(leadId, accountId);
     const { data: existingTask, error: existingTaskError } = await supabase
       .from("x_reply_jobs")
       .select("id")
@@ -182,9 +145,13 @@ export async function createXLeadAutoTask(formData: FormData): Promise<QueueActi
       action_type: "reply",
       target_post_url: lead.post_url,
       reply_text: PREPARING_COPY,
-      scheduled_for: new Date(Date.now() + 30 * 60_000).toISOString(),
-      status: "draft",
+      scheduled_for: new Date().toISOString(),
+      status: "queued",
       preparation_status: "pending",
+      account_key_snapshot: account.account_key,
+      positioning_snapshot: account.positioning,
+      approved_by: user.id,
+      approved_at: new Date().toISOString(),
       created_by: user.id,
     }).select("id").single();
     if (error?.code === "23505") return { ok: true };

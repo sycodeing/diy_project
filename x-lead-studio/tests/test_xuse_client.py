@@ -7,7 +7,7 @@ import types
 from contextlib import asynccontextmanager
 
 from lead_studio import xuse_client
-from lead_studio.xuse_client import NetworkProbeResult, configured_account_keys, configured_account_proxy, probe_network_route, send_approved_action, send_approved_reply, xuse_is_installed
+from lead_studio.xuse_client import NetworkProbeResult, configured_account_keys, configured_account_proxy, probe_network_route, send_approved_action, send_approved_reply, verify_account_mapping, xuse_is_installed
 
 
 def _install_fake_mcp(monkeypatch, session):
@@ -182,6 +182,50 @@ def test_vpn_direct_probe_never_starts_xuse_proxy_tools(monkeypatch, tmp_path):
     ))
 
     assert result.ok is True
+    assert result.egress_ip == "203.0.113.10"
+
+
+def test_account_mapping_verification_reads_visible_owner_and_route(monkeypatch, tmp_path):
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "accounts.json").write_text(json.dumps([
+        {"account_id": "Latte192837465", "is_active": True, "cookies": [{"name": "auth_token"}]},
+    ]), encoding="utf-8")
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def initialize(self):
+            return None
+
+        async def call_tool(self, name, arguments):
+            assert name == "get_account_analytics"
+            assert arguments == {"account": "Latte192837465", "limit": 1}
+            return types.SimpleNamespace(structuredContent={"result": {
+                "ok": True,
+                "owner": {"handle": "Latte192837465", "source": "visible_signed_in_profile_navigation"},
+            }}, content=[])
+
+    async def direct_probe(_url):
+        return NetworkProbeResult(True, egress_ip="203.0.113.10")
+
+    _install_fake_mcp(monkeypatch, FakeSession())
+    monkeypatch.setattr(xuse_client, "xuse_is_installed", lambda: True)
+    monkeypatch.setattr(xuse_client, "probe_direct_egress", direct_probe)
+    result = asyncio.run(verify_account_mapping(
+        x_use_home=tmp_path,
+        account="Latte192837465",
+        network_mode="vpn_direct",
+        proxy_url=None,
+        ip_check_url="https://ip.example.test",
+    ))
+
+    assert result.ok is True
+    assert result.actual_handle == "Latte192837465"
     assert result.egress_ip == "203.0.113.10"
 
 

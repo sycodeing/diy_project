@@ -48,7 +48,7 @@ export async function POST(request: Request) {
   const heartbeat = parsed.data;
   const now = new Date().toISOString();
   const available = heartbeat.xUseAvailable && heartbeat.configuredAccounts.length > 0;
-  const { error: heartbeatError } = await supabase.from("x_reply_workers").upsert({
+  const { data: workerState, error: heartbeatError } = await supabase.from("x_reply_workers").upsert({
     worker_id: heartbeat.executorId,
     executor_id: heartbeat.executorId,
     execution_mode: heartbeat.executionMode,
@@ -65,11 +65,69 @@ export async function POST(request: Request) {
     worker_version: heartbeat.workerVersion,
     last_error: heartbeat.lastError ?? (available ? null : "x-use 不可用或没有本地账号。"),
     last_seen_at: now,
-  }, { onConflict: "worker_id" });
+  }, { onConflict: "worker_id" }).select("cooldown_until").maybeSingle();
   if (heartbeatError) return NextResponse.json({ error: heartbeatError.message }, { status: 500 });
 
-  // Observe is a hard server-side gate: heartbeat only, no queue or gate writes.
+  const staleVerificationBefore = new Date(Date.now() - 15 * 60_000).toISOString();
+  await supabase.from("x_reply_accounts").update({
+    verification_status: "pending",
+    verification_started_at: null,
+    verification_error: "上次验证超时，已自动重新排队。",
+  }).eq("executor_id", heartbeat.executorId).eq("verification_status", "running").lt("verification_started_at", staleVerificationBefore);
+
+  const { data: verificationAccount, error: verificationReadError } = await supabase.from("x_reply_accounts")
+    .select("id,account_key,expected_x_handle,executor_id,network_mode,expected_egress_ip,x_reply_account_proxies(encrypted_url)")
+    .eq("active", true)
+    .eq("executor_id", heartbeat.executorId)
+    .eq("verification_status", "pending")
+    .order("verification_requested_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (verificationReadError) return NextResponse.json({ error: verificationReadError.message }, { status: 500 });
+  if (verificationAccount) {
+    const proxyRelation = verificationAccount.x_reply_account_proxies;
+    const proxy = Array.isArray(proxyRelation) ? proxyRelation[0] : proxyRelation;
+    let verificationProxyUrl: string | null = null;
+    if (verificationAccount.network_mode === "fixed_proxy") {
+      const workerSecret = getXReplyWorkerSecret();
+      if (!workerSecret || !proxy?.encrypted_url) {
+        await supabase.from("x_reply_accounts").update({
+          verification_status: "failed",
+          verification_completed_at: now,
+          verification_error: "固定代理配置不可用，无法执行映射验证。",
+        }).eq("id", verificationAccount.id).eq("verification_status", "pending");
+        return new Response(null, { status: 204 });
+      }
+      try {
+        verificationProxyUrl = decryptProxyUrl(proxy.encrypted_url, workerSecret);
+      } catch {
+        await supabase.from("x_reply_accounts").update({
+          verification_status: "failed",
+          verification_completed_at: now,
+          verification_error: "固定代理密文无法解密。",
+        }).eq("id", verificationAccount.id).eq("verification_status", "pending");
+        return new Response(null, { status: 204 });
+      }
+    }
+    const { data: claimedVerification, error: verificationClaimError } = await supabase.from("x_reply_accounts").update({
+      verification_status: "running",
+      verification_started_at: now,
+      verification_error: null,
+    }).eq("id", verificationAccount.id).eq("verification_status", "pending").select("id").maybeSingle();
+    if (verificationClaimError) return NextResponse.json({ error: verificationClaimError.message }, { status: 500 });
+    if (claimedVerification) return NextResponse.json({ verification: {
+      id: verificationAccount.id,
+      accountKey: verificationAccount.account_key,
+      expectedXHandle: verificationAccount.expected_x_handle,
+      networkMode: verificationAccount.network_mode,
+      expectedEgressIp: verificationAccount.expected_egress_ip ? String(verificationAccount.expected_egress_ip) : null,
+      proxyUrl: verificationProxyUrl,
+    } });
+  }
+
+  // Observe may execute the explicit read-only mapping verification above, but never claims writes.
   if (heartbeat.executionMode !== "send") return new Response(null, { status: 204 });
+  if (workerState?.cooldown_until && Date.parse(workerState.cooldown_until) > Date.now()) return new Response(null, { status: 204 });
 
   // A claimed write can already have reached X before the worker disappeared.
   // Only an active send-mode executor may reconcile stale claims.

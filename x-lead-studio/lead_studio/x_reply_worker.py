@@ -19,11 +19,12 @@ from .xuse_client import (
     probe_direct_egress,
     probe_network_route,
     send_approved_action,
+    verify_account_mapping,
     xuse_is_installed,
 )
 
 
-WORKER_VERSION = "4.3.0-15-30s-batch-delay"
+WORKER_VERSION = "4.4.0-auto-queue-mapping-verification"
 BATCH_DELAY_MIN_SECONDS = 15.0
 BATCH_DELAY_MAX_SECONDS = 30.0
 HALT_ERROR_MARKERS = ("captcha", "challenge", "login", "locked", "rate_limit", "rate limit", "verification")
@@ -86,14 +87,19 @@ async def run_x_reply_iteration(
 
     async with httpx.AsyncClient(timeout=30) as client:
         response = await _post_claim(settings, client, payload)
-        if settings.x_reply_execution_mode != "send":
-            if response.status_code != 204:
-                return "Observe mode received a non-empty claim response and refused to execute it.", False, None
-            return probe_error, False, None
         if response.status_code == 204:
             return probe_error, False, None
-        response.raise_for_status()
+        if not response.is_success:
+            response.raise_for_status()
         body = response.json()
+
+        verification = body.get("verification")
+        if isinstance(verification, dict):
+            verification_error = await _execute_mapping_verification(settings, client, verification)
+            return verification_error, False, None
+
+        if settings.x_reply_execution_mode != "send":
+            return "Observe mode received a write job and refused to execute it.", False, None
 
         probe_request = body.get("probe")
         if isinstance(probe_request, dict):
@@ -131,6 +137,29 @@ async def run_x_reply_iteration(
 def _batch_delay_seconds() -> float:
     """Use a fresh random delay after each confirmed X write before claiming again."""
     return random.uniform(BATCH_DELAY_MIN_SECONDS, BATCH_DELAY_MAX_SECONDS)
+
+
+async def _execute_mapping_verification(settings: Settings, client: httpx.AsyncClient, verification: dict[str, Any]) -> str | None:
+    result = await verify_account_mapping(
+        x_use_home=settings.x_use_home,
+        account=str(verification.get("accountKey") or ""),
+        network_mode=str(verification.get("networkMode") or ""),
+        proxy_url=str(verification.get("proxyUrl") or "") or None,
+        ip_check_url=settings.x_reply_ip_check_url,
+    )
+    response = await client.post(
+        f"{settings.diy_site_url}/api/x-replies/worker/account-verifications/{verification['id']}/complete",
+        headers={"Authorization": f"Bearer {settings.x_reply_worker_secret}"},
+        json={
+            "executorId": settings.x_reply_executor_id,
+            "actualHandle": result.actual_handle,
+            "egressIp": result.egress_ip,
+            "errorCode": result.error_code,
+            "errorMessage": result.error_message,
+        },
+    )
+    response.raise_for_status()
+    return result.error_message
 
 
 async def _post_claim(settings: Settings, client: httpx.AsyncClient, payload: dict[str, Any]) -> httpx.Response:

@@ -10,6 +10,7 @@ import { encryptProxyUrl, getProxyDisplayHost } from "@/lib/x-proxy-crypto";
 
 const PAGE_PATH = "/admin/x-accounts";
 const accountKeySchema = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/);
+const xHandleSchema = z.string().trim().regex(/^@?[A-Za-z0-9_]{1,15}$/).transform((value) => value.replace(/^@/, ""));
 const shortText = z.string().trim().min(1).max(500);
 const idSchema = z.string().uuid();
 const copyStyleSchema = z.enum(["warm", "playful", "concise"]);
@@ -31,6 +32,7 @@ function proxySecret() {
 function accountPayload(formData: FormData) {
   return {
     account_key: accountKeySchema.parse(String(formData.get("accountKey") ?? "")),
+    expected_x_handle: xHandleSchema.parse(String(formData.get("expectedXHandle") ?? "")),
     display_name: z.string().trim().min(1).max(80).parse(String(formData.get("displayName") ?? "")),
     positioning: shortText.parse(String(formData.get("positioning") ?? "")),
     audience: shortText.parse(String(formData.get("audience") ?? "")),
@@ -102,7 +104,16 @@ export async function updateXAccount(formData: FormData) {
     throw new Error("固定代理模式必须配置一个非轮换代理 URL。");
   }
   const { data: updated, error } = await supabase.from("x_reply_accounts")
-    .update(payload)
+    .update({
+      ...payload,
+      verification_status: "unverified",
+      verification_requested_at: null,
+      verification_started_at: null,
+      verification_completed_at: null,
+      verified_x_handle: null,
+      verified_egress_ip: null,
+      verification_error: null,
+    })
     .eq("id", accountId)
     .select("id")
     .maybeSingle();
@@ -156,6 +167,37 @@ export async function lockCurrentVpnEgress(formData: FormData) {
   revalidatePath(PAGE_PATH);
   revalidatePath("/admin/x-auto-posts");
   redirect(`${PAGE_PATH}?notice=vpn-locked`);
+}
+
+export async function requestXAccountMappingVerification(formData: FormData) {
+  await requireAdmin(PAGE_PATH);
+  const supabase = serviceClient();
+  const accountId = idSchema.parse(String(formData.get("accountId") ?? ""));
+  const { data: account, error: accountError } = await supabase.from("x_reply_accounts")
+    .select("id,executor_id,expected_x_handle,network_mode,expected_egress_ip,x_reply_account_proxies(account_id)")
+    .eq("id", accountId)
+    .eq("active", true)
+    .maybeSingle();
+  if (accountError || !account) throw new Error(accountError?.message ?? "账号不存在或已经停用。");
+  if (!account.executor_id) throw new Error("请先绑定执行器。");
+  if (!account.expected_x_handle) throw new Error("请先填写期望的 X 用户名。");
+  const proxy = Array.isArray(account.x_reply_account_proxies) ? account.x_reply_account_proxies[0] : account.x_reply_account_proxies;
+  if (account.network_mode === "vpn_direct" && !account.expected_egress_ip) throw new Error("请先锁定 VPN 出口 IP。");
+  if (account.network_mode === "fixed_proxy" && !proxy) throw new Error("请先配置固定代理。");
+
+  const requestedAt = new Date().toISOString();
+  const { data: updated, error } = await supabase.from("x_reply_accounts").update({
+    verification_status: "pending",
+    verification_requested_at: requestedAt,
+    verification_started_at: null,
+    verification_completed_at: null,
+    verified_x_handle: null,
+    verified_egress_ip: null,
+    verification_error: null,
+  }).eq("id", accountId).select("id").maybeSingle();
+  if (error || !updated) throw new Error(error?.message ?? "验证任务创建失败。");
+  revalidatePath(PAGE_PATH);
+  redirect(`${PAGE_PATH}?notice=verification-requested`);
 }
 
 export async function deleteXAccount(formData: FormData) {

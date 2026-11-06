@@ -46,6 +46,14 @@ export type XReplyAccount = {
   executor_id: string | null;
   network_mode: "vpn_direct" | "fixed_proxy";
   expected_egress_ip: string | null;
+  expected_x_handle: string | null;
+  verification_status: "unverified" | "pending" | "running" | "passed" | "failed";
+  verification_requested_at: string | null;
+  verification_started_at: string | null;
+  verification_completed_at: string | null;
+  verified_x_handle: string | null;
+  verified_egress_ip: string | null;
+  verification_error: string | null;
   require_daily_first_confirmation: boolean;
   active: boolean;
   created_at: string;
@@ -153,6 +161,8 @@ export type XReplyWorker = {
   configured_accounts: string[];
   current_egress_ip: string | null;
   network_probe_status: "unknown" | "healthy" | "mismatch" | "error";
+  batch_sent_count: number;
+  cooldown_until: string | null;
   worker_version: string | null;
   last_error: string | null;
   last_seen_at: string;

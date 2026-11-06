@@ -40,6 +40,15 @@ class NetworkProbeResult:
     error_message: str | None = None
 
 
+@dataclass(frozen=True)
+class AccountMappingVerificationResult:
+    ok: bool
+    actual_handle: str | None = None
+    egress_ip: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
 def xuse_is_installed() -> bool:
     return importlib.util.find_spec("xuse") is not None and importlib.util.find_spec("mcp") is not None
 
@@ -266,6 +275,64 @@ async def probe_network_route(
         return NetworkProbeResult(False, error_code="network_probe_timeout", error_message="The fixed proxy check timed out; direct fallback is forbidden.")
     except Exception as error:
         return NetworkProbeResult(False, error_code="network_probe_failed", error_message=_redact_sensitive(f"{type(error).__name__}: {error}"))
+
+
+async def verify_account_mapping(
+    *,
+    x_use_home: Path,
+    account: str,
+    network_mode: str,
+    proxy_url: str | None,
+    ip_check_url: str,
+) -> AccountMappingVerificationResult:
+    """Open the configured X session read-only and return its visible owner plus route IP."""
+    if network_mode not in NETWORK_MODES:
+        return AccountMappingVerificationResult(False, error_code="invalid_network_mode", error_message="Unsupported X network mode.")
+    if not xuse_is_installed():
+        return AccountMappingVerificationResult(False, error_code="xuse_not_installed", error_message="x-use-mcp is not installed in the worker environment.")
+    if account not in configured_account_keys(x_use_home):
+        return AccountMappingVerificationResult(False, error_code="account_not_configured", error_message=f"x-use account '{account}' is not active or has no local cookie file.")
+    if network_mode == "fixed_proxy" and not proxy_url:
+        return AccountMappingVerificationResult(False, error_code="proxy_required", error_message="The fixed_proxy account has no dedicated route.")
+
+    from mcp import ClientSession
+    from mcp.client.stdio import stdio_client
+
+    x_use_home.mkdir(parents=True, exist_ok=True)
+    log_path = x_use_home / "logs" / "diy-reply-worker-stderr.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    parameters, _ = _server_parameters(x_use_home)
+    try:
+        direct_probe = await probe_direct_egress(ip_check_url) if network_mode == "vpn_direct" else None
+        if direct_probe and (not direct_probe.ok or not direct_probe.egress_ip):
+            return AccountMappingVerificationResult(False, error_code=direct_probe.error_code, error_message=direct_probe.error_message)
+        egress_ip = direct_probe.egress_ip if direct_probe else None
+        with log_path.open("a", encoding="utf-8") as errors:
+            async with stdio_client(parameters, errlog=errors) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await asyncio.wait_for(session.initialize(), timeout=45)
+                    if network_mode == "fixed_proxy":
+                        proxy_probe = await _probe_fixed_proxy(session, x_use_home=x_use_home, account=account, proxy_url=proxy_url)
+                        if not proxy_probe.ok or not proxy_probe.egress_ip:
+                            return AccountMappingVerificationResult(False, error_code=proxy_probe.error_code, error_message=proxy_probe.error_message)
+                        egress_ip = proxy_probe.egress_ip
+                    identity_call = await asyncio.wait_for(
+                        session.call_tool("get_account_analytics", {"account": account, "limit": 1}),
+                        timeout=120,
+                    )
+                    identity = _payload(identity_call)
+                    if not identity.get("ok"):
+                        code, message, _ = _error_fields(identity)
+                        return AccountMappingVerificationResult(False, egress_ip=egress_ip, error_code=code, error_message=message)
+                    owner = identity.get("owner")
+                    actual_handle = owner.get("handle") if isinstance(owner, dict) else None
+                    if not isinstance(actual_handle, str) or not re.fullmatch(r"[A-Za-z0-9_]{1,15}", actual_handle):
+                        return AccountMappingVerificationResult(False, egress_ip=egress_ip, error_code="owner_unconfirmed", error_message="The visible signed-in X owner could not be confirmed.")
+                    return AccountMappingVerificationResult(True, actual_handle=actual_handle, egress_ip=egress_ip)
+    except asyncio.TimeoutError:
+        return AccountMappingVerificationResult(False, error_code="mapping_verification_timeout", error_message="The account mapping verification timed out.")
+    except Exception as error:
+        return AccountMappingVerificationResult(False, error_code="mapping_verification_failed", error_message=_redact_sensitive(f"{type(error).__name__}: {error}"))
 
 
 async def send_approved_action(

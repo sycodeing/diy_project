@@ -7,7 +7,8 @@ import { getXReplyWorkerSecret } from "@/lib/env";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { cn, formatDate, getServerNowMillis } from "@/lib/utils";
 import type { XReplyAccount, XReplyAccountProxy, XReplyWorker } from "@/lib/x-reply";
-import { createXAccount, deleteXAccount, lockCurrentVpnEgress, updateXAccount } from "./actions";
+import { createXAccount, deleteXAccount, lockCurrentVpnEgress, requestXAccountMappingVerification, updateXAccount } from "./actions";
+import { QueueAutoRefresh } from "@/components/queue-auto-refresh";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +16,7 @@ const notices: Record<string, string> = {
   created: "账号与执行器网络策略已保存；出口未通过校验前不能批准或领取任务。",
   updated: "账号配置已更新；VPN 锁定 IP 不会被执行器自动替换。",
   "vpn-locked": "已由管理员明确锁定当前 Patchright 浏览器出口 IP。",
+  "verification-requested": "验证任务已提交；Mac 将只读打开指定 X 账号并核对登录身份与出口 IP。",
   deleted: "未产生发送历史的账号已删除。",
   "in-use": "该账号已有发送历史，为保留审计记录不能删除；可以将它停用。",
 };
@@ -36,9 +38,11 @@ export default async function XAccountsPage({ searchParams }: { searchParams: Pr
     .map((worker) => [worker.executor_id as string, worker]));
   const secret = getXReplyWorkerSecret();
   const notice = filters.notice ? notices[filters.notice] : null;
+  const verificationActive = accounts.some((account) => ["pending", "running"].includes(account.verification_status));
 
   return (
     <AppShell admin>
+      <QueueAutoRefresh active={verificationActive} />
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div><p className="text-xs font-black uppercase tracking-[0.18em] text-accent-strong">Mac executor routing</p><h1 className="mt-1 text-4xl font-black">X 账号、执行器与出口 IP</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Cookie 只留在绑定的 Mac。VPN 模式锁定系统级 VPN 出口；固定代理模式仍是一账号一住宅代理。</p></div>
@@ -66,6 +70,17 @@ export default async function XAccountsPage({ searchParams }: { searchParams: Pr
                 <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-xl font-black">{account.display_name}</h3><p className="font-mono text-xs text-muted">{account.account_key}</p></div><NetworkBadge account={account} proxy={proxy} workerOnline={workerOnline} vpnMatches={vpnMatches} /></div>
                 <div className="mt-4 rounded-lg border border-line bg-white p-3 text-xs leading-6 text-muted"><p><Laptop className="mr-1 inline" size={14} /><strong className="text-foreground">{account.executor_id ?? "未绑定执行器"}</strong></p><p>{workerOnline ? `在线 · ${worker?.execution_mode}` : "离线（超过五分钟无心跳）"}</p><p>x-use：{worker?.xuse_available ? "正常" : "异常或未上报"} · 本地账号：{accountConfigured ? "存在" : "缺失"}</p>{worker?.last_seen_at ? <p>最后心跳：{formatDate(worker.last_seen_at)}</p> : null}{worker?.last_error ? <p className="text-red-700">{worker.last_error}</p> : null}</div>
                 {account.network_mode === "vpn_direct" ? <div className={cn("mt-3 rounded-lg border p-3 text-xs leading-6", vpnMatches ? "border-emerald-200 bg-emerald-50 text-emerald-950" : "border-red-200 bg-red-50 text-red-900")}><p><Network className="mr-1 inline" size={14} /><strong>macOS 系统 VPN 直连</strong></p><p>当前 Patchright 出口：{worker?.current_egress_ip ?? "尚未确认"}</p><p>管理员锁定出口：{account.expected_egress_ip ?? "尚未锁定，禁止批准"}</p><p>网络检查：{worker?.network_probe_status ?? "unknown"}</p>{workerOnline && worker?.network_probe_status === "healthy" && worker.current_egress_ip ? <form action={lockCurrentVpnEgress} className="mt-2"><input name="accountId" type="hidden" value={account.id} /><FormSubmitButton className="focus-ring h-9 rounded-md bg-accent px-3 text-xs font-black text-accent-ink" idleLabel={account.expected_egress_ip ? "确认并重新锁定当前出口 IP" : "确认并锁定当前出口 IP"} pendingLabel="正在锁定…" /></form> : null}</div> : <div className="mt-3 rounded-lg border border-line bg-white p-3 text-xs leading-6 text-muted"><p><Network className="mr-1 inline" size={14} /><strong className="text-foreground">{proxy?.display_host ?? "未配置固定代理"}</strong></p><p>期望地区：{proxy ? `${proxy.expected_country}${proxy.expected_region ? ` · ${proxy.expected_region}` : ""}` : "—"}</p><p>最近真实出口：{proxy?.egress_ip ?? "尚未验证"}{proxy?.last_tested_at ? ` · ${formatDate(proxy.last_tested_at)}` : ""}</p>{proxy?.last_error ? <p className="text-red-700">{proxy.last_error}</p> : null}</div>}
+                <div className={cn("mt-3 rounded-lg border p-3 text-xs leading-6", account.verification_status === "passed" ? "border-emerald-200 bg-emerald-50 text-emerald-950" : account.verification_status === "failed" ? "border-red-200 bg-red-50 text-red-900" : "border-line bg-white text-muted")}>
+                  <p className="font-black text-foreground">账号 × IP 真实映射验证</p>
+                  <p>期望 X 账号：@{account.expected_x_handle ?? "未配置"}</p>
+                  <p>状态：{verificationLabel(account.verification_status)}</p>
+                  {account.verified_x_handle ? <p>实际登录账号：@{account.verified_x_handle}</p> : null}
+                  {account.verified_egress_ip ? <p>该账号浏览器出口：{account.verified_egress_ip}</p> : null}
+                  {account.verification_completed_at ? <p>完成时间：{formatDate(account.verification_completed_at)}</p> : null}
+                  {account.verification_error ? <p className="text-red-700">{account.verification_error}</p> : null}
+                  <form action={requestXAccountMappingVerification} className="mt-2"><input name="accountId" type="hidden" value={account.id} /><FormSubmitButton className="focus-ring h-9 rounded-md border border-accent px-3 text-xs font-black text-accent disabled:opacity-50" disabled={!workerOnline || ["pending", "running"].includes(account.verification_status)} idleLabel={account.verification_status === "passed" ? "重新验证账号与 IP" : "验证账号与 IP 映射"} pendingLabel="正在提交验证…" /></form>
+                  <p className="mt-1">只读打开 X，不会发布、回复或点赞。</p>
+                </div>
                 <p className="mt-3 text-xs text-muted">{account.require_daily_first_confirmation ? "每日首条成功后等待后台确认" : "每日首条后自动继续"}</p>
                 <details className="mt-4"><summary className="focus-ring cursor-pointer rounded-lg border border-line px-4 py-3 text-sm font-black"><Pencil className="mr-2 inline" size={15} />编辑账号与网络</summary><AccountForm account={account} action={updateXAccount} proxy={proxy} submitLabel="保存修改" /></details>
                 <form action={deleteXAccount} className="mt-3"><input name="accountId" type="hidden" value={account.id} /><FormSubmitButton className="focus-ring h-10 rounded-lg border border-red-200 px-4 text-sm font-bold text-red-700 disabled:opacity-50" idleLabel="删除未使用账号" pendingLabel="正在检查发送历史…" /></form>
@@ -89,6 +104,7 @@ function AccountForm({ account, proxy, action, submitLabel }: { account?: XReply
   return <form action={action} className="mt-4">{account ? <input name="accountId" type="hidden" value={account.id} /> : null}
     <div className="grid gap-x-4 sm:grid-cols-2">
       <Field defaultValue={account?.account_key} label="x-use 账号标识" name="accountKey" placeholder="pet_new_home" required />
+      <Field defaultValue={account?.expected_x_handle ?? account?.account_key} label="期望 X 用户名（不含 @）" maxLength={15} name="expectedXHandle" placeholder="Latte192837465" required />
       <Field defaultValue={account?.display_name} label="后台显示名" name="displayName" placeholder="新宠到家号" required />
       <Area defaultValue={account?.positioning} label="账号定位" name="positioning" placeholder="专注记录新领养宠物与到家纪念" required />
       <Area defaultValue={account?.audience} label="目标受众" name="audience" placeholder="美国新领养狗或猫的主人" required />
@@ -111,3 +127,7 @@ function AccountForm({ account, proxy, action, submitLabel }: { account?: XReply
 
 function Field({ label, name, ...props }: { label: string; name: string } & React.InputHTMLAttributes<HTMLInputElement>) { return <label className="mt-3 block text-sm font-bold">{label}<input className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3" name={name} {...props} /></label>; }
 function Area({ label, name, ...props }: { label: string; name: string } & React.TextareaHTMLAttributes<HTMLTextAreaElement>) { return <label className="mt-3 block text-sm font-bold">{label}<textarea className="focus-ring mt-2 min-h-24 w-full rounded-lg border border-line bg-white p-3" maxLength={500} name={name} {...props} /></label>; }
+
+function verificationLabel(status: XReplyAccount["verification_status"]) {
+  return { unverified: "尚未验证", pending: "等待 Mac 执行", running: "正在打开 X 验证", passed: "账号与 IP 匹配", failed: "验证失败" }[status];
+}

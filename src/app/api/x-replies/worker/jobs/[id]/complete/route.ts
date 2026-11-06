@@ -76,6 +76,12 @@ export async function POST(request: Request, context: RouteContext<"/api/x-repli
       .eq("account_id", job.account_id).eq("first_job_id", job.id).eq("status", "awaiting_confirmation");
   }
 
+  const { data: worker } = await supabase.from("x_reply_workers")
+    .select("batch_sent_count")
+    .eq("executor_id", parsed.data.executorId)
+    .maybeSingle();
+  const nextBatchCount = parsed.data.status === "sent" ? (worker?.batch_sent_count ?? 0) + 1 : (worker?.batch_sent_count ?? 0);
+  const startsBreak = nextBatchCount >= 12;
   await supabase.from("x_reply_workers").update({
     status: parsed.data.status === "failed" ? "error" : "online",
     current_job_id: null,
@@ -83,6 +89,8 @@ export async function POST(request: Request, context: RouteContext<"/api/x-repli
     last_seen_at: completedAt,
     current_egress_ip: parsed.data.egressIp ?? null,
     network_probe_status: parsed.data.egressIp ? "healthy" : "error",
+    batch_sent_count: startsBreak ? 0 : nextBatchCount,
+    cooldown_until: startsBreak ? new Date(Date.now() + 45 * 60_000).toISOString() : null,
   }).eq("executor_id", parsed.data.executorId);
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, cooldownUntil: startsBreak ? new Date(Date.now() + 45 * 60_000).toISOString() : null });
 }
