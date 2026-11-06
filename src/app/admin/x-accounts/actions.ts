@@ -39,7 +39,7 @@ function accountPayload(formData: FormData) {
     voice: shortText.parse(String(formData.get("voice") ?? "")),
     topics: String(formData.get("topics") ?? "").split(/[,，\n]/).map((item) => item.trim()).filter(Boolean).slice(0, 12),
     prohibited_topics: z.string().trim().max(500).parse(String(formData.get("prohibitedTopics") ?? "")),
-    daily_limit: z.coerce.number().int().min(1).max(20).parse(formData.get("dailyLimit")),
+    daily_limit: z.coerce.number().int().min(1).max(200).parse(formData.get("dailyLimit")),
     copy_style: copyStyleSchema.parse(String(formData.get("copyStyle") ?? "")),
     copy_variation_notes: z.string().trim().max(500).parse(String(formData.get("copyVariationNotes") ?? "")),
     executor_id: z.string().trim().min(1).max(120).parse(String(formData.get("executorId") ?? "")),

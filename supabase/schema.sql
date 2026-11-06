@@ -852,7 +852,7 @@ create table if not exists public.x_reply_accounts (
   voice text not null check (length(voice) between 1 and 500),
   topics text[] not null default '{}'::text[],
   prohibited_topics text not null default '',
-  daily_limit integer not null default 5 check (daily_limit between 1 and 20),
+  daily_limit integer not null default 200 check (daily_limit between 1 and 200),
   copy_style text not null default 'warm'
     check (copy_style in ('warm', 'playful', 'concise')),
   copy_variation_notes text not null default ''

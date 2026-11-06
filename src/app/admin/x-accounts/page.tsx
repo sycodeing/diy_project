@@ -111,7 +111,7 @@ function AccountForm({ account, proxy, action, submitLabel }: { account?: XReply
       <Area defaultValue={account?.voice} label="表达语气" name="voice" placeholder="温暖、具体、不强推销" required />
       <Area defaultValue={account?.prohibited_topics} label="禁止话题" name="prohibitedTopics" placeholder="医疗建议、争议事件、未成年人" />
       <Field defaultValue={account?.topics.join(", ")} label="常用话题（逗号分隔）" name="topics" placeholder="new adoption, gotcha day" />
-      <Field defaultValue={account?.daily_limit ?? 5} label="每日批准上限" max="20" min="1" name="dailyLimit" required type="number" />
+      <Field defaultValue={account?.daily_limit ?? 200} label="每日批准上限" max="200" min="1" name="dailyLimit" required type="number" />
       <label className="mt-3 block text-sm font-bold">文案风格<select className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3" defaultValue={account?.copy_style ?? "warm"} name="copyStyle"><option value="warm">温暖细腻</option><option value="playful">活泼俏皮</option><option value="concise">简洁直接</option></select></label>
       <label className="mt-3 block text-sm font-bold">账号状态<select className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3" defaultValue={String(account?.active ?? true)} name="active"><option value="true">启用</option><option value="false">停用</option></select></label>
       <Area defaultValue={account?.copy_variation_notes} label="文案差异备注" name="copyVariationNotes" placeholder="例如：少用感叹号，强调纪念意义。用于稳定选择该账号的文案变体。" />
