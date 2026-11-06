@@ -24,7 +24,7 @@ from .xuse_client import (
 )
 
 
-WORKER_VERSION = "4.5.0-authenticated-socks5-bridge"
+WORKER_VERSION = "4.6.0-chained-authenticated-socks5"
 BATCH_DELAY_MIN_SECONDS = 15.0
 BATCH_DELAY_MAX_SECONDS = 30.0
 HALT_ERROR_MARKERS = ("captcha", "challenge", "login", "locked", "rate_limit", "rate limit", "verification")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from urllib.parse import unquote, urlsplit
@@ -26,6 +27,21 @@ def _authenticated_socks5(value: str | None) -> tuple[str, int, str, str] | None
     return parsed.hostname, parsed.port, username, password
 
 
+def _transport_socks5(value: str | None) -> tuple[str, int, str | None, str | None] | None:
+    if not value:
+        return None
+    parsed = urlsplit(value)
+    if parsed.scheme != "socks5" or not parsed.hostname or not parsed.port:
+        raise ValueError("X reply proxy transport must be a SOCKS5 URL with host and port.")
+    if (parsed.username is None) != (parsed.password is None):
+        raise ValueError("SOCKS5 transport credentials must include both username and password.")
+    username = unquote(parsed.username) if parsed.username is not None else None
+    password = unquote(parsed.password) if parsed.password is not None else None
+    if username is not None and (not username or not password or len(username.encode()) > 255 or len(password.encode()) > 255):
+        raise ValueError("SOCKS5 transport credentials are invalid.")
+    return parsed.hostname, parsed.port, username, password
+
+
 async def _read_socks_address(reader: asyncio.StreamReader, atyp: int) -> None:
     if atyp == 1:
         await reader.readexactly(4)
@@ -43,20 +59,42 @@ async def _connect_upstream(
     upstream: tuple[str, int, str, str],
     target_host: str,
     target_port: int,
+    transport: tuple[str, int, str | None, str | None] | None = None,
 ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
     proxy_host, proxy_port, username, password = upstream
+    connect_host, connect_port = (transport[0], transport[1]) if transport else (proxy_host, proxy_port)
     reader, writer = await asyncio.wait_for(
-        asyncio.open_connection(proxy_host, proxy_port),
+        asyncio.open_connection(connect_host, connect_port),
         timeout=CONNECT_TIMEOUT_SECONDS,
     )
     try:
-        writer.write(b"\x05\x01\x02")
-        await writer.drain()
-        if await reader.readexactly(2) != b"\x05\x02":
-            raise PermissionError("SOCKS5 proxy rejected username/password authentication.")
+        if transport:
+            await _socks5_tunnel(reader, writer, proxy_host, proxy_port, transport[2], transport[3])
+        await _socks5_tunnel(reader, writer, target_host, target_port, username, password)
+        return reader, writer
+    except BaseException:
+        writer.close()
+        await writer.wait_closed()
+        raise
 
+
+async def _socks5_tunnel(
+    reader: asyncio.StreamReader,
+    writer: asyncio.StreamWriter,
+    target_host: str,
+    target_port: int,
+    username: str | None,
+    password: str | None,
+) -> None:
+    method = 2 if username is not None else 0
+    writer.write(b"\x05\x01" + bytes((method,)))
+    await writer.drain()
+    if await reader.readexactly(2) != b"\x05" + bytes((method,)):
+        raise PermissionError("SOCKS5 proxy rejected the offered authentication method.")
+
+    if username is not None:
         username_bytes = username.encode()
-        password_bytes = password.encode()
+        password_bytes = (password or "").encode()
         writer.write(
             b"\x01"
             + bytes((len(username_bytes),))
@@ -68,29 +106,24 @@ async def _connect_upstream(
         if await reader.readexactly(2) != b"\x01\x00":
             raise PermissionError("SOCKS5 proxy credentials were rejected.")
 
-        try:
-            address = ipaddress.ip_address(target_host)
-        except ValueError:
-            host_bytes = target_host.encode("idna")
-            if not host_bytes or len(host_bytes) > 255:
-                raise ValueError("Proxy target hostname is invalid.")
-            encoded_target = b"\x03" + bytes((len(host_bytes),)) + host_bytes
-        else:
-            encoded_target = (b"\x01" if address.version == 4 else b"\x04") + address.packed
+    try:
+        address = ipaddress.ip_address(target_host)
+    except ValueError:
+        host_bytes = target_host.encode("idna")
+        if not host_bytes or len(host_bytes) > 255:
+            raise ValueError("Proxy target hostname is invalid.")
+        encoded_target = b"\x03" + bytes((len(host_bytes),)) + host_bytes
+    else:
+        encoded_target = (b"\x01" if address.version == 4 else b"\x04") + address.packed
 
-        writer.write(b"\x05\x01\x00" + encoded_target + target_port.to_bytes(2, "big"))
-        await writer.drain()
-        version, result, _reserved, atyp = await reader.readexactly(4)
-        if version != 5:
-            raise ConnectionError("SOCKS5 proxy returned an invalid response.")
-        await _read_socks_address(reader, atyp)
-        if result != 0:
-            raise ConnectionError(f"SOCKS5 proxy could not connect to the target (code {result}).")
-        return reader, writer
-    except BaseException:
-        writer.close()
-        await writer.wait_closed()
-        raise
+    writer.write(b"\x05\x01\x00" + encoded_target + target_port.to_bytes(2, "big"))
+    await writer.drain()
+    version, result, _reserved, atyp = await reader.readexactly(4)
+    if version != 5:
+        raise ConnectionError("SOCKS5 proxy returned an invalid response.")
+    await _read_socks_address(reader, atyp)
+    if result != 0:
+        raise ConnectionError(f"SOCKS5 proxy could not connect to the target (code {result}).")
 
 
 async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -100,11 +133,19 @@ async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> N
             await writer.drain()
     except (ConnectionError, asyncio.IncompleteReadError):
         pass
+    finally:
+        if writer.can_write_eof() and not writer.is_closing():
+            try:
+                writer.write_eof()
+                await writer.drain()
+            except (ConnectionError, OSError, RuntimeError):
+                pass
 
 
 @dataclass
 class AuthenticatedSocks5Bridge:
     upstream: tuple[str, int, str, str]
+    transport: tuple[str, int, str | None, str | None] | None = None
     server: asyncio.Server | None = None
     clients: set[asyncio.Task[None]] = field(default_factory=set)
 
@@ -129,6 +170,7 @@ class AuthenticatedSocks5Bridge:
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         upstream_writer: asyncio.StreamWriter | None = None
+        tunnel_established = False
         try:
             header = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=CONNECT_TIMEOUT_SECONDS)
             if len(header) > MAX_HEADER_BYTES:
@@ -147,23 +189,25 @@ class AuthenticatedSocks5Bridge:
             if not 1 <= target_port <= 65535:
                 raise ValueError("CONNECT target port is invalid.")
 
-            upstream_reader, upstream_writer = await _connect_upstream(self.upstream, target_host, target_port)
+            upstream_reader, upstream_writer = await _connect_upstream(
+                self.upstream,
+                target_host,
+                target_port,
+                self.transport,
+            )
             writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             await writer.drain()
-            relay_tasks = {
-                asyncio.create_task(_pipe(reader, upstream_writer)),
-                asyncio.create_task(_pipe(upstream_reader, writer)),
-            }
-            _done, pending = await asyncio.wait(relay_tasks, return_when=asyncio.FIRST_COMPLETED)
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*relay_tasks, return_exceptions=True)
+            tunnel_established = True
+            await asyncio.gather(
+                _pipe(reader, upstream_writer),
+                _pipe(upstream_reader, writer),
+            )
         except (Exception, asyncio.TimeoutError):
-            if not writer.is_closing():
-                writer.write(b"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n")
+            if not tunnel_established and not writer.is_closing():
                 try:
+                    writer.write(b"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n")
                     await writer.drain()
-                except ConnectionError:
+                except (ConnectionError, OSError, RuntimeError):
                     pass
         finally:
             if upstream_writer and not upstream_writer.is_closing():
@@ -183,7 +227,8 @@ async def browser_compatible_proxy(proxy_url: str | None):
     if upstream is None:
         yield proxy_url
         return
-    bridge = AuthenticatedSocks5Bridge(upstream)
+    transport = _transport_socks5(os.environ.get("X_REPLY_PROXY_TRANSPORT"))
+    bridge = AuthenticatedSocks5Bridge(upstream, transport)
     local_url = await bridge.start()
     try:
         yield local_url

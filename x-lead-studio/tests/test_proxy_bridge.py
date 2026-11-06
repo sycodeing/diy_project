@@ -83,3 +83,71 @@ def test_http_proxy_is_returned_unchanged():
             assert proxy_url == value
 
     asyncio.run(run())
+
+
+def test_authenticated_socks5_can_chain_through_local_transport(monkeypatch):
+    async def run():
+        observed: dict[str, object] = {}
+
+        async def fake_transport(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+            assert await reader.readexactly(3) == b"\x05\x01\x00"
+            writer.write(b"\x05\x00")
+            await writer.drain()
+            _version, _command, _reserved, atyp = await reader.readexactly(4)
+            observed["upstream_host"] = await _read_socks_target(reader, atyp)
+            observed["upstream_port"] = int.from_bytes(await reader.readexactly(2), "big")
+            writer.write(b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00")
+            await writer.drain()
+
+            assert await reader.readexactly(3) == b"\x05\x01\x02"
+            writer.write(b"\x05\x02")
+            await writer.drain()
+            assert await reader.readexactly(1) == b"\x01"
+            username_length = (await reader.readexactly(1))[0]
+            observed["username"] = (await reader.readexactly(username_length)).decode()
+            password_length = (await reader.readexactly(1))[0]
+            observed["password"] = (await reader.readexactly(password_length)).decode()
+            writer.write(b"\x01\x00")
+            await writer.drain()
+            _version, _command, _reserved, atyp = await reader.readexactly(4)
+            observed["target_host"] = await _read_socks_target(reader, atyp)
+            observed["target_port"] = int.from_bytes(await reader.readexactly(2), "big")
+            writer.write(b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00")
+            await writer.drain()
+            assert await reader.readexactly(4) == b"ping"
+            writer.write(b"pong")
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+
+        transport = await asyncio.start_server(fake_transport, "127.0.0.1", 0)
+        transport_port = transport.sockets[0].getsockname()[1]
+        monkeypatch.setenv("X_REPLY_PROXY_TRANSPORT", f"socks5://127.0.0.1:{transport_port}")
+        try:
+            async with browser_compatible_proxy(
+                "socks5://alice:s3cret@upstream.example:12324"
+            ) as proxy_url:
+                parsed = urlsplit(proxy_url)
+                reader, writer = await asyncio.open_connection(parsed.hostname, parsed.port)
+                writer.write(b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n")
+                await writer.drain()
+                assert await reader.readuntil(b"\r\n\r\n") == b"HTTP/1.1 200 Connection Established\r\n\r\n"
+                writer.write(b"ping")
+                await writer.drain()
+                assert await reader.readexactly(4) == b"pong"
+                writer.close()
+                await writer.wait_closed()
+        finally:
+            transport.close()
+            await transport.wait_closed()
+
+        assert observed == {
+            "upstream_host": "upstream.example",
+            "upstream_port": 12324,
+            "username": "alice",
+            "password": "s3cret",
+            "target_host": "example.com",
+            "target_port": 443,
+        }
+
+    asyncio.run(run())
