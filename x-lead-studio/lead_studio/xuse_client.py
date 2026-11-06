@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from .proxy_bridge import browser_compatible_proxy
+
 
 NETWORK_MODES = {"vpn_direct", "fixed_proxy"}
 IP_CHECK_FALLBACK_URLS = (
@@ -266,11 +268,12 @@ async def probe_network_route(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     parameters, _ = _server_parameters(x_use_home)
     try:
-        with log_path.open("a", encoding="utf-8") as errors:
-            async with stdio_client(parameters, errlog=errors) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await asyncio.wait_for(session.initialize(), timeout=45)
-                    return await _probe_fixed_proxy(session, x_use_home=x_use_home, account=account, proxy_url=proxy_url)
+        async with browser_compatible_proxy(proxy_url) as effective_proxy_url:
+            with log_path.open("a", encoding="utf-8") as errors:
+                async with stdio_client(parameters, errlog=errors) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await asyncio.wait_for(session.initialize(), timeout=45)
+                        return await _probe_fixed_proxy(session, x_use_home=x_use_home, account=account, proxy_url=effective_proxy_url)
     except asyncio.TimeoutError:
         return NetworkProbeResult(False, error_code="network_probe_timeout", error_message="The fixed proxy check timed out; direct fallback is forbidden.")
     except Exception as error:
@@ -307,28 +310,29 @@ async def verify_account_mapping(
         if direct_probe and (not direct_probe.ok or not direct_probe.egress_ip):
             return AccountMappingVerificationResult(False, error_code=direct_probe.error_code, error_message=direct_probe.error_message)
         egress_ip = direct_probe.egress_ip if direct_probe else None
-        with log_path.open("a", encoding="utf-8") as errors:
-            async with stdio_client(parameters, errlog=errors) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await asyncio.wait_for(session.initialize(), timeout=45)
-                    if network_mode == "fixed_proxy":
-                        proxy_probe = await _probe_fixed_proxy(session, x_use_home=x_use_home, account=account, proxy_url=proxy_url)
-                        if not proxy_probe.ok or not proxy_probe.egress_ip:
-                            return AccountMappingVerificationResult(False, error_code=proxy_probe.error_code, error_message=proxy_probe.error_message)
-                        egress_ip = proxy_probe.egress_ip
-                    identity_call = await asyncio.wait_for(
-                        session.call_tool("get_account_analytics", {"account": account, "limit": 1}),
-                        timeout=120,
-                    )
-                    identity = _payload(identity_call)
-                    if not identity.get("ok"):
-                        code, message, _ = _error_fields(identity)
-                        return AccountMappingVerificationResult(False, egress_ip=egress_ip, error_code=code, error_message=message)
-                    owner = identity.get("owner")
-                    actual_handle = owner.get("handle") if isinstance(owner, dict) else None
-                    if not isinstance(actual_handle, str) or not re.fullmatch(r"[A-Za-z0-9_]{1,15}", actual_handle):
-                        return AccountMappingVerificationResult(False, egress_ip=egress_ip, error_code="owner_unconfirmed", error_message="The visible signed-in X owner could not be confirmed.")
-                    return AccountMappingVerificationResult(True, actual_handle=actual_handle, egress_ip=egress_ip)
+        async with browser_compatible_proxy(proxy_url) as effective_proxy_url:
+            with log_path.open("a", encoding="utf-8") as errors:
+                async with stdio_client(parameters, errlog=errors) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await asyncio.wait_for(session.initialize(), timeout=45)
+                        if network_mode == "fixed_proxy":
+                            proxy_probe = await _probe_fixed_proxy(session, x_use_home=x_use_home, account=account, proxy_url=effective_proxy_url)
+                            if not proxy_probe.ok or not proxy_probe.egress_ip:
+                                return AccountMappingVerificationResult(False, error_code=proxy_probe.error_code, error_message=proxy_probe.error_message)
+                            egress_ip = proxy_probe.egress_ip
+                        identity_call = await asyncio.wait_for(
+                            session.call_tool("get_account_analytics", {"account": account, "limit": 1}),
+                            timeout=120,
+                        )
+                        identity = _payload(identity_call)
+                        if not identity.get("ok"):
+                            code, message, _ = _error_fields(identity)
+                            return AccountMappingVerificationResult(False, egress_ip=egress_ip, error_code=code, error_message=message)
+                        owner = identity.get("owner")
+                        actual_handle = owner.get("handle") if isinstance(owner, dict) else None
+                        if not isinstance(actual_handle, str) or not re.fullmatch(r"[A-Za-z0-9_]{1,15}", actual_handle):
+                            return AccountMappingVerificationResult(False, egress_ip=egress_ip, error_code="owner_unconfirmed", error_message="The visible signed-in X owner could not be confirmed.")
+                        return AccountMappingVerificationResult(True, actual_handle=actual_handle, egress_ip=egress_ip)
     except asyncio.TimeoutError:
         return AccountMappingVerificationResult(False, error_code="mapping_verification_timeout", error_message="The account mapping verification timed out.")
     except Exception as error:
@@ -377,52 +381,53 @@ async def send_approved_action(
         if direct_probe:
             egress_ip = direct_probe.egress_ip
 
-        with log_path.open("a", encoding="utf-8") as errors:
-            async with stdio_client(parameters, errlog=errors) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await asyncio.wait_for(session.initialize(), timeout=45)
-                    if network_mode == "fixed_proxy":
-                        proxy_probe = await _probe_fixed_proxy(session, x_use_home=x_use_home, account=account, proxy_url=proxy_url)
-                        if not proxy_probe.ok:
-                            return ReplyResult(status="failed", error_code=proxy_probe.error_code, error_message=proxy_probe.error_message)
-                        egress_ip = proxy_probe.egress_ip
+        async with browser_compatible_proxy(proxy_url) as effective_proxy_url:
+            with log_path.open("a", encoding="utf-8") as errors:
+                async with stdio_client(parameters, errlog=errors) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await asyncio.wait_for(session.initialize(), timeout=45)
+                        if network_mode == "fixed_proxy":
+                            proxy_probe = await _probe_fixed_proxy(session, x_use_home=x_use_home, account=account, proxy_url=effective_proxy_url)
+                            if not proxy_probe.ok:
+                                return ReplyResult(status="failed", error_code=proxy_probe.error_code, error_message=proxy_probe.error_message)
+                            egress_ip = proxy_probe.egress_ip
 
-                    if not egress_ip:
-                        return ReplyResult(status="failed", error_code="route_ip_unconfirmed", error_message="The browser route did not return a confirmed egress IP.")
-                    if verify_route:
-                        accepted, verification_error = await verify_route(egress_ip)
-                        if not accepted:
-                            return ReplyResult(status="failed", error_code="network_route_rejected", error_message=verification_error or "The browser route was rejected by the website.", egress_ip=egress_ip)
+                        if not egress_ip:
+                            return ReplyResult(status="failed", error_code="route_ip_unconfirmed", error_message="The browser route did not return a confirmed egress IP.")
+                        if verify_route:
+                            accepted, verification_error = await verify_route(egress_ip)
+                            if not accepted:
+                                return ReplyResult(status="failed", error_code="network_route_rejected", error_message=verification_error or "The browser route was rejected by the website.", egress_ip=egress_ip)
 
-                    tool_name = "post_tweet" if action_type == "post" else "reply_to_tweet"
-                    tool_arguments = {"account": account, "text": text}
-                    if tweet_url:
-                        tool_arguments["tweet_url"] = tweet_url
-                    if media:
-                        tool_arguments["media"] = media
-                    draft_call = await asyncio.wait_for(session.call_tool(tool_name, tool_arguments), timeout=60)
-                    draft = _payload(draft_call)
-                    if not draft.get("ok"):
-                        code, message, action_id = _error_fields(draft)
-                        return ReplyResult(status="failed", action_id=action_id, error_code=code, error_message=message, egress_ip=egress_ip)
-                    draft_id = str(draft.get("draft_id") or "") or None
-                    if not draft_id or draft.get("status") != "pending":
-                        return ReplyResult(status="failed", draft_id=draft_id, error_code="draft_gate_missing", error_message="x-use did not return a pending draft; nothing was sent.", egress_ip=egress_ip)
+                        tool_name = "post_tweet" if action_type == "post" else "reply_to_tweet"
+                        tool_arguments = {"account": account, "text": text}
+                        if tweet_url:
+                            tool_arguments["tweet_url"] = tweet_url
+                        if media:
+                            tool_arguments["media"] = media
+                        draft_call = await asyncio.wait_for(session.call_tool(tool_name, tool_arguments), timeout=60)
+                        draft = _payload(draft_call)
+                        if not draft.get("ok"):
+                            code, message, action_id = _error_fields(draft)
+                            return ReplyResult(status="failed", action_id=action_id, error_code=code, error_message=message, egress_ip=egress_ip)
+                        draft_id = str(draft.get("draft_id") or "") or None
+                        if not draft_id or draft.get("status") != "pending":
+                            return ReplyResult(status="failed", draft_id=draft_id, error_code="draft_gate_missing", error_message="x-use did not return a pending draft; nothing was sent.", egress_ip=egress_ip)
 
-                    approval_call = await asyncio.wait_for(session.call_tool("approve_draft", {"draft_id": draft_id}), timeout=180)
-                    approval = _payload(approval_call)
-                    if not approval.get("ok"):
-                        code, message, action_id = _error_fields(approval)
-                        return ReplyResult(status=_approval_failure_status(code, action_id), draft_id=draft_id, action_id=action_id, error_code=code, error_message=message, egress_ip=egress_ip)
-                    result = approval.get("result") if isinstance(approval.get("result"), dict) else approval
-                    action_id = result.get("action_id") if isinstance(result, dict) else None
-                    return ReplyResult(
-                        status="sent",
-                        draft_id=draft_id,
-                        action_id=str(action_id)[:160] if action_id else None,
-                        result_url=_first_x_url(result),
-                        egress_ip=egress_ip,
-                    )
+                        approval_call = await asyncio.wait_for(session.call_tool("approve_draft", {"draft_id": draft_id}), timeout=180)
+                        approval = _payload(approval_call)
+                        if not approval.get("ok"):
+                            code, message, action_id = _error_fields(approval)
+                            return ReplyResult(status=_approval_failure_status(code, action_id), draft_id=draft_id, action_id=action_id, error_code=code, error_message=message, egress_ip=egress_ip)
+                        result = approval.get("result") if isinstance(approval.get("result"), dict) else approval
+                        action_id = result.get("action_id") if isinstance(result, dict) else None
+                        return ReplyResult(
+                            status="sent",
+                            draft_id=draft_id,
+                            action_id=str(action_id)[:160] if action_id else None,
+                            result_url=_first_x_url(result),
+                            egress_ip=egress_ip,
+                        )
     except asyncio.TimeoutError:
         return ReplyResult(status="uncertain" if draft_id else "failed", draft_id=draft_id, error_code="xuse_timeout", error_message="x-use timed out. If approval had started, inspect X before any new action.", egress_ip=egress_ip)
     except Exception as error:
