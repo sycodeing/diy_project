@@ -39,11 +39,8 @@ SEARCH_SEGMENTS = (
         key="pet_adventure",
         label="Pet adventure / outdoors",
         query=(
-            '("hiking with my dog" OR "hiking with my cat" OR "beach day with my dog" '
-            'OR "beach day with my cat" OR "camping with my dog" OR "camping with my cat" '
-            'OR "adventure with my dog" OR "adventure with my cat" '
-            'OR "beach day with our dog" OR "beach day with our cat" '
-            'OR "camping with our dog" OR "camping with our cat") '
+            '((hiking OR beach OR camping OR "road trip" OR adventure) '
+            '("my dog" OR "my cat" OR "our dog" OR "our cat")) '
             'filter:images -filter:replies lang:en'
         ),
     ),
@@ -51,10 +48,8 @@ SEARCH_SEGMENTS = (
         key="pet_costume",
         label="Pet costume / holiday outfit",
         query=(
-            '("my dog in costume" OR "my cat in costume" OR "our dog in costume" '
-            'OR "our cat in costume" OR "my dog dressed up" OR "my cat dressed up" '
-            'OR "my dog holiday outfit" OR "my cat holiday outfit" '
-            'OR "my dog christmas outfit" OR "my cat christmas outfit") '
+            '((costume OR "dressed up" OR "holiday outfit" OR "christmas outfit") '
+            '("my dog" OR "my cat" OR "our dog" OR "our cat")) '
             'filter:images -filter:replies lang:en'
         ),
     ),

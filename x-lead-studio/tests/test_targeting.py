@@ -5,8 +5,8 @@ def test_search_queries_cover_broader_owner_phrases_before_strict_targeting():
     queries = {segment.key: segment.query for segment in SEARCH_SEGMENTS}
     assert '"meet my"' in queries["new_adoption"]
     assert '"our dog"' in queries["pet_birthday"]
-    assert '"beach day with our dog"' in queries["pet_adventure"]
-    assert '"my dog christmas outfit"' in queries["pet_costume"]
+    assert '"road trip"' in queries["pet_adventure"]
+    assert '"christmas outfit"' in queries["pet_costume"]
     assert 'photogenic' in queries["pet_portrait"]
     assert '"our dog"' in queries["pet_portrait"]
     # The provider appends retweet and since/until filters, so leave enough
