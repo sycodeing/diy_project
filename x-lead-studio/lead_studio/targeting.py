@@ -56,9 +56,7 @@ SEARCH_SEGMENTS = (
         query=(
             '("my dog in costume" OR "my cat in costume" OR "our dog in costume" '
             'OR "our cat in costume" OR "my dog dressed up" OR "my cat dressed up" '
-            'OR "our dog dressed up" OR "our cat dressed up" OR "my dog halloween costume" '
-            'OR "my cat halloween costume" OR "my dog holiday outfit" OR "my cat holiday outfit" '
-            'OR "our dog holiday outfit" OR "our cat holiday outfit" '
+            'OR "my dog holiday outfit" OR "my cat holiday outfit" '
             'OR "my dog christmas outfit" OR "my cat christmas outfit") '
             'filter:images -filter:replies lang:en'
         ),

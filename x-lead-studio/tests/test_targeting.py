@@ -8,7 +8,9 @@ def test_search_queries_cover_broader_owner_phrases_before_strict_targeting():
     assert '"beach day with our dog"' in queries["pet_adventure"]
     assert '"my dog christmas outfit"' in queries["pet_costume"]
     assert '"look at our dog"' in queries["pet_portrait"]
-    assert all(len(query) < 500 for query in queries.values())
+    # The provider appends retweet and since/until filters, so leave enough
+    # headroom below its effective query-length ceiling.
+    assert all(len(query) < 440 for query in queries.values())
 
 
 def tweet(**overrides):
