@@ -148,12 +148,10 @@ export async function createXLeadAutoTask(formData: FormData): Promise<QueueActi
       target_post_url: lead.post_url,
       reply_text: PREPARING_COPY,
       scheduled_for: new Date().toISOString(),
-      status: "queued",
+      status: "draft",
       preparation_status: "pending",
       account_key_snapshot: account.account_key,
       positioning_snapshot: account.positioning,
-      approved_by: user.id,
-      approved_at: new Date().toISOString(),
       created_by: user.id,
     }).select("id").single();
     if (error?.code === "23505") return { ok: true };

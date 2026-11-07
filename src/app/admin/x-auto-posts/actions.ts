@@ -58,6 +58,27 @@ export async function approveXAutoBatch(formData: FormData): Promise<XAutoApprov
   }
 }
 
+export async function startAllXAutoSending(): Promise<XAutoApprovalResult> {
+  const user = await requireAdmin(PAGE_PATH);
+  try {
+    const supabase = serviceClient();
+    const { count: preparingCount, error: preparingError } = await supabase
+      .from("x_reply_jobs")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "draft")
+      .in("preparation_status", ["pending", "processing"]);
+    if (preparingError) throw new Error(preparingError.message);
+    if ((preparingCount ?? 0) > 0) {
+      throw new XAutoApprovalError("仍有自动任务正在生成素材，请等待全部准备完成后再开始发送。");
+    }
+    const approvedCount = await approveXAutoJobs(null, user.id);
+    revalidatePath(PAGE_PATH);
+    return { ok: true, approvedCount };
+  } catch (error) {
+    return approvalFailure(error, "开始全部发送失败，请刷新页面后重试。");
+  }
+}
+
 function approvalFailure(error: unknown, fallback: string): XAutoApprovalResult {
   if (error instanceof z.ZodError) {
     return { ok: false, error: "请至少勾选一条已就绪的草稿，单次最多选择 100 条。" };
@@ -67,15 +88,19 @@ function approvalFailure(error: unknown, fallback: string): XAutoApprovalResult 
   return { ok: false, error: fallback };
 }
 
-async function approveXAutoJobs(requestedJobIds: string[], userId: string) {
+async function approveXAutoJobs(requestedJobIds: string[] | null, userId: string) {
   const supabase = serviceClient();
-  const jobIds = [...new Set(requestedJobIds)];
-  const { data: jobs, error } = await supabase
+  const jobIds = requestedJobIds ? [...new Set(requestedJobIds)] : null;
+  let jobsQuery = supabase
     .from("x_reply_jobs")
-    .select("id,status,account_id,scheduled_for,preparation_status,x_reply_accounts!inner(account_key,positioning,daily_limit,active,executor_id,network_mode,expected_egress_ip,x_reply_account_proxies(account_id,status))")
-    .in("id", jobIds);
+    .select("id,status,account_id,scheduled_for,preparation_status,x_reply_accounts!inner(account_key,positioning,daily_limit,active,executor_id,network_mode,expected_egress_ip,x_reply_account_proxies(account_id,status))");
+  jobsQuery = jobIds
+    ? jobsQuery.in("id", jobIds)
+    : jobsQuery.eq("status", "draft").eq("preparation_status", "ready").order("created_at", { ascending: true });
+  const { data: jobs, error } = await jobsQuery;
   if (error) throw new Error(error.message);
-  if (!jobs || jobs.length !== jobIds.length) throw new XAutoApprovalError("部分自动发送草稿不存在，请刷新页面后重试。");
+  if (!jobs?.length) throw new XAutoApprovalError("当前没有已就绪、等待开始的自动任务。");
+  if (jobIds && jobs.length !== jobIds.length) throw new XAutoApprovalError("部分自动发送草稿不存在，请刷新页面后重试。");
 
   const executorIds = [...new Set(jobs.flatMap((job) => {
     const account = Array.isArray(job.x_reply_accounts) ? job.x_reply_accounts[0] : job.x_reply_accounts;
@@ -157,7 +182,7 @@ async function approveXAutoJobs(requestedJobIds: string[], userId: string) {
       throw new XAutoApprovalError("部分任务状态已经变化，请刷新页面后重试。");
     }
   }
-  return jobIds.length;
+  return jobs.length;
 }
 
 export async function rejectXAutoDraft(formData: FormData) {

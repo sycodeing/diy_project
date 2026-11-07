@@ -259,7 +259,7 @@ function describeAutomaticQueueTask(task: AutomaticQueueTaskSummary) {
   if (task.status === "claimed") return "已加入自动队列 · 本机处理中";
   if (task.preparation_status === "failed") return "已加入自动队列 · 准备失败";
   if (["pending", "processing"].includes(task.preparation_status)) return "已加入自动队列 · 素材准备中";
-  return "已加入自动队列 · 待确认发送";
+  return "已加入自动队列 · 等待手动开始";
 }
 function SelectFilter({ label, name, value, options }: { label: string; name: string; value: string; options: Array<[string, string]> }) {
   return <label className="block text-sm font-bold">{label}<select className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3" defaultValue={value} name={name}>{options.map(([optionValue, optionLabel]) => <option key={optionValue || "all"} value={optionValue}>{optionLabel}</option>)}</select></label>;

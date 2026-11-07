@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { X_LEAD_REJECTION_REASON_LABELS, X_LEAD_REJECTION_REASONS } from "@/lib/x-lead";
 import { blacklistXLeadAccount, createXLeadAutoTask, createXLeadManualTask, setXLeadSuitability, type QueueActionResult } from "./actions";
@@ -11,6 +11,9 @@ type QueueState = {
   href: string;
   label: string;
 } | null;
+
+const DEFAULT_AUTO_ACCOUNT_KEY = "diyproject:x-auto-default-account-id";
+const DEFAULT_AUTO_ACCOUNT_EVENT = "diyproject:x-auto-default-account-changed";
 
 export function CandidateActions({
   actionable,
@@ -45,6 +48,37 @@ export function CandidateActions({
     reason: initialRejectionReason,
   });
   const [error, setError] = useState<string | null>(null);
+  const fallbackAccountId = accountOptions[0]?.id ?? "";
+  const accountIds = accountOptions.map((account) => account.id).join(",");
+  const [selectedAccountId, setSelectedAccountId] = useState(fallbackAccountId);
+
+  useEffect(() => {
+    const validAccountIds = new Set(accountIds.split(",").filter(Boolean));
+    const applyDefault = (candidate: string | null) => {
+      const next = candidate && validAccountIds.has(candidate) ? candidate : fallbackAccountId;
+      setSelectedAccountId(next);
+      if (next) window.localStorage.setItem(DEFAULT_AUTO_ACCOUNT_KEY, next);
+    };
+    applyDefault(window.localStorage.getItem(DEFAULT_AUTO_ACCOUNT_KEY));
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === DEFAULT_AUTO_ACCOUNT_KEY) applyDefault(event.newValue);
+    };
+    const onDefaultChange = (event: Event) => {
+      applyDefault((event as CustomEvent<string>).detail);
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(DEFAULT_AUTO_ACCOUNT_EVENT, onDefaultChange);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(DEFAULT_AUTO_ACCOUNT_EVENT, onDefaultChange);
+    };
+  }, [accountIds, fallbackAccountId]);
+
+  function changeDefaultAccount(value: string) {
+    setSelectedAccountId(value);
+    window.localStorage.setItem(DEFAULT_AUTO_ACCOUNT_KEY, value);
+    window.dispatchEvent(new CustomEvent(DEFAULT_AUTO_ACCOUNT_EVENT, { detail: value }));
+  }
 
   async function runAction(action: () => Promise<void>, onSuccess: () => void) {
     setError(null);
@@ -80,7 +114,7 @@ export function CandidateActions({
   async function addToAutoQueue(formData: FormData) {
     await runQueueAction(
       () => createXLeadAutoTask(formData),
-      () => setQueueState({ href: "/admin/x-auto-posts", label: "已加入自动队列 · 素材就绪后自动发送" }),
+      () => setQueueState({ href: "/admin/x-auto-posts", label: "已加入自动队列 · 等待手动开始全部发送" }),
     );
   }
 
@@ -114,8 +148,8 @@ export function CandidateActions({
       </form>
       <form action={addToAutoQueue}>
         <input name="leadId" type="hidden" value={leadId} />
-        <label className="mb-2 block text-xs font-bold">发送 X 账号<select className="focus-ring mt-1.5 h-10 w-full rounded-lg border border-line bg-white px-3 text-sm" defaultValue="" disabled={!accountOptions.length} name="accountId" required><option disabled value="">请选择账号</option>{accountOptions.map((account) => <option key={account.id} value={account.id}>{account.displayName} · @{account.accountKey}</option>)}</select></label>
-        <FormSubmitButton className="focus-ring h-11 w-full rounded-lg bg-accent px-4 text-sm font-black text-accent-ink disabled:opacity-50" disabled={!accountOptions.length} idleLabel="加入并自动发送" pendingLabel="正在入队…" />
+        <label className="mb-2 block text-xs font-bold">发送 X 账号<select className="focus-ring mt-1.5 h-10 w-full rounded-lg border border-line bg-white px-3 text-sm" disabled={!accountOptions.length} name="accountId" onChange={(event) => changeDefaultAccount(event.target.value)} required value={selectedAccountId}><option disabled value="">请选择账号</option>{accountOptions.map((account) => <option key={account.id} value={account.id}>{account.displayName} · @{account.accountKey}</option>)}</select></label>
+        <FormSubmitButton className="focus-ring h-11 w-full rounded-lg bg-accent px-4 text-sm font-black text-accent-ink disabled:opacity-50" disabled={!accountOptions.length} idleLabel="加入自动队列" pendingLabel="正在入队…" />
       </form>
     </div> : !filtered ? <p className="border-t border-line pt-3 text-xs font-bold text-red-700">参考结论不建议处理，不能加入发送队列。</p> : null}
 

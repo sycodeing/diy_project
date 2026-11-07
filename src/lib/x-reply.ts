@@ -1,5 +1,5 @@
 export const X_REPLY_STATUS_LABELS: Record<string, string> = {
-  draft: "待审核",
+  draft: "已加入，等待开始",
   queued: "已批准，等待本机",
   claimed: "本机处理中",
   sent: "发送成功",
