@@ -21,7 +21,10 @@ def test_candidate_discovery_serializes_for_shared_cloud_pool():
         "date": "2026-10-13T12:00:00+00:00",
         "likeCount": 20,
         "replyCount": 3,
-        "media": {"photos": [{"url": "https://pbs.twimg.com/media/example.jpg"}]},
+        "media": {"photos": [
+            {"url": "https://pbs.twimg.com/media/example.jpg"},
+            {"url": "https://pbs.twimg.com/media/example-2.jpg"},
+        ]},
         "user": {
             "username": "maple_home",
             "rawDescription": "Dog parent",
@@ -45,6 +48,10 @@ def test_candidate_discovery_serializes_for_shared_cloud_pool():
     assert cloud["handle"] == "maple_home"
     assert cloud["petType"] == "dog"
     assert cloud["selectionStatus"] == "new"
+    assert cloud["mediaUrls"] == [
+        "https://pbs.twimg.com/media/example.jpg",
+        "https://pbs.twimg.com/media/example-2.jpg",
+    ]
     assert cloud["targetingData"]["pet_type"] == "dog"
     targeting_data = json.loads(candidate["targeting_json"])
     assert targeting_data["organization"] is False

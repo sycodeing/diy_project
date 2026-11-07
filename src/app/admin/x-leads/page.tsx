@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { AdminAsyncImage } from "@/components/admin-async-image";
 import { AdminListPagination } from "@/components/admin-list-pagination";
 import { AppShell } from "@/components/app-shell";
 import { SetupWarning } from "@/components/setup-warning";
@@ -13,6 +12,7 @@ import {
   getXLeadReviewEvidence,
   getXLeadTargetingChecks,
   getXLeadFunnelStatus,
+  getXLeadPriorityScore,
   getXLeadRejectionNote,
   getXLeadRejectionReason,
   sortXLeadsByPriority,
@@ -24,6 +24,7 @@ import {
   type XLeadRow,
 } from "@/lib/x-lead";
 import { CandidateActions } from "./candidate-actions";
+import { CandidateMediaPicker } from "./candidate-media-picker";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -63,7 +64,7 @@ export default async function XLeadsPage({
   const filters = await searchParams;
   let query = supabase
     .from("x_leads")
-    .select("id,post_id,x_handle,post_url,media_url,posted_at,discovered_at,selection_status,segment,pet_type,occasion,occasion_confidence,ownership_confidence,us_confidence,us_evidence,lead_score,like_count,reply_count,repost_count,view_count,followers_count,targeting_data,consent_copy,public_copy,direct_message_copy,marketing_link_id,marketing_links!x_leads_marketing_link_id_fkey(id,idempotency_key,source_hash,expires_at,account_user_id,account_was_created,marketing_events(event_type,created_at),orders(id,payment_status,paid_at)),x_manual_posts(id,status,preparation_status,created_at),x_reply_jobs(id,status,preparation_status,created_at)")
+    .select("id,post_id,x_handle,post_url,media_url,media_urls,posted_at,discovered_at,selection_status,segment,pet_type,occasion,occasion_confidence,ownership_confidence,us_confidence,us_evidence,lead_score,like_count,reply_count,repost_count,view_count,followers_count,targeting_data,consent_copy,public_copy,direct_message_copy,marketing_link_id,marketing_links!x_leads_marketing_link_id_fkey(id,idempotency_key,source_hash,expires_at,account_user_id,account_was_created,marketing_events(event_type,created_at),orders(id,payment_status,paid_at)),x_manual_posts(id,status,preparation_status,created_at),x_reply_jobs(id,status,preparation_status,created_at)")
     .in("pet_type", ["cat", "dog"])
     .order("discovered_at", { ascending: false })
     .order("id", { ascending: false })
@@ -156,7 +157,7 @@ export default async function XLeadsPage({
 
         <form className="mt-6 grid gap-3 rounded-xl border border-line bg-panel/90 p-4 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto]">
           <SelectFilter label="参考结论" name="conclusion" value={conclusionFilter} options={[["", "待处理（建议 + 人工判断）"], ...Object.entries(X_LEAD_CONCLUSION_LABELS), ["all", "全部结论"]]} />
-          <SelectFilter label="目标人群" name="segment" value={filters.segment ?? ""} options={[["", "全部人群"], ["new_adoption", X_LEAD_SEGMENT_LABELS.new_adoption], ["pet_birthday", X_LEAD_SEGMENT_LABELS.pet_birthday]]} />
+          <SelectFilter label="目标人群" name="segment" value={filters.segment ?? ""} options={[["", "全部人群"], ...Object.entries(X_LEAD_SEGMENT_LABELS)]} />
           <SelectFilter label="人工筛选" name="review" value={filters.review ?? ""} options={[["", "未标记不合适"], ["rejected", "只看已标记不合适"], ["all", "全部人工状态"]]} />
           <SelectFilter label="过滤原因" name="reason" value={filters.reason ?? ""} options={[["", "全部原因"], ...X_LEAD_REJECTION_REASONS.map((reason) => [reason, X_LEAD_REJECTION_REASON_LABELS[reason]] as [string, string]), ["legacy", X_LEAD_REJECTION_REASON_LABELS.legacy]]} />
           <button className="focus-ring mt-auto h-11 rounded-lg bg-accent px-5 font-black text-accent-ink" type="submit">筛选</button>
@@ -190,9 +191,13 @@ export default async function XLeadsPage({
               </div>
               <div className="grid gap-4 p-4 lg:grid-cols-[140px_minmax(300px,0.72fr)_minmax(520px,1.55fr)]">
                 <div>
-                  <div className="aspect-square overflow-hidden rounded-lg border border-line bg-surface">
-                    <AdminAsyncImage alt={`@${lead.x_handle} 的帖子图片`} proxyThroughSite sizes="140px" src={lead.media_url} />
-                  </div>
+                  <CandidateMediaPicker
+                    handle={lead.x_handle}
+                    leadId={lead.id}
+                    locked={Boolean(manualTask || automaticTask || lead.marketing_link_id || ["approved", "contacted", "suppressed"].includes(lead.selection_status))}
+                    mediaUrl={lead.media_url}
+                    mediaUrls={lead.media_urls}
+                  />
                   <a className="mt-2 inline-block text-xs font-bold text-accent" href={lead.post_url} rel="noreferrer" target="_blank">打开原帖 ↗</a>
                 </div>
 
@@ -206,6 +211,7 @@ export default async function XLeadsPage({
                     <Metric label="美国位置" value={`${lead.us_confidence ?? 0} 分`} />
                     <Metric label="点赞 / 回复" value={`${lead.like_count} / ${lead.reply_count}`} />
                     <Metric label="粉丝数" value={String(lead.followers_count)} />
+                    <Metric label="候选优先分" value={`${getXLeadPriorityScore(lead)} 分`} />
                   </dl>
                   <QualificationSummary checks={targetingChecks} reviewEvidence={reviewEvidence} locationEvidence={describeUsEvidence(lead.us_evidence)} />
                 </div>

@@ -29,7 +29,7 @@ async def run_x_lead_worker(settings: Settings) -> None:
                     json={
                         "workerId": worker_id,
                         "cookieConfigured": _provider_is_configured(settings, provider),
-                        "version": "1.1.0",
+                        "version": "1.4.0",
                     },
                 )
                 if response.status_code == 204:
@@ -191,6 +191,7 @@ def _cloud_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
         "handle": candidate["author_handle"],
         "postUrl": candidate["post_url"],
         "mediaUrl": candidate["media_url"],
+        "mediaUrls": candidate.get("media_urls") or [candidate["media_url"]],
         "postedAt": candidate.get("posted_at"),
         "selectionStatus": candidate["status"],
         "segment": candidate["segment"],

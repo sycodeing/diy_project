@@ -34,8 +34,14 @@ def candidate_from_tweet(
     photos = media.get("photos") or []
     if not photos:
         return None
-    photo = photos[0]
-    media_url = photo.get("url") if isinstance(photo, dict) else None
+    media_urls: list[str] = []
+    for photo in photos:
+        media_url = photo.get("url") if isinstance(photo, dict) else None
+        if isinstance(media_url, str) and media_url.startswith("https://") and media_url not in media_urls:
+            media_urls.append(media_url)
+        if len(media_urls) == 4:
+            break
+    media_url = media_urls[0] if media_urls else None
     user = tweet.get("user") or tweet.get("author") or {}
     username = user.get("username") or user.get("login")
     post_id = str(tweet.get("id") or tweet.get("id_str") or "")
@@ -65,6 +71,7 @@ def candidate_from_tweet(
         "author_hash": hashlib.sha256(str(username).lower().encode()).hexdigest(),
         "author_handle": str(username),
         "media_url": str(media_url),
+        "media_urls": media_urls,
         "post_url": f"https://x.com/{username}/status/{post_id}",
         "posted_at": posted_at or None,
         "status": status,

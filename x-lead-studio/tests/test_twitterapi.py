@@ -47,6 +47,18 @@ def test_query_plan_uses_latest_incremental_windows_and_ninety_percent_us() -> N
     assert "place_country:US" not in plans[1].query
 
 
+def test_query_plan_uses_broad_search_only_when_geo_queries_are_disabled() -> None:
+    now = datetime(2026, 10, 31, 7, 0, tzinfo=timezone.utc)
+
+    plans = build_query_plan(dict(CONFIG), state={}, include_geo=False, now=now)
+
+    assert [(plan.segment.key, plan.mode, plan.limit) for plan in plans] == [
+        ("new_adoption", "broad", 20),
+        ("pet_birthday", "broad", 20),
+    ]
+    assert all("place_country:US" not in plan.query for plan in plans)
+
+
 def test_apify_token_alone_cannot_reactivate_dormant_provider() -> None:
     twitterapi = Settings(
         x_lead_provider="twitterapi",
@@ -84,7 +96,12 @@ def test_broad_query_absorbs_unused_us_capacity(tmp_path: Path) -> None:
         return httpx.Response(200, json={"tweets": broad_posts[1:], "has_next_page": False, "next_cursor": ""})
 
     async def run() -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, object]]:
-        settings = Settings(twitterapi_api_key="secret", twitterapi_base_url="https://api.twitterapi.io")
+        settings = Settings(
+            twitterapi_api_key="secret",
+            twitterapi_base_url="https://api.twitterapi.io",
+            twitterapi_geo_query_enabled=True,
+            twitterapi_about_enrichment_enabled=False,
+        )
         config = {**CONFIG, "segments": ["new_adoption"], "resultLimit": 10}
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             return await collect_twitterapi_search(client, settings, config, state_path=tmp_path / "state.json")
@@ -162,6 +179,8 @@ def test_collection_paginates_deduplicates_and_persists_watermarks(tmp_path: Pat
         twitterapi_api_key="secret",
         twitterapi_base_url="https://api.twitterapi.io",
         twitterapi_us_query_share=90,
+        twitterapi_geo_query_enabled=True,
+        twitterapi_about_enrichment_enabled=False,
     )
     config = {**CONFIG, "segments": ["new_adoption"], "resultLimit": 3}
     state_path = tmp_path / "watermarks.json"
@@ -210,6 +229,8 @@ def test_collection_archives_full_response_before_truncation_and_filtering(tmp_p
         twitterapi_api_key="must-not-be-archived",
         twitterapi_base_url="https://api.twitterapi.io",
         twitterapi_us_query_share=100,
+        twitterapi_geo_query_enabled=True,
+        twitterapi_about_enrichment_enabled=False,
     )
     archive_dir = tmp_path / "archives"
 
@@ -238,6 +259,117 @@ def test_collection_archives_full_response_before_truncation_and_filtering(tmp_p
     assert len(archived_response["tweets"]) == 3
     assert archived_response["provider_metadata"] == {"result_count": 3}
     assert "must-not-be-archived" not in archive_text
+
+
+def test_collection_enriches_missing_locations_once_per_author_and_reuses_cache(tmp_path: Path) -> None:
+    about_calls = 0
+    posts = []
+    for index in range(2):
+        item = _tweet()
+        item["id"] = str(4000 + index)
+        item["author"] = {**item["author"], "location": ""}
+        item["extendedEntities"] = {
+            "media": [{"type": "photo", "media_url_https": f"https://img.example/{index}.jpg"}],
+        }
+        posts.append(item)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal about_calls
+        if request.url.path == "/twitter/user_about":
+            about_calls += 1
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "data": {
+                        "userName": "petperson",
+                        "about_profile": {
+                            "account_based_in": "United States",
+                            "location_accurate": True,
+                        },
+                    },
+                },
+            )
+        return httpx.Response(200, json={"tweets": posts, "has_next_page": False, "next_cursor": ""})
+
+    settings = Settings(
+        twitterapi_api_key="secret",
+        twitterapi_base_url="https://api.twitterapi.io",
+        twitterapi_geo_query_enabled=False,
+        twitterapi_about_enrichment_enabled=True,
+        twitterapi_about_cache_days=30,
+    )
+    cache_path = tmp_path / "about-cache.json"
+
+    async def run(state_name: str) -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, object]]:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await collect_twitterapi_search(
+                client,
+                settings,
+                {**CONFIG, "segments": ["new_adoption"], "resultLimit": 2},
+                state_path=tmp_path / state_name,
+                about_cache_path=cache_path,
+            )
+
+    _, first_candidates, first_metrics = asyncio.run(run("first-watermarks.json"))
+    _, second_candidates, second_metrics = asyncio.run(run("second-watermarks.json"))
+
+    assert about_calls == 1
+    assert len(first_candidates) == 2
+    assert {candidate["us_confidence"] for candidate in first_candidates} == {88}
+    assert {candidate["us_evidence"] for candidate in first_candidates} == {"account_based_in:US"}
+    assert {candidate["status"] for candidate in first_candidates} == {"new"}
+    assert first_metrics["about_candidates"] == 1
+    assert first_metrics["about_api_calls"] == 1
+    assert first_metrics["about_us_accounts"] == 1
+    assert second_metrics["about_cache_hits"] == 1
+    assert second_metrics["about_api_calls"] == 0
+    assert {candidate["status"] for candidate in second_candidates} == {"new"}
+    cache_text = cache_path.read_text(encoding="utf-8")
+    assert "secret" not in cache_text
+    assert "United States" in cache_text
+
+
+def test_collection_rejects_confirmed_non_us_about_location(tmp_path: Path) -> None:
+    item = _tweet()
+    item["author"] = {**item["author"], "location": ""}
+    item["extendedEntities"] = {
+        "media": [{"type": "photo", "media_url_https": "https://img.example/pet.jpg"}],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/twitter/user_about":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "data": {
+                        "about_profile": {
+                            "account_based_in": "France",
+                            "location_accurate": True,
+                        },
+                    },
+                },
+            )
+        return httpx.Response(200, json={"tweets": [item], "has_next_page": False, "next_cursor": ""})
+
+    async def run() -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, object]]:
+        settings = Settings(twitterapi_api_key="secret", twitterapi_base_url="https://api.twitterapi.io")
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await collect_twitterapi_search(
+                client,
+                settings,
+                {**CONFIG, "segments": ["new_adoption"], "resultLimit": 1},
+                state_path=tmp_path / "watermarks.json",
+            )
+
+    _, candidates, metrics = asyncio.run(run())
+
+    assert len(candidates) == 1
+    assert candidates[0]["us_confidence"] == 0
+    assert candidates[0]["us_evidence"] == "account_based_in_non_us:France"
+    assert candidates[0]["status"] == "rejected_targeting"
+    assert metrics["about_non_us_accounts"] == 1
 
 
 def test_credit_exhaustion_is_terminal(tmp_path: Path) -> None:

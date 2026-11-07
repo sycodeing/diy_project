@@ -244,8 +244,8 @@ def apify_item_to_tweet(
         return None
 
     photos = item.get("photos") if isinstance(item.get("photos"), list) else []
-    media_url = _first_photo_url(photos)
-    if not media_url:
+    media_urls = _photo_urls(photos)
+    if not media_urls:
         return None
 
     return {
@@ -256,7 +256,7 @@ def apify_item_to_tweet(
         "replyCount": item.get("replies"),
         "retweetCount": item.get("retweets"),
         "viewCount": item.get("views"),
-        "media": {"photos": [{"url": media_url}]},
+        "media": {"photos": [{"url": media_url} for media_url in media_urls]},
         "user": {
             "username": handle,
             "followersCount": (profile or {}).get("followers", item.get("authorFollowers")),
@@ -279,6 +279,17 @@ def apify_item_to_tweet(
     }
 
 
+def _photo_urls(photos: list[Any]) -> list[str]:
+    urls: list[str] = []
+    for photo in photos:
+        value = photo.get("url") if isinstance(photo, dict) else photo
+        if isinstance(value, str) and value.startswith("https://") and value not in urls:
+            urls.append(value)
+        if len(urls) == 4:
+            break
+    return urls
+
+
 def index_apify_profiles(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {
         str(item.get("handle") or "").casefold(): item
@@ -299,11 +310,3 @@ def segment_for_apify_item(item: dict[str, Any]) -> str:
 def cache_apify_items(path: Path, items: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _first_photo_url(photos: list[Any]) -> str | None:
-    for photo in photos:
-        value = photo if isinstance(photo, str) else photo.get("url") if isinstance(photo, dict) else None
-        if isinstance(value, str) and value.startswith("https://"):
-            return value
-    return None

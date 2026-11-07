@@ -1,6 +1,7 @@
 "use server";
 
 import { after } from "next/server";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
 import { prepareXLeadQueueTask } from "@/lib/x-lead-materials";
@@ -11,6 +12,7 @@ const leadIdSchema = z.uuid();
 const accountIdSchema = z.uuid();
 const suitabilityDecisionSchema = z.enum(["reject", "restore"]);
 const rejectionReasonSchema = z.enum(X_LEAD_REJECTION_REASONS);
+const mediaUrlSchema = z.url().max(2048).refine((value) => value.startsWith("https://"));
 const PREPARING_COPY = "Preparing your personalized pet-pillow preview and link…";
 const RESTORABLE_SELECTION_STATUSES = new Set([
   "new",
@@ -249,4 +251,35 @@ export async function setXLeadSuitability(formData: FormData) {
     .maybeSingle();
   if (updateError || !updated) throw new Error(updateError?.message ?? "候选状态已变化，请刷新后重试。");
   // Deliberately keep the current queue snapshot and ordering until manual refresh.
+}
+
+export async function selectXLeadMedia(formData: FormData) {
+  await requireAdmin("/admin/x-leads");
+  const leadId = leadIdSchema.parse(String(formData.get("leadId") ?? ""));
+  const mediaUrl = mediaUrlSchema.parse(String(formData.get("mediaUrl") ?? ""));
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) throw new Error("Supabase 服务端连接尚未配置。");
+
+  const { data: lead, error: leadError } = await supabase
+    .from("x_leads")
+    .select("id,media_url,media_urls,selection_status,marketing_link_id,x_manual_posts(id)")
+    .eq("id", leadId)
+    .maybeSingle();
+  if (leadError || !lead) throw new Error(leadError?.message ?? "候选用户不存在。");
+  const mediaUrls = Array.isArray(lead.media_urls) && lead.media_urls.length ? lead.media_urls : [lead.media_url];
+  if (!mediaUrls.includes(mediaUrl)) throw new Error("所选图片不属于该候选帖子。");
+  if (lead.marketing_link_id || (lead.x_manual_posts?.length ?? 0) > 0 || ["approved", "contacted", "suppressed"].includes(lead.selection_status)) {
+    throw new Error("该候选已进入素材或发送流程，不能再更换主图。");
+  }
+  if (lead.media_url === mediaUrl) return;
+
+  const { data: updated, error: updateError } = await supabase
+    .from("x_leads")
+    .update({ media_url: mediaUrl })
+    .eq("id", leadId)
+    .eq("media_url", lead.media_url)
+    .select("id")
+    .maybeSingle();
+  if (updateError || !updated) throw new Error(updateError?.message ?? "候选图片已变化，请刷新后重试。");
+  revalidatePath("/admin/x-leads");
 }

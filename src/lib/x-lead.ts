@@ -1,12 +1,22 @@
 import { z } from "zod";
 
-export const X_LEAD_SEGMENTS = ["new_adoption", "pet_birthday"] as const;
+export const X_LEAD_SEGMENTS = [
+  "new_adoption",
+  "pet_birthday",
+  "pet_adventure",
+  "pet_costume",
+  "pet_portrait",
+] as const;
+export const X_LEAD_DISCOVERY_SEGMENTS = [...X_LEAD_SEGMENTS, "custom"] as const;
 export const X_SEARCH_PRODUCTS = ["Latest", "Top", "Media"] as const;
 export const X_SEARCH_INTERVALS = [60, 180, 360, 720, 1440] as const;
 
 export const X_LEAD_SEGMENT_LABELS: Record<string, string> = {
   new_adoption: "新领养 / 到家纪念",
   pet_birthday: "宠物生日",
+  pet_adventure: "户外 / 旅行",
+  pet_costume: "装扮 / 节日造型",
+  pet_portrait: "照片 / 高光时刻",
   custom: "自定义",
 };
 
@@ -64,7 +74,7 @@ export const X_LEAD_REJECTION_REASONS = [
 ] as const;
 
 export const X_LEAD_REJECTION_REASON_LABELS: Record<string, string> = {
-  not_target_occasion: "不是领养 / 生日目标场景",
+  not_target_occasion: "不是目标宠物场景",
   not_pet_owner: "无法确认是本人宠物",
   organization_or_ad: "机构、商家或广告内容",
   location_mismatch: "非美国或位置证据不足",
@@ -151,6 +161,13 @@ const OCCASION_EVIDENCE_TERMS = [
   "just adopted", "welcome home", "foster fail", "new family member", "meet our", "meet my",
   "happy birthday", "birthday boy", "birthday girl", "barkday", "birthday pup",
   "birthday kitty", "turns one", "turned one", "first birthday", "1st birthday",
+  "hiking with my", "hiking with our", "beach day with my", "beach day with our",
+  "road trip with my", "road trip with our", "camping with my", "camping with our",
+  "adventure with my", "adventure with our", "in costume", "dressed up",
+  "halloween costume", "holiday outfit", "christmas outfit", "favorite photo of my",
+  "favorite photo of our", "best photo of my", "best photo of our", "my handsome",
+  "our handsome", "my beautiful", "our beautiful", "my photogenic", "our photogenic",
+  "look at my", "look at our",
 ];
 
 const OWNERSHIP_EVIDENCE_PATTERNS = [
@@ -177,9 +194,9 @@ export function getXLeadReviewEvidence(lead: Pick<XLeadRow, "targeting_data">): 
     },
     {
       key: "occasion",
-      label: "领养 / 生日场景证据",
+      label: "宠物场景证据",
       evidence: occasionEvidence,
-      emptyText: "未提取到明确的领养或生日表达，请打开原帖人工确认。",
+      emptyText: "未提取到明确的目标宠物场景，请打开原帖人工确认。",
     },
   ];
 }
@@ -209,10 +226,31 @@ export function sortXLeadsByPriority(leads: XLeadRow[], usMinConfidence = 70) {
     const conclusionDifference = X_LEAD_CONCLUSION_ORDER[getXLeadReferenceConclusion(left, usMinConfidence)]
       - X_LEAD_CONCLUSION_ORDER[getXLeadReferenceConclusion(right, usMinConfidence)];
     if (conclusionDifference) return conclusionDifference;
-    const scoreDifference = (right.lead_score ?? -1) - (left.lead_score ?? -1);
+    const scoreDifference = getXLeadPriorityScore(right) - getXLeadPriorityScore(left);
     if (scoreDifference) return scoreDifference;
     return right.discovered_at.localeCompare(left.discovered_at) || right.id.localeCompare(left.id);
   });
+}
+
+export function getXLeadPriorityScore(lead: XLeadRow) {
+  if (lead.lead_score !== null && lead.lead_score !== undefined) return lead.lead_score;
+  const engagement = numericTargetingValue(lead.targeting_data?.engagement_quality, 0);
+  const account = numericTargetingValue(lead.targeting_data?.account_quality, 0);
+  const recency = numericTargetingValue(lead.targeting_data?.recency_score, 0);
+  return Math.round(
+    numericTargetingValue(lead.ownership_confidence, 0) * 0.25
+      + numericTargetingValue(lead.occasion_confidence, 0) * 0.2
+      + numericTargetingValue(lead.us_confidence, 0) * 0.2
+      + engagement * 0.15
+      + account * 0.1
+      + recency * 0.1,
+  );
+}
+
+function numericTargetingValue(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.min(100, value))
+    : fallback;
 }
 
 export function filterXLeadsForQueue(
@@ -271,7 +309,7 @@ function isTruthyFlag(value: unknown) {
 }
 
 export const searchConfigurationSchema = z.object({
-  segments: z.array(z.enum(X_LEAD_SEGMENTS)).min(1).max(2),
+  segments: z.array(z.enum(X_LEAD_SEGMENTS)).min(1).max(X_LEAD_SEGMENTS.length),
   searchProduct: z.enum(X_SEARCH_PRODUCTS),
   resultLimit: z.number().int().min(1).max(100),
   lookbackDays: z.number().int().min(1).max(90),
@@ -294,6 +332,7 @@ export type XLeadRow = {
   x_handle: string;
   post_url: string;
   media_url: string;
+  media_urls: string[] | null;
   posted_at: string | null;
   discovered_at: string;
   selection_status: string;

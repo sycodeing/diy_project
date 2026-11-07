@@ -6,6 +6,7 @@ import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { formatAdminDate, getServerNowMillis } from "@/lib/utils";
 import {
   X_JOB_STATUS_LABELS,
+  X_LEAD_SEGMENTS,
   X_LEAD_SEGMENT_LABELS,
   X_SEARCH_INTERVAL_LABELS,
   X_SEARCH_PRODUCT_LABELS,
@@ -53,7 +54,7 @@ type Worker = {
 const defaults: SearchConfig = {
   id: "",
   enabled: false,
-  segments: ["new_adoption", "pet_birthday"],
+  segments: [...X_LEAD_SEGMENTS],
   search_product: "Latest",
   result_limit: 40,
   lookback_days: 30,
@@ -113,7 +114,7 @@ export default async function XLeadSearchPage({
               <fieldset>
                 <legend className="text-sm font-black">目标人群</legend>
                 <div className="mt-3 space-y-2">
-                  {["new_adoption", "pet_birthday"].map((segment) => (
+                  {X_LEAD_SEGMENTS.map((segment) => (
                     <label className="flex items-center gap-3 rounded-lg border border-line p-3" key={segment}>
                       <input defaultChecked={config.segments.includes(segment)} name="segments" type="checkbox" value={segment} />
                       <span className="font-bold">{X_LEAD_SEGMENT_LABELS[segment]}</span>
@@ -191,10 +192,24 @@ function formatDiscoveryMetrics(metrics: Record<string, unknown> | null) {
   const photoPosts = metricNumber(metrics, "photo_posts");
   const candidatePosts = metricNumber(metrics, "candidate_posts");
   const existingCandidates = metricNumber(metrics, "existing_candidates");
+  const targetingReview = metricNumber(metrics, "targeting_review_status");
+  const aboutCandidates = metricNumber(metrics, "about_candidates");
+  const aboutApiCalls = metricNumber(metrics, "about_api_calls");
+  const aboutCacheHits = metricNumber(metrics, "about_cache_hits");
+  const aboutUsAccounts = metricNumber(metrics, "about_us_accounts");
+  const aboutNonUsAccounts = metricNumber(metrics, "about_non_us_accounts");
+  const aboutMissingAccounts = metricNumber(metrics, "about_missing_accounts");
   if (uniquePosts !== null) parts.push(`去重 ${uniquePosts}`);
   if (photoPosts !== null) parts.push(`含图 ${photoPosts}`);
   if (candidatePosts !== null) parts.push(`候选 ${candidatePosts}`);
   if (existingCandidates !== null) parts.push(`历史重复 ${existingCandidates}`);
+  if (targetingReview !== null) parts.push(`文本复核 ${targetingReview}`);
+  if (aboutCandidates !== null) parts.push(`位置补全 ${aboutCandidates}`);
+  if (aboutApiCalls !== null) parts.push(`About 请求 ${aboutApiCalls}`);
+  if (aboutCacheHits !== null) parts.push(`位置缓存 ${aboutCacheHits}`);
+  if (aboutUsAccounts !== null) parts.push(`确认美国 ${aboutUsAccounts}`);
+  if (aboutNonUsAccounts !== null) parts.push(`确认非美 ${aboutNonUsAccounts}`);
+  if (aboutMissingAccounts !== null) parts.push(`位置缺失 ${aboutMissingAccounts}`);
   return parts.join(" · ");
 }
 

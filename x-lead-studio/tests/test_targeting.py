@@ -1,4 +1,17 @@
-from lead_studio.targeting import build_targeting, candidate_status, detect_pet_type, detect_us_evidence
+from lead_studio.targeting import SEARCH_SEGMENTS, build_targeting, candidate_status, detect_pet_type, detect_us_evidence
+
+
+def test_search_queries_cover_broader_owner_phrases_before_strict_targeting():
+    queries = {segment.key: segment.query for segment in SEARCH_SEGMENTS}
+    assert '"meet my"' in queries["new_adoption"]
+    assert '"our dog"' in queries["pet_birthday"]
+    assert '"road trip"' in queries["pet_adventure"]
+    assert '"christmas outfit"' in queries["pet_costume"]
+    assert 'photogenic' in queries["pet_portrait"]
+    assert '"our dog"' in queries["pet_portrait"]
+    # The provider appends retweet and since/until filters, so leave enough
+    # headroom below its effective query-length ceiling.
+    assert all(len(query) < 440 for query in queries.values())
 
 
 def tweet(**overrides):
@@ -64,6 +77,31 @@ def test_explicit_non_us_account_origin_is_rejected():
     assert candidate_status(targeting, True, 70) == "rejected_targeting"
 
 
+def test_ambiguous_account_origin_region_remains_location_review():
+    targeting = build_targeting(
+        tweet(user={"username": "maple_home", "location": "", "accountBasedIn": "North America"}),
+        "new_adoption",
+    )
+    assert targeting["us_confidence"] == 25
+    assert targeting["us_evidence"] == "account_based_in_region_ambiguous:North America"
+    assert candidate_status(targeting, True, 70) == "location_review"
+
+
+def test_inaccurate_account_origin_remains_location_review():
+    targeting = build_targeting(
+        tweet(user={
+            "username": "maple_home",
+            "location": "",
+            "accountBasedIn": "United States",
+            "accountBasedInAccurate": False,
+        }),
+        "new_adoption",
+    )
+    assert targeting["us_confidence"] == 65
+    assert targeting["us_evidence"] == "account_based_in_us_unverified"
+    assert candidate_status(targeting, True, 70) == "location_review"
+
+
 def test_business_account_is_rejected_before_image_analysis():
     targeting = build_targeting(
         tweet(user={
@@ -78,7 +116,7 @@ def test_business_account_is_rejected_before_image_analysis():
     assert candidate_status(targeting, True, 70) == "rejected_targeting"
 
 
-def test_ownership_and_occasion_are_manual_evidence_not_hard_filters():
+def test_weak_ownership_and_scene_evidence_wait_for_targeting_review():
     targeting = build_targeting(
         tweet(rawContent="A wonderful dog photo", user={
             "username": "dog_photo",
@@ -89,7 +127,34 @@ def test_ownership_and_occasion_are_manual_evidence_not_hard_filters():
     )
     assert targeting["ownership_confidence"] == 0
     assert targeting["occasion_confidence"] == 35
-    assert candidate_status(targeting, True, 70) == "new"
+    assert candidate_status(targeting, True, 70) == "targeting_review"
+
+
+def test_expanded_pet_scenes_are_detected_with_owner_evidence():
+    cases = [
+        ("pet_adventure", "Hiking with my dog was the best part of the weekend", "dog"),
+        ("pet_costume", "My cat dressed up for Halloween", "cat"),
+        ("pet_portrait", "This is my favorite photo of my dog", "dog"),
+    ]
+
+    for segment, text, pet_type in cases:
+        targeting = build_targeting(tweet(
+            rawContent=text,
+            user={"username": "pet_owner", "rawDescription": "Proud pet parent", "location": "Austin, TX"},
+        ), segment)
+        assert targeting["occasion"] == segment
+        assert targeting["occasion_confidence"] >= 82
+        assert targeting["ownership_confidence"] >= 88
+        assert targeting["pet_type"] == pet_type
+        assert candidate_status(targeting, True, 70) == "new"
+
+
+def test_existing_queries_now_produce_strong_scene_evidence():
+    adoption = build_targeting(tweet(rawContent="Our new puppy is finally home"), "new_adoption")
+    birthday = build_targeting(tweet(rawContent="It is my dog's birthday today"), "pet_birthday")
+
+    assert adoption["occasion_confidence"] >= 82
+    assert birthday["occasion_confidence"] >= 82
 
 
 def test_targeting_keeps_matching_phrases_as_review_evidence():
