@@ -23,7 +23,9 @@ SEARCH_SEGMENTS = (
             'OR "our cat gotcha day" OR "I adopted my dog" OR "I adopted my cat" '
             'OR "we adopted a dog" OR "we adopted a cat" OR "just adopted a puppy" '
             'OR "just adopted a kitten" OR "our new puppy" OR "our new kitten" '
-            'OR "my new dog" OR "my new cat" OR "foster fail") '
+            'OR "my new dog" OR "my new cat" OR "meet my dog" OR "meet my cat" '
+            'OR "meet our dog" OR "meet our cat" OR "welcome home puppy" '
+            'OR "welcome home kitten" OR "foster fail") '
             '(dog OR puppy OR cat OR kitten OR pup OR kitty) filter:images -filter:replies lang:en'
         ),
     ),
@@ -35,7 +37,9 @@ SEARCH_SEGMENTS = (
             'OR "my cat\'s birthday" OR "our dog birthday" OR "our dog\'s birthday" '
             'OR "our cat birthday" OR "our cat\'s birthday" OR "my puppy birthday" '
             'OR "my kitten birthday" OR "my dog turns" OR "my cat turns" '
-            'OR "our dog turns" OR "our cat turns") '
+            'OR "our dog turns" OR "our cat turns" OR "happy birthday to my dog" '
+            'OR "happy birthday to my cat" OR "birthday pup" OR "birthday kitty" '
+            'OR "barkday") (dog OR puppy OR cat OR kitten OR pup OR kitty) '
             'filter:images -filter:replies lang:en'
         ),
     ),
@@ -46,7 +50,10 @@ SEARCH_SEGMENTS = (
             '("hiking with my dog" OR "hiking with my cat" OR "beach day with my dog" '
             'OR "beach day with my cat" OR "road trip with my dog" OR "road trip with my cat" '
             'OR "camping with my dog" OR "camping with my cat" OR "adventure with my dog" '
-            'OR "adventure with my cat" OR "hiking with our dog" OR "hiking with our cat") '
+            'OR "adventure with my cat" OR "hiking with our dog" OR "hiking with our cat" '
+            'OR "beach day with our dog" OR "beach day with our cat" '
+            'OR "road trip with our dog" OR "road trip with our cat" '
+            'OR "camping with our dog" OR "camping with our cat") '
             'filter:images -filter:replies lang:en'
         ),
     ),
@@ -57,7 +64,9 @@ SEARCH_SEGMENTS = (
             '("my dog in costume" OR "my cat in costume" OR "our dog in costume" '
             'OR "our cat in costume" OR "my dog dressed up" OR "my cat dressed up" '
             'OR "our dog dressed up" OR "our cat dressed up" OR "my dog halloween costume" '
-            'OR "my cat halloween costume" OR "my dog holiday outfit" OR "my cat holiday outfit") '
+            'OR "my cat halloween costume" OR "my dog holiday outfit" OR "my cat holiday outfit" '
+            'OR "our dog holiday outfit" OR "our cat holiday outfit" '
+            'OR "my dog christmas outfit" OR "my cat christmas outfit") '
             'filter:images -filter:replies lang:en'
         ),
     ),
@@ -69,7 +78,10 @@ SEARCH_SEGMENTS = (
             'OR "best photo of my dog" OR "best photo of my cat" '
             'OR "my handsome dog" OR "my handsome cat" OR "my beautiful dog" '
             'OR "my beautiful cat" OR "my photogenic dog" OR "my photogenic cat" '
-            'OR "look at my dog" OR "look at my cat") '
+            'OR "our handsome dog" OR "our handsome cat" OR "our beautiful dog" '
+            'OR "our beautiful cat" OR "favorite photo of our dog" '
+            'OR "favorite photo of our cat" OR "look at my dog" OR "look at my cat" '
+            'OR "look at our dog" OR "look at our cat") '
             'filter:images -filter:replies lang:en'
         ),
     ),
