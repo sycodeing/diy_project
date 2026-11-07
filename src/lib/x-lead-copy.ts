@@ -11,7 +11,10 @@ export type XLeadDraftContext = {
 };
 
 export type XLeadCopyOccasion = "generic";
-export type XLeadShortCopyVariant = "short_direct_a_v1" | "short_direct_b_v1";
+export type XLeadShortCopyVariant =
+  | "short_direct_a_v1"
+  | "short_direct_b_v1"
+  | "guided_preview_a_v2";
 
 export type XLeadCopyProfile = {
   accountKey: string;
@@ -28,9 +31,9 @@ export function getXLeadCopyOccasion(context: XLeadDraftContext): XLeadCopyOccas
 }
 
 export function getXLeadShortCopyVariant(seed: string): XLeadShortCopyVariant {
-  return stableIndex(`${seed}:short-direct-experiment-v1`, 2) === 0
-    ? "short_direct_a_v1"
-    : "short_direct_b_v1";
+  return stableIndex(`${seed}:guided-preview-experiment-v2`, 2) === 0
+    ? "short_direct_b_v1"
+    : "guided_preview_a_v2";
 }
 
 export function createXLeadDrafts(
@@ -58,6 +61,7 @@ export function createXLeadDrafts(
 const SHORT_DIRECT_COPY: Record<XLeadShortCopyVariant, string> = {
   short_direct_a_v1: "That’s a great photo of your {pet}! I made a custom pet-pillow preview from it:",
   short_direct_b_v1: "I turned this {pet} photo into a personalized pillow preview. See how it looks:",
+  guided_preview_a_v2: "I made a quick pillow preview from this {pet} photo. Open it to see the design with your photo already added:",
 };
 
 function contextSeed(context: XLeadDraftContext) {

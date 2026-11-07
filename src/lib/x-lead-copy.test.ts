@@ -25,19 +25,24 @@ test("keeps scene-specific discovery separate from direct sales copy", () => {
   assert.doesNotMatch(drafts.publicCopy, /hiking|permission|may i|would you/i);
 });
 
-test("uses two explicit short direct-link variants", () => {
+test("keeps the legacy copy and adds an explicit guided-preview treatment", () => {
   const context = { occasion: null, occasionConfidence: null, petType: "cat" as const, targetingData: null };
   const link = "https://example.com/pet";
   const first = createXLeadDrafts(context, link, undefined, "short_direct_a_v1");
   const second = createXLeadDrafts(context, link, undefined, "short_direct_b_v1");
+  const treatment = createXLeadDrafts(context, link, undefined, "guided_preview_a_v2");
 
   assert.equal(first.variantKey, "short_direct_a_v1");
   assert.equal(second.variantKey, "short_direct_b_v1");
+  assert.equal(treatment.variantKey, "guided_preview_a_v2");
   assert.notEqual(first.publicCopy, second.publicCopy);
   assert.ok(first.publicCopy.endsWith(link));
   assert.ok(second.publicCopy.endsWith(link));
+  assert.match(treatment.publicCopy, /open it.+photo already added/i);
+  assert.ok(treatment.publicCopy.endsWith(link));
   assert.ok(first.publicCopy.length < 160);
   assert.ok(second.publicCopy.length < 160);
+  assert.ok(treatment.publicCopy.length < 180);
   assert.equal(first.directMessageCopy, first.publicCopy);
   assert.equal(second.consentCopy, second.publicCopy);
 });
@@ -47,7 +52,7 @@ test("assigns a stable experiment variant by lead seed", () => {
   const assignments = seeds.map(getXLeadShortCopyVariant);
 
   assert.deepEqual(assignments, seeds.map(getXLeadShortCopyVariant));
-  assert.deepEqual(new Set(assignments), new Set(["short_direct_a_v1", "short_direct_b_v1"]));
+  assert.deepEqual(new Set(assignments), new Set(["short_direct_b_v1", "guided_preview_a_v2"]));
 });
 
 test("keeps a long-link direct message within the short-copy cap", () => {
@@ -63,7 +68,7 @@ test("keeps a long-link direct message within the short-copy cap", () => {
   assert.ok(copy.endsWith(link));
 });
 
-test("profile-based drafts still resolve to one attributable A/B variant", () => {
+test("profile-based drafts resolve to the v2 control or guided treatment", () => {
   const drafts = createXLeadDrafts(
     { occasion: null, occasionConfidence: null, petType: "dog", targetingData: null },
     "https://example.com/pet",
@@ -76,6 +81,6 @@ test("profile-based drafts still resolve to one attributable A/B variant", () =>
     },
   );
 
-  assert.match(drafts.variantKey, /^short_direct_[ab]_v1$/);
-  assert.ok(drafts.publicCopy.length < 160);
+  assert.match(drafts.variantKey, /^(short_direct_b_v1|guided_preview_a_v2)$/);
+  assert.ok(drafts.publicCopy.length < 180);
 });
