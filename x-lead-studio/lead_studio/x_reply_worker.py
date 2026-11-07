@@ -24,10 +24,12 @@ from .xuse_client import (
 )
 
 
-WORKER_VERSION = "4.6.0-chained-authenticated-socks5"
+WORKER_VERSION = "4.7.0-proxied-profile-inspection"
 BATCH_DELAY_MIN_SECONDS = 15.0
 BATCH_DELAY_MAX_SECONDS = 30.0
+PROFILE_INSPECTION_SECONDS = 10 * 60.0
 HALT_ERROR_MARKERS = ("captcha", "challenge", "login", "locked", "rate_limit", "rate limit", "verification")
+_BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
 
 
 async def run_x_reply_worker(settings: Settings) -> None:
@@ -95,8 +97,12 @@ async def run_x_reply_iteration(
 
         verification = body.get("verification")
         if isinstance(verification, dict):
-            verification_error = await _execute_mapping_verification(settings, client, verification)
-            return verification_error, False, None
+            task = asyncio.create_task(_execute_mapping_verification(settings, verification))
+            _BACKGROUND_TASKS.add(task)
+            task.add_done_callback(_finish_background_task)
+            # Let the task enter the x-use session before this iteration returns.
+            await asyncio.sleep(0)
+            return None, False, None
 
         if settings.x_reply_execution_mode != "send":
             return "Observe mode received a write job and refused to execute it.", False, None
@@ -139,26 +145,35 @@ def _batch_delay_seconds() -> float:
     return random.uniform(BATCH_DELAY_MIN_SECONDS, BATCH_DELAY_MAX_SECONDS)
 
 
-async def _execute_mapping_verification(settings: Settings, client: httpx.AsyncClient, verification: dict[str, Any]) -> str | None:
+def _finish_background_task(task: asyncio.Task[Any]) -> None:
+    _BACKGROUND_TASKS.discard(task)
+    if not task.cancelled():
+        task.exception()
+
+
+async def _execute_mapping_verification(settings: Settings, verification: dict[str, Any]) -> str | None:
     result = await verify_account_mapping(
         x_use_home=settings.x_use_home,
         account=str(verification.get("accountKey") or ""),
+        expected_handle=str(verification.get("expectedXHandle") or "") or None,
         network_mode=str(verification.get("networkMode") or ""),
         proxy_url=str(verification.get("proxyUrl") or "") or None,
         ip_check_url=settings.x_reply_ip_check_url,
+        hold_open_seconds=PROFILE_INSPECTION_SECONDS,
     )
-    response = await client.post(
-        f"{settings.diy_site_url}/api/x-replies/worker/account-verifications/{verification['id']}/complete",
-        headers={"Authorization": f"Bearer {settings.x_reply_worker_secret}"},
-        json={
-            "executorId": settings.x_reply_executor_id,
-            "actualHandle": result.actual_handle,
-            "egressIp": result.egress_ip,
-            "errorCode": result.error_code,
-            "errorMessage": result.error_message,
-        },
-    )
-    response.raise_for_status()
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            f"{settings.diy_site_url}/api/x-replies/worker/account-verifications/{verification['id']}/complete",
+            headers={"Authorization": f"Bearer {settings.x_reply_worker_secret}"},
+            json={
+                "executorId": settings.x_reply_executor_id,
+                "actualHandle": result.actual_handle,
+                "egressIp": result.egress_ip,
+                "errorCode": result.error_code,
+                "errorMessage": result.error_message,
+            },
+        )
+        response.raise_for_status()
     return result.error_message
 
 

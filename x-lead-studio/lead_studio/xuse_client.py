@@ -284,11 +284,13 @@ async def verify_account_mapping(
     *,
     x_use_home: Path,
     account: str,
+    expected_handle: str | None = None,
     network_mode: str,
     proxy_url: str | None,
     ip_check_url: str,
+    hold_open_seconds: float = 0,
 ) -> AccountMappingVerificationResult:
-    """Open the configured X session read-only and return its visible owner plus route IP."""
+    """Open the configured X session on its bound route and optionally keep its profile visible."""
     if network_mode not in NETWORK_MODES:
         return AccountMappingVerificationResult(False, error_code="invalid_network_mode", error_message="Unsupported X network mode.")
     if not xuse_is_installed():
@@ -332,6 +334,21 @@ async def verify_account_mapping(
                         actual_handle = owner.get("handle") if isinstance(owner, dict) else None
                         if not isinstance(actual_handle, str) or not re.fullmatch(r"[A-Za-z0-9_]{1,15}", actual_handle):
                             return AccountMappingVerificationResult(False, egress_ip=egress_ip, error_code="owner_unconfirmed", error_message="The visible signed-in X owner could not be confirmed.")
+                        profile_handle = expected_handle or actual_handle
+                        if expected_handle and not re.fullmatch(r"[A-Za-z0-9_]{1,15}", expected_handle):
+                            return AccountMappingVerificationResult(False, egress_ip=egress_ip, error_code="invalid_expected_handle", error_message="The expected X profile handle is invalid.")
+                        if expected_handle and actual_handle.lower() != expected_handle.lower():
+                            return AccountMappingVerificationResult(False, actual_handle=actual_handle, egress_ip=egress_ip, error_code="account_mismatch", error_message=f"The signed-in X account @{actual_handle} does not match @{expected_handle}.")
+                        profile_call = await asyncio.wait_for(
+                            session.call_tool("get_profile", {"account": account, "profile": profile_handle}),
+                            timeout=120,
+                        )
+                        profile = _payload(profile_call)
+                        if not profile.get("ok"):
+                            code, message, _ = _error_fields(profile)
+                            return AccountMappingVerificationResult(False, actual_handle=actual_handle, egress_ip=egress_ip, error_code=code, error_message=message)
+                        if hold_open_seconds > 0:
+                            await asyncio.sleep(hold_open_seconds)
                         return AccountMappingVerificationResult(True, actual_handle=actual_handle, egress_ip=egress_ip)
     except asyncio.TimeoutError:
         return AccountMappingVerificationResult(False, error_code="mapping_verification_timeout", error_message="The account mapping verification timed out.")

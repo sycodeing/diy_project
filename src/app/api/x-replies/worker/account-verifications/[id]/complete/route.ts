@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { isAuthorizedXReplyWorker } from "@/lib/x-reply-worker-auth";
+import { isBoundProxyEgress } from "@/lib/x-reply-safety";
 
 export const runtime = "nodejs";
 
@@ -23,7 +24,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (!supabase) return NextResponse.json({ error: "Supabase is not configured." }, { status: 503 });
 
   const { data: account, error: readError } = await supabase.from("x_reply_accounts")
-    .select("id,account_key,expected_x_handle,executor_id,network_mode,expected_egress_ip,verification_status")
+    .select("id,account_key,expected_x_handle,executor_id,network_mode,expected_egress_ip,verification_status,x_reply_account_proxies(egress_ip)")
     .eq("id", id)
     .maybeSingle();
   if (readError || !account) return NextResponse.json({ error: readError?.message ?? "Account not found." }, { status: 404 });
@@ -41,6 +42,20 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (!errorMessage && !handleMatches) errorMessage = `实际登录账号 @${actualHandle ?? "未识别"} 与期望 @${expectedHandle || "未配置"} 不一致。`;
   if (!errorMessage && !vpnMatches) errorMessage = `实际出口 ${egressIp ?? "未识别"} 与锁定 VPN 出口 ${String(account.expected_egress_ip ?? "未配置")} 不一致。`;
   if (!errorMessage && !egressIp) errorMessage = "未能确认该账号浏览器的出口 IP。";
+
+  if (!errorMessage && account.network_mode === "fixed_proxy") {
+    const proxyRelation = account.x_reply_account_proxies;
+    const configuredProxy = Array.isArray(proxyRelation) ? proxyRelation[0] : proxyRelation;
+    const boundEgressIp = configuredProxy?.egress_ip ? String(configuredProxy.egress_ip) : null;
+    if (egressIp && !isBoundProxyEgress(boundEgressIp, egressIp)) {
+      errorMessage = `固定代理出口由 ${boundEgressIp} 变为 ${egressIp}，已阻止使用。`;
+      await supabase.from("x_reply_account_proxies").update({
+        status: "error",
+        last_tested_at: new Date().toISOString(),
+        last_error: errorMessage,
+      }).eq("account_id", account.id);
+    }
+  }
 
   if (!errorMessage && account.network_mode === "fixed_proxy") {
     const { error: proxyError } = await supabase.from("x_reply_account_proxies").update({

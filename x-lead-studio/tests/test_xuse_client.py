@@ -193,6 +193,9 @@ def test_account_mapping_verification_reads_visible_owner_and_route(monkeypatch,
     ]), encoding="utf-8")
 
     class FakeSession:
+        def __init__(self):
+            self.calls = []
+
         async def __aenter__(self):
             return self
 
@@ -203,17 +206,21 @@ def test_account_mapping_verification_reads_visible_owner_and_route(monkeypatch,
             return None
 
         async def call_tool(self, name, arguments):
-            assert name == "get_account_analytics"
-            assert arguments == {"account": "Latte192837465", "limit": 1}
-            return types.SimpleNamespace(structuredContent={"result": {
-                "ok": True,
-                "owner": {"handle": "Latte192837465", "source": "visible_signed_in_profile_navigation"},
-            }}, content=[])
+            self.calls.append((name, arguments))
+            if name == "get_account_analytics":
+                return types.SimpleNamespace(structuredContent={"result": {
+                    "ok": True,
+                    "owner": {"handle": "Latte192837465", "source": "visible_signed_in_profile_navigation"},
+                }}, content=[])
+            if name == "get_profile":
+                return types.SimpleNamespace(structuredContent={"result": {"ok": True, "profile": {"handle": "Latte192837465"}}}, content=[])
+            raise AssertionError(name)
 
     async def direct_probe(_url):
         return NetworkProbeResult(True, egress_ip="203.0.113.10")
 
-    _install_fake_mcp(monkeypatch, FakeSession())
+    session = FakeSession()
+    _install_fake_mcp(monkeypatch, session)
     monkeypatch.setattr(xuse_client, "xuse_is_installed", lambda: True)
     monkeypatch.setattr(xuse_client, "probe_direct_egress", direct_probe)
     result = asyncio.run(verify_account_mapping(
@@ -227,6 +234,10 @@ def test_account_mapping_verification_reads_visible_owner_and_route(monkeypatch,
     assert result.ok is True
     assert result.actual_handle == "Latte192837465"
     assert result.egress_ip == "203.0.113.10"
+    assert session.calls == [
+        ("get_account_analytics", {"account": "Latte192837465", "limit": 1}),
+        ("get_profile", {"account": "Latte192837465", "profile": "Latte192837465"}),
+    ]
 
 
 def test_fixed_proxy_calls_update_and_test_proxy_without_direct_fallback(monkeypatch, tmp_path):

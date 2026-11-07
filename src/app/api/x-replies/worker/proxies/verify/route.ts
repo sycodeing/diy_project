@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { isAuthorizedXReplyWorker } from "@/lib/x-reply-worker-auth";
+import { isBoundProxyEgress } from "@/lib/x-reply-safety";
 
 export const runtime = "nodejs";
 
@@ -51,6 +52,22 @@ export async function POST(request: Request) {
   }
   if (account.network_mode !== "fixed_proxy") {
     return NextResponse.json({ error: "The account network mode is invalid." }, { status: 409 });
+  }
+  const { data: configuredProxy, error: configuredProxyError } = await supabase.from("x_reply_account_proxies")
+    .select("egress_ip")
+    .eq("account_id", job.account_id)
+    .maybeSingle();
+  if (configuredProxyError || !configuredProxy) {
+    return NextResponse.json({ error: configuredProxyError?.message ?? "Proxy configuration not found." }, { status: 409 });
+  }
+  const boundEgressIp = configuredProxy.egress_ip ? String(configuredProxy.egress_ip) : null;
+  if (!isBoundProxyEgress(boundEgressIp, parsed.data.egressIp)) {
+    await supabase.from("x_reply_account_proxies").update({
+      status: "error",
+      last_tested_at: testedAt,
+      last_error: `固定代理出口由 ${boundEgressIp} 变为 ${parsed.data.egressIp}，已阻止发送。`,
+    }).eq("account_id", job.account_id);
+    return NextResponse.json({ error: "The fixed proxy egress IP changed from the bound IP." }, { status: 409 });
   }
   const { data: updated, error } = await supabase.from("x_reply_account_proxies").update({
     status: "healthy",

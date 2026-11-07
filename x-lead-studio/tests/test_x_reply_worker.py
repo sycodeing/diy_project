@@ -105,7 +105,7 @@ def test_observe_mode_executes_explicit_read_only_mapping_verification(monkeypat
     async def post_claim(_settings, _client, _payload):
         return httpx.Response(200, json={"verification": verification})
 
-    async def execute_mapping(_settings, _client, value):
+    async def execute_mapping(_settings, value):
         assert value == verification
         return None
 

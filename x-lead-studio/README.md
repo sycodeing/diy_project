@@ -36,6 +36,8 @@ Set the same dedicated `X_REPLY_WORKER_SECRET` on the website and in this worker
 2. The administrator approves that individual draft only after the bound executor, local account and network policy are healthy.
 3. `observe` mode reports x-use availability, configured account IDs and a cookie-free Patchright browser egress, but always receives HTTP 204 and never claims a task.
 4. In `send` mode, `vpn_direct` requires the live Patchright egress to match the administrator-locked VPN IP. `fixed_proxy` performs a read-only x-use `test_proxy` before the job is claimed. Neither mode can fall back to another route.
+5. The account-page “open X profile” action is also executed by the Mac worker. It opens the expected signed-in profile through that account's bound route, keeps the visible Patchright window available for about 10 minutes, and pauses writes for that account while inspection is active.
+6. After a fixed proxy's browser egress is first confirmed, later profile checks and automatic writes must return the same IP. A changed IP marks the route unhealthy and blocks the write.
 5. Immediately before the write, the route is checked again. Only then may x-use create its own pending draft (`post_tweet` or `reply_to_tweet`), verify the draft ID, and call `approve_draft` for that same approved text.
 6. `/admin/x-manual-posts` is a separate manual-only queue. It never reaches this worker and only records operator-confirmed results.
 7. The website records `sent`, `failed`, or `uncertain`. Claimed or uncertain writes are never automatically retried.

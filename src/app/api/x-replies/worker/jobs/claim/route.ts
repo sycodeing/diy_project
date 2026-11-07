@@ -5,7 +5,7 @@ import { getXReplyWorkerSecret } from "@/lib/env";
 import { getMarketingReplyPreviewUrl } from "@/lib/marketing";
 import { decryptProxyUrl } from "@/lib/x-proxy-crypto";
 import { isAuthorizedXReplyWorker } from "@/lib/x-reply-worker-auth";
-import { isXAccountClaimEligible, isXDailyGateClaimAllowed, isXJobClaimEligible } from "@/lib/x-reply-safety";
+import { isBoundProxyEgress, isXAccountClaimEligible, isXDailyGateClaimAllowed, isXJobClaimEligible } from "@/lib/x-reply-safety";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 
 export const runtime = "nodejs";
@@ -36,6 +36,7 @@ type AccountRoute = {
   requiresConfirmation: boolean;
   encryptedProxyUrl: string | null;
   proxyStatus: "pending" | "healthy" | "error" | null;
+  proxyEgressIp: string | null;
 };
 
 export async function POST(request: Request) {
@@ -145,7 +146,7 @@ export async function POST(request: Request) {
 
   const { data: accountRows, error: accountsError } = await supabase
     .from("x_reply_accounts")
-    .select("id,account_key,executor_id,network_mode,expected_egress_ip,require_daily_first_confirmation,x_reply_account_proxies(encrypted_url,status)")
+    .select("id,account_key,executor_id,network_mode,expected_egress_ip,verification_status,require_daily_first_confirmation,x_reply_account_proxies(encrypted_url,status,egress_ip)")
     .eq("active", true)
     .eq("executor_id", heartbeat.executorId);
   if (accountsError) return NextResponse.json({ error: accountsError.message }, { status: 500 });
@@ -153,6 +154,7 @@ export async function POST(request: Request) {
   const accountRoutes = new Map<string, AccountRoute>();
   for (const account of accountRows ?? []) {
     if (account.network_mode !== "vpn_direct" && account.network_mode !== "fixed_proxy") continue;
+    if (["pending", "running"].includes(account.verification_status)) continue;
     const proxy = Array.isArray(account.x_reply_account_proxies)
       ? account.x_reply_account_proxies[0]
       : account.x_reply_account_proxies;
@@ -168,6 +170,7 @@ export async function POST(request: Request) {
         accountKey: account.account_key,
         networkMode: account.network_mode,
         expectedEgressIp: account.expected_egress_ip ? String(account.expected_egress_ip) : null,
+        verificationStatus: account.verification_status,
         hasProxy: Boolean(proxy?.encrypted_url),
         proxyStatus: proxy?.status ?? null,
       },
@@ -180,6 +183,7 @@ export async function POST(request: Request) {
       requiresConfirmation: account.require_daily_first_confirmation,
       encryptedProxyUrl: proxy?.encrypted_url ?? null,
       proxyStatus: proxy?.status ?? null,
+      proxyEgressIp: proxy?.egress_ip ? String(proxy.egress_ip) : null,
     });
   }
   if (!accountRoutes.size) return new Response(null, { status: 204 });
@@ -259,6 +263,14 @@ export async function POST(request: Request) {
       } });
     }
     if (verification.jobId !== queued.id || verification.accountKey !== route.accountKey) return new Response(null, { status: 204 });
+    if (!isBoundProxyEgress(route.proxyEgressIp, verification.egressIp)) {
+      await supabase.from("x_reply_account_proxies").update({
+        status: "error",
+        last_tested_at: now,
+        last_error: `固定代理出口由 ${route.proxyEgressIp} 变为 ${verification.egressIp}，已阻止发送。`,
+      }).eq("account_id", route.id);
+      return new Response(null, { status: 204 });
+    }
     const { data: verifiedProxy, error: proxyError } = await supabase.from("x_reply_account_proxies").update({
       status: "healthy",
       egress_ip: verification.egressIp,

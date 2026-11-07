@@ -7,6 +7,7 @@ export type ApprovalSafetyInput = {
     executorId: string | null;
     networkMode: string;
     expectedEgressIp: string | null;
+    verificationStatus: string;
     proxyStatus: string | null;
   };
   worker: null | {
@@ -31,6 +32,7 @@ export type ClaimSafetyInput = {
     accountKey: string;
     networkMode: string;
     expectedEgressIp: string | null;
+    verificationStatus: string;
     hasProxy: boolean;
     proxyStatus: string | null;
   };
@@ -47,6 +49,10 @@ export type JobClaimSafetyInput = {
 
 export function isXDailyGateClaimAllowed(requiresConfirmation: boolean, status: string | null | undefined): boolean {
   return !requiresConfirmation || status == null || status === "pending" || status === "authorized";
+}
+
+export function isBoundProxyEgress(boundEgressIp: string | null, observedEgressIp: string): boolean {
+  return !boundEgressIp || boundEgressIp === observedEgressIp;
 }
 
 export function isXJobClaimEligible(input: JobClaimSafetyInput): boolean {
@@ -69,7 +75,9 @@ export function isXAccountClaimEligible(input: ClaimSafetyInput): boolean {
     );
   }
   if (input.account.networkMode === "fixed_proxy") {
-    return input.account.hasProxy && input.account.proxyStatus !== "error";
+    return input.account.verificationStatus === "passed"
+      && input.account.hasProxy
+      && input.account.proxyStatus !== "error";
   }
   return false;
 }
@@ -95,6 +103,7 @@ export function getXApprovalBlockReason(input: ApprovalSafetyInput): string | nu
     return null;
   }
   if (input.account.networkMode === "fixed_proxy") {
+    if (input.account.verificationStatus !== "passed") return "请先在“X 账号/IP”使用绑定代理打开主页，并完成账号与 IP 映射验证。";
     if (!input.account.proxyStatus) return "固定代理模式尚未配置代理。";
     if (input.account.proxyStatus === "error") return "该账号的固定代理处于异常状态，请更换或重新保存后再批准。";
     return null;

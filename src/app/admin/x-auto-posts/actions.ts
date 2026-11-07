@@ -93,7 +93,7 @@ async function approveXAutoJobs(requestedJobIds: string[] | null, userId: string
   const jobIds = requestedJobIds ? [...new Set(requestedJobIds)] : null;
   let jobsQuery = supabase
     .from("x_reply_jobs")
-    .select("id,status,account_id,scheduled_for,preparation_status,x_reply_accounts!inner(account_key,positioning,daily_limit,active,executor_id,network_mode,expected_egress_ip,x_reply_account_proxies(account_id,status))");
+    .select("id,status,account_id,scheduled_for,preparation_status,x_reply_accounts!inner(account_key,positioning,daily_limit,active,executor_id,network_mode,expected_egress_ip,verification_status,x_reply_account_proxies(account_id,status))");
   jobsQuery = jobIds
     ? jobsQuery.in("id", jobIds)
     : jobsQuery.eq("status", "draft").eq("preparation_status", "ready").order("created_at", { ascending: true });
@@ -132,7 +132,7 @@ async function approveXAutoJobs(requestedJobIds: string[] | null, userId: string
     const safetyError = getXApprovalBlockReason({
       jobStatus: job.status,
       preparationStatus: job.preparation_status,
-      account: account ? { active: account.active, accountKey: account.account_key, executorId: account.executor_id, networkMode: account.network_mode, expectedEgressIp: account.expected_egress_ip, proxyStatus: proxy?.status ?? null } : null,
+      account: account ? { active: account.active, accountKey: account.account_key, executorId: account.executor_id, networkMode: account.network_mode, expectedEgressIp: account.expected_egress_ip, verificationStatus: account.verification_status, proxyStatus: proxy?.status ?? null } : null,
       worker: worker ? { lastSeenAt: worker.last_seen_at, xuseAvailable: worker.xuse_available, configuredAccounts: Array.isArray(worker.configured_accounts) ? worker.configured_accounts : [], currentEgressIp: worker.current_egress_ip, networkProbeStatus: worker.network_probe_status } : null,
       nowMillis: approvedAt.getTime(),
     });

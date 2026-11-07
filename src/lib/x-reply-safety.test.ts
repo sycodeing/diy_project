@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   getXApprovalBlockReason,
+  isBoundProxyEgress,
   isXAccountClaimEligible,
   isXDailyGateClaimAllowed,
   isXJobClaimEligible,
@@ -22,6 +23,7 @@ function healthyInput(): ApprovalSafetyInput {
       executorId: "macbook-x-01",
       networkMode: "vpn_direct",
       expectedEgressIp: "203.0.113.10",
+      verificationStatus: "passed",
       proxyStatus: null,
     },
     worker: {
@@ -59,6 +61,9 @@ test("fixed_proxy requires a configured non-error route", () => {
   const input = healthyInput();
   input.account!.networkMode = "fixed_proxy";
   input.account!.expectedEgressIp = null;
+  input.account!.verificationStatus = "unverified";
+  assert.match(getXApprovalBlockReason(input) ?? "", /账号与 IP 映射验证/);
+  input.account!.verificationStatus = "passed";
   assert.match(getXApprovalBlockReason(input) ?? "", /尚未配置代理/);
   input.account!.proxyStatus = "error";
   assert.match(getXApprovalBlockReason(input) ?? "", /异常/);
@@ -81,6 +86,7 @@ function healthyClaim(): ClaimSafetyInput {
       accountKey: "pet_account",
       networkMode: "vpn_direct",
       expectedEgressIp: "203.0.113.10",
+      verificationStatus: "passed",
       hasProxy: false,
       proxyStatus: null,
     },
@@ -112,12 +118,20 @@ test("fixed_proxy cannot claim without a non-error proxy", () => {
   const input = healthyClaim();
   input.account.networkMode = "fixed_proxy";
   input.account.expectedEgressIp = null;
+  input.account.verificationStatus = "unverified";
   assert.equal(isXAccountClaimEligible(input), false);
+  input.account.verificationStatus = "passed";
   input.account.hasProxy = true;
   input.account.proxyStatus = "error";
   assert.equal(isXAccountClaimEligible(input), false);
   input.account.proxyStatus = "pending";
   assert.equal(isXAccountClaimEligible(input), true);
+});
+
+test("fixed proxy egress is pinned after the first confirmed browser probe", () => {
+  assert.equal(isBoundProxyEgress(null, "198.51.100.7"), true);
+  assert.equal(isBoundProxyEgress("198.51.100.7", "198.51.100.7"), true);
+  assert.equal(isBoundProxyEgress("198.51.100.7", "198.51.100.8"), false);
 });
 
 test("attempt_count and approval state prevent duplicate claims", () => {
