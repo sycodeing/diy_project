@@ -19,22 +19,19 @@ SEARCH_SEGMENTS = (
         key="new_adoption",
         label="New adoption / gotcha day",
         query=(
-            '("my dog gotcha day" OR "my cat gotcha day" OR "I adopted my dog" '
-            'OR "I adopted my cat" OR "just adopted a puppy" OR "just adopted a kitten" '
-            'OR "meet my dog" OR "meet my cat" OR "welcome home puppy" '
-            'OR "welcome home kitten" OR "foster fail") '
-            '(dog OR puppy OR cat OR kitten OR pup OR kitty) filter:images -filter:replies lang:en'
+            '(("gotcha day" OR "just adopted" OR "new puppy" OR "new kitten" '
+            'OR "meet my" OR "meet our" OR "welcome home" OR "foster fail") '
+            '(dog OR puppy OR cat OR kitten OR pup OR kitty)) '
+            'filter:images -filter:replies lang:en'
         ),
     ),
     SearchSegment(
         key="pet_birthday",
         label="Pet birthday",
         query=(
-            '("my dog\'s birthday" OR "my cat\'s birthday" OR "our dog\'s birthday" '
-            'OR "our cat\'s birthday" OR "my dog turns" OR "my cat turns" '
-            'OR "happy birthday to my dog" OR "happy birthday to my cat" '
-            'OR "birthday pup" OR "birthday kitty" '
-            'OR "barkday") (dog OR puppy OR cat OR kitten OR pup OR kitty) '
+            '((birthday OR "birthday boy" OR "birthday girl" OR barkday '
+            'OR "turns one" OR "turned one") '
+            '("my dog" OR "my cat" OR "our dog" OR "our cat" OR puppy OR kitten OR pup OR kitty)) '
             'filter:images -filter:replies lang:en'
         ),
     ),
@@ -65,12 +62,8 @@ SEARCH_SEGMENTS = (
         key="pet_portrait",
         label="Pet portrait / proud moment",
         query=(
-            '("favorite photo of my dog" OR "favorite photo of my cat" '
-            'OR "my handsome dog" OR "my handsome cat" OR "my beautiful dog" '
-            'OR "my beautiful cat" '
-            'OR "our handsome dog" OR "our handsome cat" OR "our beautiful dog" '
-            'OR "our beautiful cat" OR "look at my dog" OR "look at my cat" '
-            'OR "look at our dog" OR "look at our cat") '
+            '(("favorite photo" OR "best photo" OR photogenic OR "look at") '
+            '("my dog" OR "my cat" OR "our dog" OR "our cat")) '
             'filter:images -filter:replies lang:en'
         ),
     ),
