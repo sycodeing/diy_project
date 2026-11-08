@@ -103,7 +103,9 @@ export function getXApprovalBlockReason(input: ApprovalSafetyInput): string | nu
     return null;
   }
   if (input.account.networkMode === "fixed_proxy") {
-    if (input.account.verificationStatus !== "passed") return "请先在“X 账号/IP”使用绑定代理打开主页，并完成账号与 IP 映射验证。";
+    if (!["passed", "pending", "running"].includes(input.account.verificationStatus)) {
+      return "请先在“X 账号/IP”使用绑定代理打开主页，并完成账号与 IP 映射验证。";
+    }
     if (!input.account.proxyStatus) return "固定代理模式尚未配置代理。";
     if (input.account.proxyStatus === "error") return "该账号的固定代理处于异常状态，请更换或重新保存后再批准。";
     return null;

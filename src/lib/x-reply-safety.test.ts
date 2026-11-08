@@ -63,6 +63,8 @@ test("fixed_proxy requires a configured non-error route", () => {
   input.account!.expectedEgressIp = null;
   input.account!.verificationStatus = "unverified";
   assert.match(getXApprovalBlockReason(input) ?? "", /账号与 IP 映射验证/);
+  input.account!.verificationStatus = "running";
+  assert.match(getXApprovalBlockReason(input) ?? "", /尚未配置代理/);
   input.account!.verificationStatus = "passed";
   assert.match(getXApprovalBlockReason(input) ?? "", /尚未配置代理/);
   input.account!.proxyStatus = "error";

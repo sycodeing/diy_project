@@ -200,8 +200,6 @@ export async function requestXAccountMappingVerification(formData: FormData) {
     verification_requested_at: requestedAt,
     verification_started_at: null,
     verification_completed_at: null,
-    verified_x_handle: null,
-    verified_egress_ip: null,
     verification_error: null,
   }).eq("id", accountId).select("id").maybeSingle();
   if (error || !updated) throw new Error(error?.message ?? "验证任务创建失败。");

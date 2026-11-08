@@ -31,7 +31,7 @@ export const dynamic = "force-dynamic";
 const notices: Record<string, string> = {
   "draft-created": "自动发送任务已加入队列；点击“开始全部发送”前不会发送。",
   "lead-added": "已从候选列表加入自动队列；点击“开始全部发送”前不会发送。",
-  "all-started": "全部已就绪任务已启动；Worker 将按 15–30 秒随机间隔发送，每 12 条休息 45 分钟。",
+  "all-started": "全部已就绪任务已启动；正在验证账号/IP 的任务会等待验证通过，再按 15–30 秒随机间隔发送，每 12 条休息 45 分钟。",
   "daily-authorized": "已确认今日首条效果；该账号今天的后续已批准任务可以自动发送。",
   "daily-paused": "该账号今天已暂停，Worker 不会再领取它的任务。",
 };
