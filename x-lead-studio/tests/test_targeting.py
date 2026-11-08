@@ -131,7 +131,7 @@ def test_weak_ownership_is_rejected_before_image_review():
 
 
 def test_new_and_descriptive_owner_phrases_count_as_ownership():
-    for phrase in ("Our new puppy is home", "My beautiful cat is here"):
+    for phrase in ("Our new puppy is home", "My beautiful cat is here", "I literally just acquired a new kitten"):
         targeting = build_targeting(tweet(rawContent=phrase), "new_adoption")
         assert targeting["ownership_confidence"] >= 88
 

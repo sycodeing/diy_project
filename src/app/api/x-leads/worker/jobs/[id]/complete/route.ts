@@ -5,6 +5,7 @@ import { isAuthorizedXLeadWorker } from "@/lib/x-lead-worker-auth";
 import {
   buildXLeadDiscoveryUpsertRow,
   filterXLeadDiscoveryCandidates,
+  hasRequiredLocationLookup,
   type ExistingXLeadDiscoveryRow,
 } from "@/lib/x-lead-discovery-upsert";
 import { X_LEAD_DISCOVERY_SEGMENTS } from "@/lib/x-lead";
@@ -57,6 +58,9 @@ export async function POST(request: Request, context: RouteContext<"/api/x-leads
   const parsed = requestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid worker result." }, { status: 400 });
+  }
+  if (parsed.data.status === "completed" && parsed.data.candidates.some((candidate) => !hasRequiredLocationLookup(candidate))) {
+    return NextResponse.json({ error: "TwitterAPI location lookup was skipped for a location_review candidate." }, { status: 422 });
   }
 
   const supabase = getSupabaseServiceClient();

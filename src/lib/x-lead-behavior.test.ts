@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
-import { buildXLeadDiscoveryUpsertRow, filterXLeadDiscoveryCandidates, type XLeadDiscoveryCandidate } from "./x-lead-discovery-upsert.ts";
+import { buildXLeadDiscoveryUpsertRow, filterXLeadDiscoveryCandidates, hasRequiredLocationLookup, type XLeadDiscoveryCandidate } from "./x-lead-discovery-upsert.ts";
 // @ts-expect-error Node's built-in type-stripping test runner requires the explicit extension.
 import { filterXLeadsForQueue, getXLeadPriorityScore, getXLeadRejectionNote, getXLeadRejectionReason, sortXLeadsByPriority, type XLeadRow } from "./x-lead.ts";
 
@@ -25,6 +25,13 @@ function candidate(overrides: Partial<XLeadDiscoveryCandidate> = {}): XLeadDisco
     ...overrides,
   };
 }
+
+test("TwitterAPI location review requires a completed account lookup", () => {
+  const unresolved = candidate({ selectionStatus: "location_review", targetingData: { source: { provider: "twitterapi" } } });
+  assert.equal(hasRequiredLocationLookup(unresolved), false);
+  assert.equal(hasRequiredLocationLookup(candidate({ ...unresolved, targetingData: { source: { provider: "twitterapi", location_enrichment: "twitterapi_user_about" } } })), true);
+  assert.equal(hasRequiredLocationLookup(candidate({ ...unresolved, selectionStatus: "new" })), true);
+});
 
 test("discovery refresh preserves an existing human decision and original discovery metadata", () => {
   const row = buildXLeadDiscoveryUpsertRow({
@@ -141,13 +148,16 @@ test("candidate sorting falls back to targeting quality when vision score is abs
   assert.deepEqual(sortXLeadsByPriority([stale, strong]).map((row) => row.id), ["strong", "stale"]);
 });
 
-test("default candidate queue contains only actionable conclusions", () => {
+test("default candidate list shows location pending without treating it as actionable", () => {
   const recommended = lead("recommended", "new", { ownership_terms: ["my cat"], matched_terms: ["just adopted"] }, "2026-10-23T01:00:00Z");
   const manual = lead("manual", "new", {}, "2026-10-23T02:00:00Z");
   const excluded = lead("excluded", "rejected_targeting", { organization: true }, "2026-10-23T03:00:00Z");
   const contacted = lead("contacted", "contacted", {}, "2026-10-23T04:00:00Z");
+  const locationPending = { ...lead("location", "location_review", {}, "2026-10-23T05:00:00Z"), us_confidence: 25 };
 
-  assert.deepEqual(filterXLeadsForQueue([excluded, contacted, manual, recommended], undefined).map((row) => row.id), ["manual", "recommended"]);
+  assert.deepEqual(filterXLeadsForQueue([excluded, contacted, manual, recommended, locationPending], undefined).map((row) => row.id), ["manual", "recommended", "location"]);
+  assert.deepEqual(filterXLeadsForQueue([locationPending], "location_pending").map((row) => row.id), ["location"]);
+  assert.deepEqual(filterXLeadsForQueue([locationPending], "recommended"), []);
   assert.equal(filterXLeadsForQueue([excluded, contacted, manual, recommended], "all").length, 4);
   assert.deepEqual(filterXLeadsForQueue([excluded, contacted, manual, recommended], "excluded").map((row) => row.id), ["excluded"]);
 });
