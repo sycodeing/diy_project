@@ -57,6 +57,7 @@ export const X_LEAD_STATUS_LABELS: Record<string, string> = {
 export const X_LEAD_CONCLUSION_LABELS = {
   recommended: "建议优先处理",
   manual_review: "建议人工判断",
+  location_pending: "地点待核（不可入队）",
   excluded: "不建议处理",
   contacted: "已进入发送流程",
   do_not_contact: "不再联系",
@@ -207,8 +208,10 @@ export function getXLeadReferenceConclusion(
 ): XLeadConclusion {
   if (lead.selection_status === "suppressed") return "do_not_contact";
   if (["approved", "contacted"].includes(lead.selection_status)) return "contacted";
-  if (lead.selection_status === "rejected") return "excluded";
-  if (getXLeadTargetingChecks(lead, usMinConfidence).some((check) => !check.passed)) return "excluded";
+  if (["rejected", "rejected_targeting"].includes(lead.selection_status)) return "excluded";
+  const failedChecks = getXLeadTargetingChecks(lead, usMinConfidence).filter((check) => !check.passed);
+  if (lead.selection_status === "location_review" && failedChecks.length === 1 && failedChecks[0].key === "us") return "location_pending";
+  if (failedChecks.length) return "excluded";
   const evidence = getXLeadReviewEvidence(lead);
   return evidence.every((item) => item.evidence.length > 0) ? "recommended" : "manual_review";
 }
@@ -216,9 +219,10 @@ export function getXLeadReferenceConclusion(
 const X_LEAD_CONCLUSION_ORDER: Record<XLeadConclusion, number> = {
   recommended: 0,
   manual_review: 1,
-  excluded: 2,
-  contacted: 3,
-  do_not_contact: 4,
+  location_pending: 2,
+  excluded: 3,
+  contacted: 4,
+  do_not_contact: 5,
 };
 
 export function sortXLeadsByPriority(leads: XLeadRow[], usMinConfidence = 70) {
@@ -264,7 +268,7 @@ export function filterXLeadsForQueue(
   }
   return leads.filter((lead) => {
     const referenceConclusion = getXLeadReferenceConclusion(lead, usMinConfidence);
-    return referenceConclusion === "recommended" || referenceConclusion === "manual_review";
+    return referenceConclusion === "recommended" || referenceConclusion === "manual_review" || referenceConclusion === "location_pending";
   });
 }
 

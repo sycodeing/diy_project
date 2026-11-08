@@ -36,6 +36,13 @@ export type XLeadDiscoveryCandidate = {
   directMessageCopy?: string | null;
 };
 
+export function hasRequiredLocationLookup(candidate: XLeadDiscoveryCandidate) {
+  if (candidate.selectionStatus !== "location_review") return true;
+  const source = candidate.targetingData.source;
+  if (!source || typeof source !== "object" || !("provider" in source) || source.provider !== "twitterapi") return true;
+  return "location_enrichment" in source && source.location_enrichment === "twitterapi_user_about";
+}
+
 export type ExistingXLeadDiscoveryRow = {
   post_id: string;
   author_hash?: string;

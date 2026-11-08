@@ -131,6 +131,7 @@ MIN_SCENE_CONFIDENCE = 70
 OWNERSHIP_PATTERNS = (
     r"\b(?:my|our)\s+(?:(?:new|beautiful|handsome|sweet|little|old)\s+){0,2}(?:dog|cat|puppy|kitten|pup|kitty|pet)\b",
     r"\b(?:we|i)\s+(?:just\s+)?adopted\b",
+    r"\bi\s+(?:literally\s+)?(?:just\s+)?(?:acquired|brought\s+home)\s+(?:a|an)\s+(?:new\s+)?(?:dog|cat|puppy|kitten)\b",
     r"\bmeet\s+(?:my|our)\b",
     r"\bwelcome\s+home\b",
 )

@@ -156,7 +156,7 @@ export default async function XLeadsPage({
         </section> : null}
 
         <form className="mt-6 grid gap-3 rounded-xl border border-line bg-panel/90 p-4 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto]">
-          <SelectFilter label="参考结论" name="conclusion" value={conclusionFilter} options={[["", "待处理（建议 + 人工判断）"], ...Object.entries(X_LEAD_CONCLUSION_LABELS), ["all", "全部结论"]]} />
+          <SelectFilter label="参考结论" name="conclusion" value={conclusionFilter} options={[["", "待处理（含地点待核）"], ...Object.entries(X_LEAD_CONCLUSION_LABELS), ["all", "全部结论"]]} />
           <SelectFilter label="目标人群" name="segment" value={filters.segment ?? ""} options={[["", "全部人群"], ...Object.entries(X_LEAD_SEGMENT_LABELS)]} />
           <SelectFilter label="人工筛选" name="review" value={filters.review ?? ""} options={[["", "未标记不合适"], ["rejected", "只看已标记不合适"], ["all", "全部人工状态"]]} />
           <SelectFilter label="过滤原因" name="reason" value={filters.reason ?? ""} options={[["", "全部原因"], ...X_LEAD_REJECTION_REASONS.map((reason) => [reason, X_LEAD_REJECTION_REASON_LABELS[reason]] as [string, string]), ["legacy", X_LEAD_REJECTION_REASON_LABELS.legacy]]} />
@@ -232,7 +232,7 @@ export default async function XLeadsPage({
               </div>
             </article>;
           })}
-          {!leads.length ? <div className="rounded-xl border border-line bg-panel/90 p-10 text-center"><p className="text-lg font-black">当前没有待处理且达到硬性条件的候选。</p><p className="mt-2 text-sm text-muted">列表不会继续混入不符合数据。可以启动新的筛选任务，或主动选择“全部结论”检查历史记录。</p></div> : null}
+          {!leads.length ? <div className="rounded-xl border border-line bg-panel/90 p-10 text-center"><p className="text-lg font-black">当前没有符合此筛选条件的候选。</p><p className="mt-2 text-sm text-muted">可以查看全部结论或启动新的筛选任务。</p></div> : null}
         </div>
         <div className="mt-6">
           <AdminListPagination basePath="/admin/x-leads" currentPage={currentPage} pageSize={X_LEADS_PAGE_SIZE} searchParams={paginationFilters} totalItems={sortedLeads.length} totalPages={totalPages} />
@@ -307,6 +307,8 @@ function ReferenceConclusion({
     ? "硬性条件和两类文本证据均具备，建议优先人工查看原图与回复内容。"
     : conclusion === "manual_review"
       ? `硬性条件已通过，${missingEvidence.join("、") || "文本语义"}仍需人工判断。`
+      : conclusion === "location_pending"
+        ? "美国地点证据尚不足；自动补查仍无法确认时需人工核对，当前不能入队。"
       : conclusion === "excluded"
         ? failedChecks.length ? `不符合：${failedChecks.map((check) => check.label).join("、")}。` : "该候选已被人工拒绝。"
         : conclusion === "contacted"
@@ -321,6 +323,7 @@ function ReferenceConclusion({
 function conclusionTone(conclusion: XLeadConclusion) {
   if (conclusion === "recommended") return "border-emerald-200 bg-emerald-50 text-emerald-900";
   if (conclusion === "manual_review") return "border-amber-200 bg-amber-50 text-amber-900";
+  if (conclusion === "location_pending") return "border-amber-200 bg-amber-50 text-amber-900";
   if (conclusion === "excluded") return "border-red-200 bg-red-50 text-red-900";
   if (conclusion === "contacted") return "border-blue-200 bg-blue-50 text-blue-900";
   return "border-line bg-surface text-muted";
