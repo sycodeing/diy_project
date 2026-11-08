@@ -107,6 +107,60 @@ export type XReplyJob = {
   };
 };
 
+export type XReplyBatchSummary = {
+  approvedAt: string;
+  completedAt: string | null;
+  total: number;
+  sent: number;
+  failed: number;
+  uncertain: number;
+  active: number;
+  completed: number;
+  progress: number;
+  state: "running" | "succeeded" | "completed_with_issues";
+};
+
+const X_REPLY_TERMINAL_STATUSES = new Set(["sent", "failed", "uncertain", "rejected"]);
+
+export function summarizeLatestXReplyBatch(jobs: Array<Pick<XReplyJob, "approved_at" | "completed_at" | "status">>): XReplyBatchSummary | null {
+  const approvedAt = jobs.reduce<string | null>((latest, job) => {
+    if (!job.approved_at) return latest;
+    return !latest || job.approved_at > latest ? job.approved_at : latest;
+  }, null);
+  if (!approvedAt) return null;
+
+  const batch = jobs.filter((job) => job.approved_at === approvedAt);
+  const sent = batch.filter((job) => job.status === "sent").length;
+  const failed = batch.filter((job) => job.status === "failed").length;
+  const uncertain = batch.filter((job) => job.status === "uncertain").length;
+  const completed = batch.filter((job) => X_REPLY_TERMINAL_STATUSES.has(job.status)).length;
+  const active = batch.filter((job) => ["queued", "claimed"].includes(job.status)).length;
+  const completedAt = completed === batch.length
+    ? batch.reduce<string | null>((latest, job) => {
+      if (!job.completed_at) return latest;
+      return !latest || job.completed_at > latest ? job.completed_at : latest;
+    }, null)
+    : null;
+  const state = completed < batch.length
+    ? "running"
+    : failed > 0 || uncertain > 0
+      ? "completed_with_issues"
+      : "succeeded";
+
+  return {
+    approvedAt,
+    completedAt,
+    total: batch.length,
+    sent,
+    failed,
+    uncertain,
+    active,
+    completed,
+    progress: batch.length ? Math.round((completed / batch.length) * 100) : 0,
+    state,
+  };
+}
+
 export type XManualPost = {
   id: string;
   action_type: "post" | "reply";

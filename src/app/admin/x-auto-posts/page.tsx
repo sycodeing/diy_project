@@ -3,7 +3,7 @@ import Link from "next/link";
 import { AdminAsyncImage } from "@/components/admin-async-image";
 import { AppShell } from "@/components/app-shell";
 import { FormSubmitButton } from "@/components/form-submit-button";
-import { QueueAutoRefresh } from "@/components/queue-auto-refresh";
+import { IdleAutoRefresh } from "@/components/idle-auto-refresh";
 import { SetupWarning } from "@/components/setup-warning";
 import { requireAdmin } from "@/lib/auth";
 import { getMarketingReplyPreviewUrl } from "@/lib/marketing";
@@ -13,6 +13,7 @@ import {
   X_ACTION_LABELS,
   X_REPLY_STATUS_LABELS,
   X_REPLY_STATUS_STYLES,
+  summarizeLatestXReplyBatch,
   type XReplyJob,
   type XReplyAccount,
   type XReplyDailyGate,
@@ -70,8 +71,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
       : null;
     return { job, preview: preview?.url ?? null };
   }));
-  const isPreparing = jobs.some((job) => ["pending", "processing"].includes(job.preparation_status));
-  const queueActive = isPreparing || jobs.some((job) => ["queued", "claimed"].includes(job.status));
+  const latestBatch = summarizeLatestXReplyBatch(jobs);
   const readyToStartCount = jobs.filter((job) => job.status === "draft" && job.preparation_status === "ready").length;
   const preparingToStartCount = jobs.filter((job) => job.status === "draft" && ["pending", "processing"].includes(job.preparation_status)).length;
   const workers = (workerRows ?? []) as XReplyWorker[];
@@ -85,7 +85,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
 
   return (
     <AppShell admin>
-      <QueueAutoRefresh active={queueActive} />
+      <IdleAutoRefresh idleMs={30_000} />
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div><p className="text-xs font-black uppercase tracking-[0.18em] text-accent-strong">Mac x-use execution chain</p><h1 className="mt-1 text-4xl font-black">X 自动发送</h1><p className="mt-2 text-sm text-muted">从候选页选择账号并加入后，任务只会停留在这里；点击“开始全部发送”后，绑定 Mac 才会通过 x-use + Patchright 可见浏览器执行。Cookie 只保存在本机。</p></div>
@@ -128,6 +128,22 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
 
         <section className="mt-8">
           <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-black">自动发送队列与结果</h2><p className="mt-1 text-sm text-muted">先把候选任务加入并确认；点击开始后，Worker 串行发送，每条间隔 15–30 秒，每 12 条休息 45 分钟。</p></div><div className="flex max-w-full flex-wrap justify-end gap-2"><StartAllForm preparingCount={preparingToStartCount} readyCount={readyToStartCount} /><Link className="focus-ring rounded-lg border border-line bg-white px-4 py-3 text-sm font-black" href="/admin/x-leads">返回候选列表</Link></div></div>
+          <div aria-live="polite" className={cn("mt-4 rounded-xl border p-5", latestBatch?.state === "succeeded" ? "border-emerald-200 bg-emerald-50" : latestBatch?.state === "completed_with_issues" ? "border-amber-200 bg-amber-50" : "border-blue-200 bg-blue-50")}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.16em] text-muted">最近一批发送状态</p>
+                <h3 className="mt-1 text-xl font-black">
+                  {!latestBatch ? "尚未开始批量发送" : latestBatch.state === "running" ? `发送处理中 · ${latestBatch.completed}/${latestBatch.total}` : latestBatch.state === "succeeded" ? `全部发送成功 · ${latestBatch.sent}/${latestBatch.total}` : `本批次已处理完成 · ${latestBatch.completed}/${latestBatch.total}`}
+                </h3>
+              </div>
+              <span className="rounded-md border border-current/20 bg-white/70 px-3 py-1.5 text-xs font-bold">30 秒无操作自动刷新</span>
+            </div>
+            {latestBatch ? <>
+              <div aria-label={`本批次已处理 ${latestBatch.progress}%`} aria-valuemax={100} aria-valuemin={0} aria-valuenow={latestBatch.progress} className="mt-4 h-2 overflow-hidden rounded-full bg-white/80" role="progressbar"><div className={cn("h-full rounded-full transition-[width]", latestBatch.state === "succeeded" ? "bg-emerald-600" : latestBatch.state === "completed_with_issues" ? "bg-amber-600" : "bg-blue-600")} style={{ width: `${latestBatch.progress}%` }} /></div>
+              <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-5"><span>总计：<strong>{latestBatch.total}</strong></span><span>成功：<strong>{latestBatch.sent}</strong></span><span>处理中/等待：<strong>{latestBatch.active}</strong></span><span>失败：<strong>{latestBatch.failed}</strong></span><span>结果不确定：<strong>{latestBatch.uncertain}</strong></span></div>
+              <p className="mt-3 text-xs text-muted">开始：{formatShanghaiDate(latestBatch.approvedAt)}{latestBatch.completedAt ? ` · 完成：${formatShanghaiDate(latestBatch.completedAt)}` : " · 完成后会在这里显示最终状态和时间"}</p>
+            </> : <p className="mt-3 text-sm text-muted">点击右上方“开始全部发送”后，这里会显示该批任务的实时进度和最终结果。</p>}
+          </div>
           <div className="mt-4 space-y-4">
             {cards.map(({ job, preview }) => {
               const preparing = ["pending", "processing"].includes(job.preparation_status);
