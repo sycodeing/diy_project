@@ -129,7 +129,7 @@ SCENE_TERMS = {
 MIN_OWNERSHIP_CONFIDENCE = 70
 MIN_SCENE_CONFIDENCE = 70
 OWNERSHIP_PATTERNS = (
-    r"\b(?:my|our)\s+(?:dog|cat|puppy|kitten|pup|kitty|pet)\b",
+    r"\b(?:my|our)\s+(?:(?:new|beautiful|handsome|sweet|little|old)\s+){0,2}(?:dog|cat|puppy|kitten|pup|kitty|pet)\b",
     r"\b(?:we|i)\s+(?:just\s+)?adopted\b",
     r"\bmeet\s+(?:my|our)\b",
     r"\bwelcome\s+home\b",
@@ -156,7 +156,8 @@ def build_targeting(tweet: dict[str, Any], source_segment: str) -> dict[str, Any
     bio = str(user.get("rawDescription") or user.get("description") or "")
     location = str(user.get("location") or "")
     occasion, occasion_confidence, occasion_terms = detect_occasion(text, source_segment)
-    pet_type = detect_pet_type(f"{text} {bio}")
+    # A pet mentioned only in the account bio does not describe this post.
+    pet_type = detect_pet_type(text)
     ownership_terms = detect_ownership_evidence(text)
     ownership_confidence = ownership_score(ownership_terms, text)
     organization = contains_any(bio, ORGANIZATION_TERMS)
@@ -321,6 +322,9 @@ def candidate_status(targeting: dict[str, Any], us_required: bool, us_min_confid
         return "rejected_targeting"
     if targeting.get("organization") or targeting.get("advertisement"):
         return "rejected_targeting"
+    # A real cat/dog photo still needs evidence it belongs to the posting person.
+    if int(targeting.get("ownership_confidence", 0)) < MIN_OWNERSHIP_CONFIDENCE:
+        return "rejected_targeting"
     us_evidence = str(targeting.get("us_evidence") or "")
     if us_required and (
         us_evidence == "profile_location_non_us"
@@ -330,10 +334,7 @@ def candidate_status(targeting: dict[str, Any], us_required: bool, us_min_confid
         return "rejected_targeting"
     if us_required and int(targeting.get("us_confidence", 0)) < us_min_confidence:
         return "location_review"
-    if (
-        int(targeting.get("ownership_confidence", 0)) < MIN_OWNERSHIP_CONFIDENCE
-        or int(targeting.get("occasion_confidence", 0)) < MIN_SCENE_CONFIDENCE
-    ):
+    if int(targeting.get("occasion_confidence", 0)) < MIN_SCENE_CONFIDENCE:
         return "targeting_review"
     return "new"
 
