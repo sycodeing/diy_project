@@ -10,6 +10,7 @@ import httpx
 from .apify import collect_apify_search
 from .config import CREDENTIAL_PATH, Settings
 from .discovery import collect_search, dedupe_candidates_by_author
+from .pet_image_gate import ensure_pet_image_verifier, verify_pet_photo
 from .targeting import SEARCH_SEGMENTS
 from .twitterapi import collect_twitterapi_search
 
@@ -29,7 +30,7 @@ async def run_x_lead_worker(settings: Settings) -> None:
                     json={
                         "workerId": worker_id,
                         "cookieConfigured": _provider_is_configured(settings, provider),
-                        "version": "1.4.0",
+                        "version": "1.5.0",
                     },
                 )
                 if response.status_code == 204:
@@ -58,9 +59,11 @@ async def _execute_job(
     error_code = None
     error_message = None
     metrics: dict[str, Any] = {"provider": _selected_provider(settings)}
+    found_for_image_review: list[dict[str, Any]] = []
     try:
         configuration = job.get("configuration") or {}
         provider = _selected_provider(settings)
+        await ensure_pet_image_verifier(client, settings)
         if provider == "twitterapi":
             items, found, metrics = await collect_twitterapi_search(
                 client,
@@ -69,35 +72,52 @@ async def _execute_job(
                 archive_id=str(job.get("id") or ""),
             )
             received_count = len(items)
-            for candidate in found:
-                if candidate.get("pet_type") in {"cat", "dog"}:
-                    candidates[candidate["post_id"]] = _cloud_candidate(candidate)
+            found_for_image_review = found
         elif provider == "apify":
             items, found = await collect_apify_search(client, settings, configuration)
             received_count = len(items)
             metrics = {"provider": "apify", "received_posts": received_count, "candidate_posts": len(found)}
-            for candidate in found:
-                if candidate.get("pet_type") in {"cat", "dog"}:
-                    candidates[candidate["post_id"]] = _cloud_candidate(candidate)
+            found_for_image_review = found
         elif provider == "x-cookie":
             received_count = await _collect_with_local_x_cookie(
                 settings,
                 configuration,
-                candidates,
+                found_for_image_review,
             )
-            metrics = {"provider": "x-cookie", "received_posts": received_count, "candidate_posts": len(candidates)}
+            metrics = {"provider": "x-cookie", "received_posts": received_count,
+                       "candidate_posts": len(found_for_image_review)}
         else:
             raise ValueError(f"Unsupported X lead provider: {provider}")
+        if provider in {"twitterapi", "apify", "x-cookie"}:
+            checked = 0
+            verified = 0
+            for candidate in found_for_image_review:
+                if candidate.get("status") == "rejected_targeting":
+                    continue
+                checked += 1
+                selected = await verify_pet_photo(candidate, client, settings)
+                if selected:
+                    verified += 1
+                    candidates[selected["post_id"]] = _cloud_candidate(selected)
+            metrics = {**metrics, "image_checked": checked, "image_verified": verified,
+                       "image_rejected": checked - verified}
     except Exception as error:
         message = str(error)
         blocked_terms = (
             "captcha", "cloudflare", "unauthorized", "forbidden", "rate limit", "no account",
             "apify authorization", "usage limit", "not enough credits", "credits are exhausted",
+            "pet image verification is not configured", "connection refused",
         )
-        status = "blocked" if any(term in message.lower() for term in blocked_terms) else "failed"
+        status = "blocked" if isinstance(error, httpx.ConnectError) or any(
+            term in message.lower() for term in blocked_terms
+        ) else "failed"
         error_code = "source_access_blocked" if status == "blocked" else "discovery_failed"
         provider = _selected_provider(settings)
-        if status == "blocked" and provider == "twitterapi":
+        if status == "blocked" and "image verification" in message.lower():
+            error_message = "Pet image verification is unavailable. Check the local Ollama vision model or vision API configuration."
+        elif status == "blocked" and isinstance(error, httpx.ConnectError):
+            error_message = "Pet image verification or the discovery provider is unreachable. Check the local worker services."
+        elif status == "blocked" and provider == "twitterapi":
             error_message = "TwitterAPI.io access paused. Check the local API key and account credits."
         elif status == "blocked" and provider == "apify":
             error_message = "Apify access paused. Check the local token, account usage, and Actor availability."
@@ -148,7 +168,7 @@ def _provider_is_configured(settings: Settings, provider: str) -> bool:
 async def _collect_with_local_x_cookie(
     settings: Settings,
     configuration: dict[str, Any],
-    candidates: dict[str, dict[str, Any]],
+    candidates: list[dict[str, Any]],
 ) -> int:
     received_count = 0
     segments = [
@@ -179,7 +199,7 @@ async def _collect_with_local_x_cookie(
             received_count += len(items)
             for candidate in found:
                 if candidate.get("pet_type") in {"cat", "dog"}:
-                    candidates[candidate["post_id"]] = _cloud_candidate(candidate)
+                    candidates.append(candidate)
     return received_count
 
 

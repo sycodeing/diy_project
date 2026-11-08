@@ -116,7 +116,7 @@ def test_business_account_is_rejected_before_image_analysis():
     assert candidate_status(targeting, True, 70) == "rejected_targeting"
 
 
-def test_weak_ownership_and_scene_evidence_wait_for_targeting_review():
+def test_weak_ownership_is_rejected_before_image_review():
     targeting = build_targeting(
         tweet(rawContent="A wonderful dog photo", user={
             "username": "dog_photo",
@@ -127,7 +127,13 @@ def test_weak_ownership_and_scene_evidence_wait_for_targeting_review():
     )
     assert targeting["ownership_confidence"] == 0
     assert targeting["occasion_confidence"] == 35
-    assert candidate_status(targeting, True, 70) == "targeting_review"
+    assert candidate_status(targeting, True, 70) == "rejected_targeting"
+
+
+def test_new_and_descriptive_owner_phrases_count_as_ownership():
+    for phrase in ("Our new puppy is home", "My beautiful cat is here"):
+        targeting = build_targeting(tweet(rawContent=phrase), "new_adoption")
+        assert targeting["ownership_confidence"] >= 88
 
 
 def test_expanded_pet_scenes_are_detected_with_owner_evidence():

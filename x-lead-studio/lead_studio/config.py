@@ -49,6 +49,9 @@ class Settings:
     vision_base_url: str = os.getenv("VISION_BASE_URL", "https://api.openai.com/v1").rstrip("/")
     vision_api_key: str = os.getenv("VISION_API_KEY", "")
     vision_model: str = os.getenv("VISION_MODEL", "gpt-4.1-mini")
+    pet_image_verifier: str = os.getenv("PET_IMAGE_VERIFIER", "ollama").strip().lower()
+    ollama_url: str = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
+    ollama_vision_model: str = os.getenv("OLLAMA_VISION_MODEL", "qwen3.5:4b")
     default_query: str = os.getenv(
         "DEFAULT_X_QUERY",
         "(puppy OR dog OR kitten OR cat) filter:images -filter:replies lang:en",
