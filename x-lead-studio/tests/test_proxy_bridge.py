@@ -85,6 +85,65 @@ def test_http_proxy_is_returned_unchanged():
     asyncio.run(run())
 
 
+def test_authenticated_socks5_bridge_forwards_plain_http_absolute_requests():
+    async def run():
+        observed: dict[str, object] = {}
+
+        async def fake_socks(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+            assert await reader.readexactly(3) == b"\x05\x01\x02"
+            writer.write(b"\x05\x02")
+            await writer.drain()
+            assert await reader.readexactly(1) == b"\x01"
+            username_length = (await reader.readexactly(1))[0]
+            await reader.readexactly(username_length)
+            password_length = (await reader.readexactly(1))[0]
+            await reader.readexactly(password_length)
+            writer.write(b"\x01\x00")
+            await writer.drain()
+            _version, _command, _reserved, atyp = await reader.readexactly(4)
+            observed["host"] = await _read_socks_target(reader, atyp)
+            observed["port"] = int.from_bytes(await reader.readexactly(2), "big")
+            writer.write(b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00")
+            await writer.drain()
+            observed["request"] = await reader.readuntil(b"\r\n\r\n")
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK")
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+
+        upstream = await asyncio.start_server(fake_socks, "127.0.0.1", 0)
+        upstream_port = upstream.sockets[0].getsockname()[1]
+        try:
+            async with browser_compatible_proxy(
+                f"socks5://alice:s3cret@127.0.0.1:{upstream_port}"
+            ) as proxy_url:
+                parsed = urlsplit(proxy_url)
+                reader, writer = await asyncio.open_connection(parsed.hostname, parsed.port)
+                writer.write(
+                    b"GET http://check.example/ip?format=text HTTP/1.1\r\n"
+                    b"Host: check.example\r\n"
+                    b"Proxy-Connection: keep-alive\r\n\r\n"
+                )
+                await writer.drain()
+                response = await reader.read()
+                assert response.endswith(b"OK")
+                writer.close()
+                await writer.wait_closed()
+        finally:
+            upstream.close()
+            await upstream.wait_closed()
+
+        assert observed["host"] == "check.example"
+        assert observed["port"] == 80
+        assert observed["request"] == (
+            b"GET /ip?format=text HTTP/1.1\r\n"
+            b"Host: check.example\r\n"
+            b"Connection: close\r\n\r\n"
+        )
+
+    asyncio.run(run())
+
+
 def test_authenticated_socks5_can_chain_through_local_transport(monkeypatch):
     async def run():
         observed: dict[str, object] = {}

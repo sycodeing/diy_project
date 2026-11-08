@@ -24,7 +24,7 @@ from .xuse_client import (
 )
 
 
-WORKER_VERSION = "4.7.0-proxied-profile-inspection"
+WORKER_VERSION = "4.7.1-http-proxy-bridge"
 BATCH_DELAY_MIN_SECONDS = 15.0
 BATCH_DELAY_MAX_SECONDS = 30.0
 PROFILE_INSPECTION_SECONDS = 10 * 60.0

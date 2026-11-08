@@ -142,6 +142,53 @@ async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> N
                 pass
 
 
+def _forward_http_request(header: bytes, method: str, target: str, version: str) -> tuple[str, int, bytes]:
+    """Resolve an HTTP proxy absolute-form request and rewrite it for the origin server."""
+    parsed = urlsplit(target)
+    if parsed.scheme:
+        if parsed.scheme.lower() != "http" or not parsed.hostname:
+            raise ValueError("Only plain HTTP absolute-form requests can be forwarded without CONNECT.")
+        target_host = parsed.hostname
+        target_port = parsed.port or 80
+        origin_target = parsed.path or "/"
+        if parsed.query:
+            origin_target += f"?{parsed.query}"
+    else:
+        target_host = ""
+        target_port = 80
+        origin_target = target if target.startswith("/") else f"/{target}"
+
+    forwarded_lines = [f"{method} {origin_target} {version}".encode("ascii")]
+    host_header: str | None = None
+    for line in header[:-4].split(b"\r\n")[1:]:
+        name, separator, value = line.partition(b":")
+        if not separator:
+            raise ValueError("HTTP proxy request contains an invalid header.")
+        lowered = name.strip().lower()
+        if lowered == b"host":
+            host_header = value.strip().decode("ascii", errors="strict")
+        if lowered in {b"proxy-authorization", b"proxy-connection", b"connection"}:
+            continue
+        forwarded_lines.append(line)
+
+    if not target_host:
+        if not host_header:
+            raise ValueError("HTTP proxy request has no target host.")
+        authority = urlsplit(f"//{host_header}")
+        if not authority.hostname:
+            raise ValueError("HTTP proxy Host header is invalid.")
+        target_host = authority.hostname
+        target_port = authority.port or 80
+    if not 1 <= target_port <= 65535:
+        raise ValueError("HTTP proxy target port is invalid.")
+
+    # Close each origin connection after one response. Chrome will reconnect
+    # through the proxy bridge, which lets every absolute-form request be
+    # resolved and rewritten independently.
+    forwarded_lines.append(b"Connection: close")
+    return target_host, target_port, b"\r\n".join(forwarded_lines) + b"\r\n\r\n"
+
+
 @dataclass
 class AuthenticatedSocks5Bridge:
     upstream: tuple[str, int, str, str]
@@ -176,18 +223,23 @@ class AuthenticatedSocks5Bridge:
             if len(header) > MAX_HEADER_BYTES:
                 raise ValueError("Proxy request header is too large.")
             request_line = header.split(b"\r\n", 1)[0].decode("ascii", errors="strict")
-            method, authority, _version = request_line.split(" ", 2)
-            if method.upper() != "CONNECT":
-                writer.write(b"HTTP/1.1 405 Method Not Allowed\r\nConnection: close\r\n\r\n")
-                await writer.drain()
-                return
-            host, separator, port_value = authority.rpartition(":")
-            if not separator or not host:
-                raise ValueError("CONNECT target is invalid.")
-            target_host = host.strip("[]")
-            target_port = int(port_value)
-            if not 1 <= target_port <= 65535:
-                raise ValueError("CONNECT target port is invalid.")
+            method, authority, version = request_line.split(" ", 2)
+            forwarded_header: bytes | None = None
+            if method.upper() == "CONNECT":
+                host, separator, port_value = authority.rpartition(":")
+                if not separator or not host:
+                    raise ValueError("CONNECT target is invalid.")
+                target_host = host.strip("[]")
+                target_port = int(port_value)
+                if not 1 <= target_port <= 65535:
+                    raise ValueError("CONNECT target port is invalid.")
+            else:
+                target_host, target_port, forwarded_header = _forward_http_request(
+                    header,
+                    method,
+                    authority,
+                    version,
+                )
 
             upstream_reader, upstream_writer = await _connect_upstream(
                 self.upstream,
@@ -195,8 +247,12 @@ class AuthenticatedSocks5Bridge:
                 target_port,
                 self.transport,
             )
-            writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-            await writer.drain()
+            if forwarded_header is None:
+                writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                await writer.drain()
+            else:
+                upstream_writer.write(forwarded_header)
+                await upstream_writer.drain()
             tunnel_established = True
             await asyncio.gather(
                 _pipe(reader, upstream_writer),
