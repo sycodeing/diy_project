@@ -30,6 +30,8 @@ export X_USE_HOME="/Users/f/Library/Application Support/x-use"
 
 Import only accounts you operate. Each x-use `account_id` must match the account key entered at `/admin/x-accounts`. Cookies and browser data remain under `X_USE_HOME` and are never included in worker heartbeats.
 
+For IPRoyal ISP exports, check the route before binding an account: `.venv/bin/python check_iproyal_proxy.py --file /private/proxies.txt --host YOUR_PROXY_IP`. The export may contain the default HTTP port `12323`; the worker's SOCKS5 route uses `12324`. The check confirms both the proxy's egress IP and read-only access to X. Keep the export and credentials outside Git.
+
 Set the same dedicated `X_REPLY_WORKER_SECRET` on the website and in this worker's `.env`, then run `./run.ps1`. The workflow is:
 
 1. An administrator creates the exact post or reply draft and selects one account.
