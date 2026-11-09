@@ -15,6 +15,11 @@ from .targeting import SEARCH_SEGMENTS
 from .twitterapi import collect_twitterapi_search
 
 
+CLOUD_SEGMENTS = {
+    "new_adoption", "pet_birthday", "pet_adventure", "pet_costume", "pet_portrait", "custom",
+}
+
+
 async def run_x_lead_worker(settings: Settings) -> None:
     if not settings.x_lead_worker_enabled or len(settings.x_lead_worker_secret) < 32:
         return
@@ -30,7 +35,7 @@ async def run_x_lead_worker(settings: Settings) -> None:
                     json={
                         "workerId": worker_id,
                         "cookieConfigured": _provider_is_configured(settings, provider),
-                        "version": "1.6.1",
+                        "version": "1.6.2",
                     },
                 )
                 if response.status_code == 204:
@@ -205,6 +210,8 @@ async def _collect_with_local_x_cookie(
 
 def _cloud_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     targeting_data = json.loads(candidate.get("targeting_json") or "{}")
+    discovery_segment = str(candidate.get("segment") or "custom")
+    cloud_segment = discovery_segment if discovery_segment in CLOUD_SEGMENTS else "custom"
     return {
         "postId": candidate["post_id"],
         "authorHash": candidate["author_hash"],
@@ -214,7 +221,7 @@ def _cloud_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
         "mediaUrls": candidate.get("media_urls") or [candidate["media_url"]],
         "postedAt": candidate.get("posted_at"),
         "selectionStatus": candidate["status"],
-        "segment": candidate["segment"],
+        "segment": cloud_segment,
         "petType": candidate["pet_type"],
         "occasion": candidate.get("occasion"),
         "occasionConfidence": candidate.get("occasion_confidence"),
@@ -229,6 +236,7 @@ def _cloud_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
         "followersCount": candidate.get("followers_count", 0),
         "targetingData": {
             **targeting_data,
+            "discovery_segment": discovery_segment,
             "engagement_quality": candidate.get("engagement_quality"),
             "account_quality": candidate.get("account_quality"),
             "recency_score": candidate.get("recency_score"),

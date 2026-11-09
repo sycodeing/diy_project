@@ -75,3 +75,23 @@ def test_candidate_discovery_rejects_ambiguous_pet_type():
     assert candidate is not None
     assert candidate["pet_type"] is None
     assert candidate["status"] == "rejected_targeting"
+
+
+def test_new_discovery_slices_use_cloud_compatible_custom_segment():
+    candidate = {
+        "post_id": "190000000000000003",
+        "author_hash": "a" * 64,
+        "author_handle": "daily_dog_owner",
+        "post_url": "https://x.com/daily_dog_owner/status/190000000000000003",
+        "media_url": "https://pbs.twimg.com/media/example3.jpg",
+        "media_urls": ["https://pbs.twimg.com/media/example3.jpg"],
+        "status": "targeting_review",
+        "segment": "pet_daily_dog",
+        "pet_type": "dog",
+        "targeting_json": "{}",
+    }
+
+    cloud = _cloud_candidate(candidate)
+
+    assert cloud["segment"] == "custom"
+    assert cloud["targetingData"]["discovery_segment"] == "pet_daily_dog"
