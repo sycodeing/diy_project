@@ -281,11 +281,11 @@ def detect_us_evidence(tweet: dict[str, Any], profile_location: str) -> tuple[in
         profile_is_us = profile_result[0] >= 70
         profile_is_non_us = profile_result[1] == "profile_location_non_us"
         if account_based_in_accurate is False:
-            return (
-                (65, "account_based_in_us_unverified")
-                if origin_us
-                else (25, f"account_based_in_unverified:{account_based_in[:40]}")
-            )
+            if origin_us:
+                return 65, "account_based_in_us_unverified"
+            if origin_is_ambiguous_region:
+                return 25, f"account_based_in_region_ambiguous:{account_based_in[:40]}"
+            return 0, f"account_based_in_non_us_unverified:{account_based_in[:40]}"
         if origin_us and profile_is_non_us:
             return 25, "location_conflict:profile_non_us_account_us"
         if not origin_us and profile_is_us:
@@ -330,7 +330,7 @@ def candidate_status(targeting: dict[str, Any], us_required: bool, us_min_confid
     if us_required and (
         us_evidence == "profile_location_non_us"
         or us_evidence.startswith("post_place_country:") and us_evidence != "post_place_country:US"
-        or us_evidence.startswith("account_based_in_non_us:")
+        or us_evidence.startswith("account_based_in_non_us")
     ):
         return "rejected_targeting"
     if us_required and int(targeting.get("us_confidence", 0)) < us_min_confidence:

@@ -102,6 +102,21 @@ def test_inaccurate_account_origin_remains_location_review():
     assert candidate_status(targeting, True, 70) == "location_review"
 
 
+def test_inaccurate_but_explicit_non_us_origin_is_rejected():
+    targeting = build_targeting(
+        tweet(user={
+            "username": "maple_home",
+            "location": "",
+            "accountBasedIn": "Philippines",
+            "accountBasedInAccurate": False,
+        }),
+        "new_adoption",
+    )
+    assert targeting["us_confidence"] == 0
+    assert targeting["us_evidence"] == "account_based_in_non_us_unverified:Philippines"
+    assert candidate_status(targeting, True, 70) == "rejected_targeting"
+
+
 def test_business_account_is_rejected_before_image_analysis():
     targeting = build_targeting(
         tweet(user={
