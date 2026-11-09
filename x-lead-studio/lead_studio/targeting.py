@@ -122,6 +122,24 @@ SEARCH_SEGMENTS = (
             'filter:images -filter:replies lang:en'
         ),
     ),
+    SearchSegment(
+        key="pet_daily_dog",
+        label="Everyday dog owner photo",
+        query=(
+            '(("my dog" OR "our dog" OR "my puppy" OR "our puppy" '
+            'OR "my pup" OR "our pup")) '
+            'filter:images -filter:replies lang:en'
+        ),
+    ),
+    SearchSegment(
+        key="pet_daily_cat",
+        label="Everyday cat owner photo",
+        query=(
+            '(("my cat" OR "our cat" OR "my kitten" OR "our kitten" '
+            'OR "my kitty" OR "our kitty")) '
+            'filter:images -filter:replies lang:en'
+        ),
+    ),
 )
 
 

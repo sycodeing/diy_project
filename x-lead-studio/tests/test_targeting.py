@@ -19,6 +19,8 @@ def test_search_queries_cover_broader_owner_phrases_before_strict_targeting():
     assert '"my cat sleeping"' in queries["pet_sleepy"]
     assert '"playing with our dog"' in queries["pet_playtime"]
     assert '"dog park with my dog"' in queries["pet_walk"]
+    assert '"my puppy"' in queries["pet_daily_dog"]
+    assert '"our kitten"' in queries["pet_daily_cat"]
     # The provider appends retweet and since/until filters, so leave enough
     # headroom below its effective query-length ceiling.
     assert all(len(query) < 440 for query in queries.values())
