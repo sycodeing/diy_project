@@ -77,9 +77,8 @@ export async function POST(request: Request) {
     verification_error: "上次验证超时，已自动重新排队。",
   }).eq("executor_id", heartbeat.executorId).eq("verification_status", "running").lt("verification_started_at", staleVerificationBefore);
 
-  // x-use allows only one MCP server for a given X_USE_HOME. Keep the
-  // heartbeat fresh while an account profile is visibly open, but do not
-  // claim another verification or an approved write against that home.
+  // Keep the heartbeat fresh while a profile inspection is visibly open,
+  // but do not claim another verification or approved write in parallel.
   if (heartbeat.inspectionBusy) return new Response(null, { status: 204 });
 
   const { data: verificationAccount, error: verificationReadError } = await supabase.from("x_reply_accounts")

@@ -188,41 +188,83 @@ def test_vpn_direct_probe_never_starts_xuse_proxy_tools(monkeypatch, tmp_path):
 def test_account_mapping_verification_reads_visible_owner_and_route(monkeypatch, tmp_path):
     config = tmp_path / "config"
     config.mkdir()
-    (config / "accounts.json").write_text(json.dumps([
-        {"account_id": "Latte192837465", "is_active": True, "cookies": [{"name": "auth_token"}]},
-    ]), encoding="utf-8")
+    (config / "accounts.json").write_text(json.dumps([{
+        "account_id": "Latte192837465", "is_active": True,
+        "cookies": [{"name": "auth_token", "value": "test"}, {"name": "ct0", "value": "test"}],
+    }]), encoding="utf-8")
+    visited = []
 
-    class FakeSession:
-        def __init__(self):
-            self.calls = []
+    class FakeLocator:
+        async def wait_for(self, **_kwargs):
+            return None
 
-        async def __aenter__(self):
+        async def is_visible(self):
+            return True
+
+        async def get_attribute(self, _name):
+            return "/Latte192837465"
+
+        def get_by_text(self, _value):
             return self
+
+    class FakePage:
+        url = ""
+
+        async def goto(self, url, **_kwargs):
+            self.url = url
+            visited.append(url)
+            return types.SimpleNamespace(status=200)
+
+        async def text_content(self, _selector):
+            return '{"ip":"203.0.113.10"}'
+
+        async def close(self):
+            return None
+
+        def locator(self, _selector):
+            return FakeLocator()
+
+        def get_by_test_id(self, _selector):
+            return FakeLocator()
+
+    class FakeContext:
+        async def add_cookies(self, cookies):
+            assert {cookie["name"] for cookie in cookies} == {"auth_token", "ct0"}
+
+        async def new_page(self):
+            return FakePage()
+
+        async def close(self):
+            return None
+
+    class FakeBrowser:
+        async def new_context(self, **_kwargs):
+            return FakeContext()
+
+        async def close(self):
+            return None
+
+    class FakePlaywright:
+        class chromium:
+            @staticmethod
+            async def launch(**kwargs):
+                assert kwargs["headless"] is False
+                return FakeBrowser()
+
+    class FakeManager:
+        async def __aenter__(self):
+            return FakePlaywright()
 
         async def __aexit__(self, *_args):
             return None
 
-        async def initialize(self):
-            return None
+    @asynccontextmanager
+    async def fake_proxy(_url):
+        yield None
 
-        async def call_tool(self, name, arguments):
-            self.calls.append((name, arguments))
-            if name == "get_account_analytics":
-                return types.SimpleNamespace(structuredContent={"result": {
-                    "ok": True,
-                    "owner": {"handle": "Latte192837465", "source": "visible_signed_in_profile_navigation"},
-                }}, content=[])
-            if name == "get_profile":
-                return types.SimpleNamespace(structuredContent={"result": {"ok": True, "profile": {"handle": "Latte192837465"}}}, content=[])
-            raise AssertionError(name)
-
-    async def direct_probe(_url):
-        return NetworkProbeResult(True, egress_ip="203.0.113.10")
-
-    session = FakeSession()
-    _install_fake_mcp(monkeypatch, session)
-    monkeypatch.setattr(xuse_client, "xuse_is_installed", lambda: True)
-    monkeypatch.setattr(xuse_client, "probe_direct_egress", direct_probe)
+    import patchright.async_api
+    monkeypatch.setattr(patchright.async_api, "async_playwright", lambda: FakeManager())
+    monkeypatch.setattr(xuse_client, "browser_compatible_proxy", fake_proxy)
     result = asyncio.run(verify_account_mapping(
         x_use_home=tmp_path,
         account="Latte192837465",
@@ -234,10 +276,24 @@ def test_account_mapping_verification_reads_visible_owner_and_route(monkeypatch,
     assert result.ok is True
     assert result.actual_handle == "Latte192837465"
     assert result.egress_ip == "203.0.113.10"
-    assert session.calls == [
-        ("get_account_analytics", {"account": "Latte192837465", "limit": 1}),
-        ("get_profile", {"account": "Latte192837465", "profile": "Latte192837465"}),
-    ]
+    assert visited == ["https://ip.example.test", "https://x.com/home", "https://x.com/Latte192837465"]
+
+
+def test_account_mapping_rejects_corrupt_local_cookies_before_opening_browser(tmp_path):
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "accounts.json").write_text(json.dumps([{
+        "account_id": "first", "is_active": True, "cookie_file_path": "config/first_cookies.json",
+    }]), encoding="utf-8")
+    (config / "first_cookies.json").write_text('[]\\n', encoding="utf-8")
+
+    result = asyncio.run(verify_account_mapping(
+        x_use_home=tmp_path, account="first", network_mode="vpn_direct",
+        proxy_url=None, ip_check_url="https://ip.example.test",
+    ))
+
+    assert result.ok is False
+    assert result.error_code == "invalid_cookies"
 
 
 def test_fixed_proxy_calls_update_and_test_proxy_without_direct_fallback(monkeypatch, tmp_path):
