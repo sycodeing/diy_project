@@ -21,6 +21,7 @@ const requestSchema = z.object({
   currentEgressIp: ipSchema.nullable(),
   networkProbeStatus: z.enum(["unknown", "healthy", "mismatch", "error"]),
   lastError: z.string().trim().max(1000).nullable().optional(),
+  inspectionBusy: z.boolean().optional(),
   networkVerification: z.object({
     jobId: z.string().uuid(),
     accountKey: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
@@ -75,6 +76,11 @@ export async function POST(request: Request) {
     verification_started_at: null,
     verification_error: "上次验证超时，已自动重新排队。",
   }).eq("executor_id", heartbeat.executorId).eq("verification_status", "running").lt("verification_started_at", staleVerificationBefore);
+
+  // x-use allows only one MCP server for a given X_USE_HOME. Keep the
+  // heartbeat fresh while an account profile is visibly open, but do not
+  // claim another verification or an approved write against that home.
+  if (heartbeat.inspectionBusy) return new Response(null, { status: 204 });
 
   const { data: verificationAccount, error: verificationReadError } = await supabase.from("x_reply_accounts")
     .select("id,account_key,expected_x_handle,executor_id,network_mode,expected_egress_ip,x_reply_account_proxies(encrypted_url)")

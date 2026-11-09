@@ -71,6 +71,32 @@ def test_observe_heartbeat_reuses_cached_egress_probe(monkeypatch, tmp_path):
     assert completed_status is None
 
 
+def test_inspection_heartbeat_marks_xuse_home_busy(monkeypatch, tmp_path):
+    settings = replace(Settings(), x_reply_execution_mode="send", x_reply_worker_secret="s" * 32, x_use_home=tmp_path)
+
+    async def post_claim(_settings, _client, payload):
+        assert payload["inspectionBusy"] is True
+        return httpx.Response(204)
+
+    monkeypatch.setattr(x_reply_worker, "xuse_is_installed", lambda: True)
+    monkeypatch.setattr(x_reply_worker, "configured_account_keys", lambda _home: ["pet_account"])
+    monkeypatch.setattr(x_reply_worker, "_post_claim", post_claim)
+
+    async def run():
+        inspection = asyncio.create_task(asyncio.sleep(60))
+        x_reply_worker._BACKGROUND_TASKS.add(inspection)
+        try:
+            return await x_reply_worker.run_x_reply_iteration(
+                settings, direct_probe=NetworkProbeResult(True, egress_ip="203.0.113.10"),
+            )
+        finally:
+            inspection.cancel()
+            await asyncio.gather(inspection, return_exceptions=True)
+            x_reply_worker._BACKGROUND_TASKS.discard(inspection)
+
+    assert asyncio.run(run()) == (None, False, None)
+
+
 def test_observe_mode_refuses_even_a_nonempty_server_response(monkeypatch, tmp_path):
     settings = replace(Settings(), x_reply_execution_mode="observe", x_reply_worker_secret="s" * 32, x_use_home=tmp_path)
 

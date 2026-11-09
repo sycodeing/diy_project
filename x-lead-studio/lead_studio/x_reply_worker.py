@@ -24,7 +24,7 @@ from .xuse_client import (
 )
 
 
-WORKER_VERSION = "4.7.1-http-proxy-bridge"
+WORKER_VERSION = "4.7.2-serialized-xuse"
 BATCH_DELAY_MIN_SECONDS = 15.0
 BATCH_DELAY_MAX_SECONDS = 30.0
 PROFILE_INSPECTION_SECONDS = 10 * 60.0
@@ -85,6 +85,10 @@ async def run_x_reply_iteration(
         "currentEgressIp": direct_probe.egress_ip,
         "networkProbeStatus": "healthy" if direct_probe.ok else "error",
         "lastError": probe_error or last_error,
+        # x-use permits one MCP server per X_USE_HOME. A visible account
+        # inspection holds that server open, so keep heartbeating without
+        # claiming another inspection or write until it closes.
+        "inspectionBusy": any(not task.done() for task in _BACKGROUND_TASKS),
     }
 
     async with httpx.AsyncClient(timeout=30) as client:
