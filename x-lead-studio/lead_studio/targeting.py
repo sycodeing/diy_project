@@ -70,6 +70,58 @@ SEARCH_SEGMENTS = (
             'filter:images -filter:replies lang:en'
         ),
     ),
+    SearchSegment(
+        key="pet_proud",
+        label="Proud pet parent",
+        query=(
+            '(("proud of my dog" OR "proud of my cat" OR "proud of our dog" '
+            'OR "proud of our cat" OR "my good boy" OR "my good girl" '
+            'OR "our good boy" OR "our good girl") '
+            '(dog OR cat OR puppy OR kitten OR pup OR kitty)) '
+            'filter:images -filter:replies lang:en'
+        ),
+    ),
+    SearchSegment(
+        key="pet_cuddle",
+        label="Pet cuddle / bonding",
+        query=(
+            '(("cuddling with my" OR "cuddling with our" OR "cuddle with my" '
+            'OR "cuddle with our" OR "snuggling with my" OR "snuggling with our") '
+            '(dog OR cat OR puppy OR kitten OR pup OR kitty)) '
+            'filter:images -filter:replies lang:en'
+        ),
+    ),
+    SearchSegment(
+        key="pet_sleepy",
+        label="Sleepy pet",
+        query=(
+            '(("my dog sleeping" OR "my cat sleeping" OR "our dog sleeping" '
+            'OR "our cat sleeping" OR "nap with my dog" OR "nap with my cat" '
+            'OR "nap with our dog" OR "nap with our cat")) '
+            'filter:images -filter:replies lang:en'
+        ),
+    ),
+    SearchSegment(
+        key="pet_playtime",
+        label="Pet playtime",
+        query=(
+            '(("playing with my dog" OR "playing with my cat" '
+            'OR "playing with our dog" OR "playing with our cat" '
+            'OR "my dog playing" OR "my cat playing" '
+            'OR "our dog playing" OR "our cat playing")) '
+            'filter:images -filter:replies lang:en'
+        ),
+    ),
+    SearchSegment(
+        key="pet_walk",
+        label="Pet walk / dog park",
+        query=(
+            '(("walking my dog" OR "walking our dog" OR "walk with my dog" '
+            'OR "walk with our dog" OR "dog park with my dog" '
+            'OR "dog park with our dog")) '
+            'filter:images -filter:replies lang:en'
+        ),
+    ),
 )
 
 
@@ -117,7 +169,8 @@ BIRTHDAY_TERMS = (
 ADVENTURE_TERMS = (
     "hiking with my", "hiking with our", "beach day with my", "beach day with our",
     "road trip with my", "road trip with our", "camping with my", "camping with our",
-    "adventure with my", "adventure with our",
+    "adventure with my", "adventure with our", "walking my dog", "walking our dog",
+    "walk with my dog", "walk with our dog", "dog park with my dog", "dog park with our dog",
 )
 COSTUME_TERMS = (
     "in costume", "dressed up", "halloween costume", "holiday outfit", "christmas outfit",
@@ -125,7 +178,14 @@ COSTUME_TERMS = (
 PORTRAIT_TERMS = (
     "favorite photo of my", "favorite photo of our", "best photo of my", "best photo of our",
     "my handsome", "our handsome", "my beautiful", "our beautiful", "my photogenic",
-    "our photogenic", "look at my", "look at our",
+    "our photogenic", "look at my", "look at our", "proud of my dog", "proud of my cat",
+    "proud of our dog", "proud of our cat", "my good boy", "my good girl", "our good boy",
+    "our good girl", "cuddling with my", "cuddling with our", "cuddle with my",
+    "cuddle with our", "snuggling with my", "snuggling with our", "my dog sleeping",
+    "my cat sleeping", "our dog sleeping", "our cat sleeping", "nap with my dog",
+    "nap with my cat", "nap with our dog", "nap with our cat", "playing with my dog",
+    "playing with my cat", "playing with our dog", "playing with our cat", "my dog playing",
+    "my cat playing", "our dog playing", "our cat playing",
 )
 SCENE_TERMS = {
     "new_adoption": ADOPTION_TERMS,

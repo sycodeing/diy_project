@@ -14,9 +14,29 @@ def test_search_queries_cover_broader_owner_phrases_before_strict_targeting():
     assert 'photogenic' in queries["pet_portrait"]
     assert '"my handsome"' in queries["pet_portrait"]
     assert '"our dog"' in queries["pet_portrait"]
+    assert '"proud of my dog"' in queries["pet_proud"]
+    assert '"snuggling with our"' in queries["pet_cuddle"]
+    assert '"my cat sleeping"' in queries["pet_sleepy"]
+    assert '"playing with our dog"' in queries["pet_playtime"]
+    assert '"dog park with my dog"' in queries["pet_walk"]
     # The provider appends retweet and since/until filters, so leave enough
     # headroom below its effective query-length ceiling.
     assert all(len(query) < 440 for query in queries.values())
+
+
+def test_new_everyday_slices_still_map_to_personalizable_scenes():
+    cases = {
+        "pet_proud": "I am so proud of my dog today.",
+        "pet_cuddle": "Cuddling with my cat after work.",
+        "pet_sleepy": "My dog sleeping in the sun.",
+        "pet_playtime": "Playing with our cat this morning.",
+        "pet_walk": "Dog park with my dog before breakfast.",
+    }
+    for segment, content in cases.items():
+        targeting = build_targeting(tweet(rawContent=content), segment)
+        assert targeting["ownership_confidence"] >= 70
+        assert targeting["occasion_confidence"] >= 70
+        assert targeting["occasion"] in {"pet_portrait", "pet_adventure"}
 
 
 def tweet(**overrides):
