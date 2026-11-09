@@ -4,10 +4,15 @@ from lead_studio.targeting import SEARCH_SEGMENTS, build_targeting, candidate_st
 def test_search_queries_cover_broader_owner_phrases_before_strict_targeting():
     queries = {segment.key: segment.query for segment in SEARCH_SEGMENTS}
     assert '"meet my"' in queries["new_adoption"]
+    assert '"new family member"' in queries["new_adoption"]
     assert '"our dog"' in queries["pet_birthday"]
-    assert '"road trip"' in queries["pet_adventure"]
+    assert '"first birthday"' in queries["pet_birthday"]
+    assert '"road trip with my"' in queries["pet_adventure"]
+    assert '"hiking with our"' in queries["pet_adventure"]
     assert '"christmas outfit"' in queries["pet_costume"]
+    assert '"halloween costume"' in queries["pet_costume"]
     assert 'photogenic' in queries["pet_portrait"]
+    assert '"my handsome"' in queries["pet_portrait"]
     assert '"our dog"' in queries["pet_portrait"]
     # The provider appends retweet and since/until filters, so leave enough
     # headroom below its effective query-length ceiling.

@@ -20,7 +20,9 @@ SEARCH_SEGMENTS = (
         label="New adoption / gotcha day",
         query=(
             '(("gotcha day" OR "just adopted" OR "new puppy" OR "new kitten" '
-            'OR "meet my" OR "meet our" OR "welcome home" OR "foster fail") '
+            'OR "meet my" OR "meet our" OR "welcome home" OR "foster fail" '
+            'OR "new family member" OR "my new dog" OR "my new cat" '
+            'OR "our new dog" OR "our new cat") '
             '(dog OR puppy OR cat OR kitten OR pup OR kitty)) '
             'filter:images -filter:replies lang:en'
         ),
@@ -29,8 +31,9 @@ SEARCH_SEGMENTS = (
         key="pet_birthday",
         label="Pet birthday",
         query=(
-            '((birthday OR "birthday boy" OR "birthday girl" OR barkday '
-            'OR "turns one" OR "turned one") '
+            '((birthday OR "happy birthday" OR "birthday boy" OR "birthday girl" '
+            'OR barkday OR "birthday pup" OR "birthday kitty" OR "first birthday" '
+            'OR "1st birthday" OR "turns one" OR "turned one") '
             '("my dog" OR "my cat" OR "our dog" OR "our cat" OR puppy OR kitten OR pup OR kitty)) '
             'filter:images -filter:replies lang:en'
         ),
@@ -39,8 +42,11 @@ SEARCH_SEGMENTS = (
         key="pet_adventure",
         label="Pet adventure / outdoors",
         query=(
-            '((hiking OR beach OR camping OR "road trip" OR adventure) '
-            '("my dog" OR "my cat" OR "our dog" OR "our cat")) '
+            '(("hiking with my" OR "hiking with our" OR "beach day with my" '
+            'OR "beach day with our" OR "camping with my" OR "camping with our" '
+            'OR "road trip with my" OR "road trip with our" '
+            'OR "adventure with my" OR "adventure with our") '
+            '(dog OR cat OR puppy OR kitten OR pup OR kitty)) '
             'filter:images -filter:replies lang:en'
         ),
     ),
@@ -48,7 +54,8 @@ SEARCH_SEGMENTS = (
         key="pet_costume",
         label="Pet costume / holiday outfit",
         query=(
-            '((costume OR "dressed up" OR "holiday outfit" OR "christmas outfit") '
+            '((costume OR "in costume" OR "dressed up" OR "halloween costume" '
+            'OR "holiday outfit" OR "christmas outfit") '
             '("my dog" OR "my cat" OR "our dog" OR "our cat")) '
             'filter:images -filter:replies lang:en'
         ),
@@ -57,7 +64,8 @@ SEARCH_SEGMENTS = (
         key="pet_portrait",
         label="Pet portrait / proud moment",
         query=(
-            '(("favorite photo" OR "best photo" OR photogenic OR "look at") '
+            '(("favorite photo" OR "best photo" OR photogenic OR "look at" '
+            'OR "my handsome" OR "our handsome" OR "my beautiful" OR "our beautiful") '
             '("my dog" OR "my cat" OR "our dog" OR "our cat")) '
             'filter:images -filter:replies lang:en'
         ),

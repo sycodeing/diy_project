@@ -30,7 +30,7 @@ async def run_x_lead_worker(settings: Settings) -> None:
                     json={
                         "workerId": worker_id,
                         "cookieConfigured": _provider_is_configured(settings, provider),
-                        "version": "1.5.2",
+                        "version": "1.5.3",
                     },
                 )
                 if response.status_code == 204:
