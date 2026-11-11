@@ -1,0 +1,6 @@
+interface:
+  display_name: "X 宠物候选发现"
+  short_description: "筛选 X 猫狗候选，复用地址证据并按结果迭代优化"
+  default_prompt: "使用 $x-pet-lead-discovery 在 DiyProject 中筛选一批 X 猫狗候选，并按本轮数据优化筛选链路。"
+policy:
+  allow_implicit_invocation: true
