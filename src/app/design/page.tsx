@@ -1,8 +1,9 @@
+import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { DiyDesigner } from "@/components/diy-designer";
 import { getPayPalConfig, getSupabaseBrowserConfig } from "@/lib/env";
-import { getMarketingPreviewUrls, getActiveMarketingLinkFromCookie } from "@/lib/marketing";
+import { getMarketingPreviewUrls, getActiveMarketingLinkFromCookie, markMarketingVisitStage } from "@/lib/marketing";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { DEFAULT_PRODUCT_CONFIG, type DesignerProductConfig } from "@/lib/product-config";
 import type { DesignPayload, ShippingAddress } from "@/lib/types";
@@ -67,6 +68,18 @@ export default async function DesignPage({
   const cachedMockupPreviews = marketingLink && linkedImage === marketingLink.source_image_url
     ? await getMarketingPreviewUrls(marketingLink.source_hash, marketingLink.expires_at)
     : [];
+
+  if (marketingLink) {
+    const requestHeaders = await headers();
+    const destination = requestHeaders.get("sec-fetch-dest");
+    const isPrefetch = requestHeaders.has("next-router-prefetch")
+      || requestHeaders.get("purpose")?.includes("prefetch");
+    const isRsc = requestHeaders.has("rsc");
+    if (!isPrefetch && !isRsc && (destination === "document" || (!destination && requestHeaders.get("accept")?.includes("text/html")))) {
+      const { error } = await markMarketingVisitStage(marketingLink.id, "design_requested_at");
+      if (error) console.error("Marketing design request could not be recorded", { error: error.message });
+    }
+  }
 
   return (
     <AppShell>

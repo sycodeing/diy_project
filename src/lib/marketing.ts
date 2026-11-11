@@ -4,7 +4,29 @@ import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { createSignedUrlWithRetry } from "@/lib/storage-signed-url";
 
 export const MARKETING_COOKIE_NAME = "diy_marketing_touch";
+export const MARKETING_VISIT_COOKIE_NAME = "diy_marketing_visit";
+export const MARKETING_VISIT_SECONDS = 30 * 60;
 export const MARKETING_ATTRIBUTION_SECONDS = 7 * 24 * 60 * 60;
+
+export type MarketingVisitStage = "design_requested_at" | "browser_confirmed_at" | "first_interaction_at";
+
+export async function markMarketingVisitStage(marketingLinkId: string, stage: MarketingVisitStage) {
+  const visitId = (await cookies()).get(MARKETING_VISIT_COOKIE_NAME)?.value;
+  if (!visitId || !/^[0-9a-f-]{36}$/i.test(visitId)) return { error: null };
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) return { error: new Error("Marketing storage is not configured.") };
+  try {
+    const { error } = await supabase.from("marketing_link_visits")
+      .update({ [stage]: new Date().toISOString() })
+      .eq("id", visitId)
+      .eq("marketing_link_id", marketingLinkId)
+      .gte("visited_at", new Date(Date.now() - MARKETING_VISIT_SECONDS * 1000).toISOString())
+      .is(stage, null);
+    return { error };
+  } catch (error) {
+    return { error: error instanceof Error ? error : new Error("Marketing visit stage failed.") };
+  }
+}
 
 export type MarketingEventType =
   | "link_generated"

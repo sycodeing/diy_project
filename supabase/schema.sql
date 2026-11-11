@@ -639,11 +639,20 @@ create table if not exists public.marketing_link_visits (
   referrer_group text not null default 'direct' check (referrer_group in ('direct', 'internal', 'search', 'x', 'other')),
   suspected_bot boolean not null default false,
   is_internal boolean not null default false,
-  visited_at timestamptz not null default now()
+  visited_at timestamptz not null default now(),
+  design_requested_at timestamptz,
+  browser_confirmed_at timestamptz,
+  first_interaction_at timestamptz
 );
 
 comment on table public.marketing_link_visits is
   'One privacy-minimized row per valid marketing-link redirect. Funnel milestones remain deduplicated in marketing_events.';
+comment on column public.marketing_link_visits.design_requested_at is
+  'The matching visit cookie reached a server render of /design. This is not proof of a human or a delivered page.';
+comment on column public.marketing_link_visits.browser_confirmed_at is
+  'The matching visit cookie reached /api/activity with landing_confirmed from page JavaScript.';
+comment on column public.marketing_link_visits.first_interaction_at is
+  'The matching visit cookie reached /api/activity with an explicit user interaction.';
 
 create table if not exists public.marketing_ingest_nonces (
   nonce text primary key,
@@ -761,6 +770,44 @@ $$;
 
 revoke all on function public.record_marketing_link_click(uuid, text, text, boolean, boolean) from public, anon, authenticated;
 grant execute on function public.record_marketing_link_click(uuid, text, text, boolean, boolean) to service_role;
+
+create or replace function public.record_marketing_link_click_v2(
+  p_visit_id uuid,
+  p_link_id uuid,
+  p_device_class text,
+  p_referrer_group text,
+  p_suspected_bot boolean,
+  p_is_internal boolean
+)
+returns void
+language plpgsql
+set search_path = ''
+as $$
+begin
+  update public.marketing_links
+  set click_count = click_count + 1,
+      first_clicked_at = coalesce(first_clicked_at, now()),
+      last_clicked_at = now()
+  where id = p_link_id and expires_at > now();
+
+  if found then
+    insert into public.marketing_link_visits (
+      id, marketing_link_id, device_class, referrer_group, suspected_bot, is_internal
+    ) values (
+      p_visit_id, p_link_id, p_device_class, p_referrer_group, p_suspected_bot, p_is_internal
+    );
+
+    insert into public.marketing_events (marketing_link_id, event_type, is_internal)
+    values (p_link_id, 'link_clicked', p_is_internal)
+    on conflict (marketing_link_id, event_type, is_internal) do nothing;
+  end if;
+end;
+$$;
+
+revoke all on function public.record_marketing_link_click_v2(uuid, uuid, text, text, boolean, boolean)
+  from public, anon, authenticated;
+grant execute on function public.record_marketing_link_click_v2(uuid, uuid, text, text, boolean, boolean)
+  to service_role;
 
 alter table public.marketing_links enable row level security;
 alter table public.marketing_events enable row level security;

@@ -1,8 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getAppUrl } from "@/lib/env";
 import {
   MARKETING_ATTRIBUTION_SECONDS,
   MARKETING_COOKIE_NAME,
+  MARKETING_VISIT_COOKIE_NAME,
+  MARKETING_VISIT_SECONDS,
   hashMarketingToken,
 } from "@/lib/marketing";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
@@ -29,13 +32,16 @@ export async function handleMarketingRedirect(request: Request, token: string, s
 
   const traffic = classifyTraffic(request.headers, new URL(request.url).origin);
   const isInternal = /(?:^|;\s*)diy_internal_test=1(?:;|$)/.test(request.headers.get("cookie") ?? "");
-  await supabase.rpc("record_marketing_link_click", {
+  const visitId = randomUUID();
+  const { error: visitError } = await supabase.rpc("record_marketing_link_click_v2", {
+    p_visit_id: visitId,
     p_link_id: link.id,
     p_device_class: traffic.deviceClass,
     p_referrer_group: traffic.referrerGroup,
     p_suspected_bot: traffic.suspectedBot,
     p_is_internal: isInternal,
   });
+  if (visitError) console.error("Marketing redirect visit could not be recorded", { error: visitError.message });
   const destination = new URL("/design", getAppUrl());
   if (link.source_image_url) destination.searchParams.set("image", link.source_image_url);
 
@@ -53,5 +59,13 @@ export async function handleMarketingRedirect(request: Request, token: string, s
     path: "/",
     expires,
   });
+  if (!visitError) response.cookies.set(MARKETING_VISIT_COOKIE_NAME, visitId, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: MARKETING_VISIT_SECONDS,
+  });
+  else response.cookies.set(MARKETING_VISIT_COOKIE_NAME, "", { path: "/", maxAge: 0 });
   return response;
 }

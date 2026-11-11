@@ -6,7 +6,7 @@ import {
   ACTIVITY_SESSION_SECONDS,
   recordCustomerActivity,
 } from "@/lib/customer-activity";
-import { getActiveMarketingLinkFromCookie, recordMarketingEvent } from "@/lib/marketing";
+import { getActiveMarketingLinkFromCookie, markMarketingVisitStage, recordMarketingEvent } from "@/lib/marketing";
 import { classifyTraffic } from "@/lib/traffic-classification";
 
 const clientEventTypes = [
@@ -68,6 +68,15 @@ export async function POST(request: Request) {
   if (error) {
     console.error("Customer activity could not be recorded", { error: error.message });
     return NextResponse.json({ error: "Could not record activity." }, { status: 503 });
+  }
+  if (marketingLink && route === "/design") {
+    const stage = eventType === "landing_confirmed" ? "browser_confirmed_at"
+      : eventType === "click" || eventType === "upload_started" || eventType === "crop_confirmed" || eventType === "delivery_opened"
+        ? "first_interaction_at" : null;
+    if (stage) {
+      const { error: visitError } = await markMarketingVisitStage(marketingLink.id, stage);
+      if (visitError) console.error("Marketing visit stage could not be recorded", { stage, error: visitError.message });
+    }
   }
   if (eventType === "landing_confirmed" && marketingLink) {
     const { error: marketingError } = await recordMarketingEvent(

@@ -28,7 +28,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Se
 
   let query = supabase
     .from("marketing_links")
-    .select("id,campaign,channel,variant,source_hash,click_count,created_at,expires_at,marketing_events(event_type,created_at,order_id,activity_session_id,is_internal),marketing_link_visits(id,visited_at,device_class,referrer_group,suspected_bot,is_internal),orders(id,order_number,amount_cents,currency,payment_status,paid_at)")
+    .select("id,campaign,channel,variant,source_hash,click_count,created_at,expires_at,marketing_events(event_type,created_at,order_id,activity_session_id,is_internal),marketing_link_visits(id,visited_at,device_class,referrer_group,suspected_bot,is_internal,design_requested_at,browser_confirmed_at,first_interaction_at),orders(id,order_number,amount_cents,currency,payment_status,paid_at)")
     .order("created_at", { ascending: false })
     .limit(1000);
   if (get("from")) query = query.gte("created_at", `${get("from")}T00:00:00.000Z`);
@@ -75,6 +75,9 @@ export default async function MarketingPage({ searchParams }: { searchParams: Se
           <Metric label="跳转请求（原始）" value={summary.totalClicks} />
           <Metric label="未标记异常的原始请求" value={summary.unflaggedRedirects} />
           <Metric label="已排除请求" value={summary.excludedRedirects} />
+          <Metric label="设计页服务端请求" value={summary.serverDesignRequests} />
+          <Metric label="本次访问浏览器确认" value={summary.visitBrowserConfirmations} />
+          <Metric label="本次访问首次操作" value={summary.visitInteractions} />
           <Metric label="浏览器确认落地" value={summary.stageCounts.landing_confirmed} />
           <Metric label="已支付订单" value={summary.paidOrders} />
           <Metric label="营业额" value={formatMoney(summary.revenue, "usd")} />
@@ -91,7 +94,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Se
             })}</tr></tbody>
           </table>
           <p className="text-sm text-muted">链接生成 → 支付完成：{summary.stageCounts.link_generated ? (summary.stageCounts.payment_completed / summary.stageCounts.link_generated * 100).toFixed(1) : "0.0"}%</p>
-          <p className="mt-1 text-xs text-muted">“收到跳转请求”只表示服务器执行了重定向；即使没有被规则标记异常，也不能视作真人。“浏览器确认落地”表示设计页 JavaScript 已运行，并从该阶段起排除内部测试。漏斗按每条营销链接的阶段去重。</p>
+          <p className="mt-1 text-xs text-muted">“设计页服务端请求”表示带同一次跳转标识的完整页面请求进入渲染流程，不证明页面已送达或真人访问；“本次访问浏览器确认”表示页面 JavaScript 回传；“首次操作”表示发生点击、上传等动作。这三个新指标按逐次跳转统计，排除内部测试；历史访问没有逐次关联数据。“浏览器确认落地”等漏斗阶段按链接去重。</p>
         </section>
 
         <section className="mt-6 overflow-x-auto rounded-lg border border-line bg-panel/80 p-4">
@@ -126,6 +129,17 @@ function buildTimeline(row: MarketingReportRow) {
     createdAt: visit.visited_at,
     orderId: null as string | null,
   }));
+  const visitStages = row.marketing_link_visits.flatMap((visit) => [
+    { time: visit.design_requested_at, label: "设计页服务端请求" },
+    { time: visit.browser_confirmed_at, label: "本次访问浏览器确认" },
+    { time: visit.first_interaction_at, label: "本次访问首次操作" },
+  ].filter((stage): stage is { time: string; label: string } => Boolean(stage.time))
+    .map((stage) => ({
+      key: `visit:${visit.id}:${stage.label}`,
+      label: `${visit.is_internal ? "内部测试 · " : ""}${stage.label}`,
+      createdAt: stage.time,
+      orderId: null as string | null,
+    })));
   const events = row.marketing_events
     .filter((event) => event.event_type !== "link_clicked" || !visits.length)
     .map((event) => ({
@@ -134,7 +148,7 @@ function buildTimeline(row: MarketingReportRow) {
       createdAt: event.created_at,
       orderId: event.order_id,
     }));
-  return [...events, ...visits].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  return [...events, ...visits, ...visitStages].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
 function FilterInput({ label, name, type = "text", value }: { label: string; name: string; type?: string; value: string }) {

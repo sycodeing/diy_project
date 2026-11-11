@@ -55,6 +55,9 @@ export type MarketingReportRow = {
     referrer_group: string;
     suspected_bot: boolean;
     is_internal: boolean;
+    design_requested_at: string | null;
+    browser_confirmed_at: string | null;
+    first_interaction_at: string | null;
   }>;
   orders: Array<{
     id: string;
@@ -80,6 +83,9 @@ export function summarizeMarketing(rows: MarketingReportRow[]) {
     totalClicks: rows.reduce((sum, row) => sum + row.click_count, 0),
     unflaggedRedirects: rows.flatMap((row) => row.marketing_link_visits).filter((visit) => !visit.suspected_bot && !visit.is_internal).length,
     excludedRedirects: rows.flatMap((row) => row.marketing_link_visits).filter((visit) => visit.suspected_bot || visit.is_internal).length,
+    serverDesignRequests: rows.flatMap((row) => row.marketing_link_visits).filter((visit) => visit.design_requested_at && !visit.is_internal).length,
+    visitBrowserConfirmations: rows.flatMap((row) => row.marketing_link_visits).filter((visit) => visit.browser_confirmed_at && !visit.is_internal).length,
+    visitInteractions: rows.flatMap((row) => row.marketing_link_visits).filter((visit) => visit.first_interaction_at && !visit.is_internal).length,
     paidOrders: paidOrders.length,
     revenue,
     averageOrderValue: paidOrders.length ? Math.round(revenue / paidOrders.length) : 0,

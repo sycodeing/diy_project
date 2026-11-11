@@ -652,6 +652,7 @@ function ContentControls({
             <input
               accept="image/png,image/jpeg,image/webp"
               className="sr-only"
+              data-analytics="photo-picker-opened"
               onChange={chooseImage}
               type="file"
             />
