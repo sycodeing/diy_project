@@ -343,6 +343,9 @@ async def _enrich_tweets_with_user_about(
     archive_path: Path,
 ) -> None:
     us_min_confidence = max(0, min(100, int(configuration.get("usMinConfidence", 70))))
+    cache = _load_about_cache(cache_path)
+    cache_accounts = cache.setdefault("accounts", {})
+    max_age = timedelta(days=settings.twitterapi_about_cache_days)
     tweets_by_handle: dict[str, list[dict[str, Any]]] = {}
     for tweet, segment_key in tweets_by_id.values():
         preliminary = candidate_from_tweet(
@@ -351,22 +354,21 @@ async def _enrich_tweets_with_user_about(
             us_required=True,
             us_min_confidence=us_min_confidence,
         )
-        if not preliminary or not _needs_about_lookup(preliminary, us_min_confidence):
+        if not preliminary:
             continue
         author = tweet.get("author") if isinstance(tweet.get("author"), dict) else {}
         handle = str(author.get("username") or "").strip().lstrip("@").casefold()
-        if handle:
+        cached = cache_accounts.get(handle)
+        has_fresh_cache = isinstance(cached, dict) and _about_cache_entry_is_fresh(cached, max_age)
+        if handle and (has_fresh_cache or _needs_about_lookup(preliminary, us_min_confidence)):
             tweets_by_handle.setdefault(handle, []).append(tweet)
 
     metrics.about_candidates = len(tweets_by_handle)
     if not tweets_by_handle:
         return
 
-    cache = _load_about_cache(cache_path)
-    cache_accounts = cache.setdefault("accounts", {})
     archive_entries: list[dict[str, Any]] = []
     archive["user_about_enrichment"] = archive_entries
-    max_age = timedelta(days=settings.twitterapi_about_cache_days)
 
     for handle, tweets in sorted(tweets_by_handle.items()):
         cached = cache_accounts.get(handle)

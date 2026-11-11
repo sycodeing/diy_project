@@ -372,6 +372,43 @@ def test_collection_rejects_confirmed_non_us_about_location(tmp_path: Path) -> N
     assert metrics["about_non_us_accounts"] == 1
 
 
+def test_collection_reuses_cached_origin_to_flag_profile_location_conflict(tmp_path: Path) -> None:
+    item = _tweet()
+    item["author"] = {**item["author"], "location": "Austin, TX"}
+    item["extendedEntities"] = {
+        "media": [{"type": "photo", "media_url_https": "https://img.example/pet.jpg"}],
+    }
+    cache_path = tmp_path / "user-about-cache.json"
+    cache_path.write_text(json.dumps({"version": 1, "accounts": {
+        "petperson": {
+            "account_based_in": "Canada",
+            "location_accurate": True,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        },
+    }}), encoding="utf-8")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path != "/twitter/user_about"
+        return httpx.Response(200, json={"tweets": [item], "has_next_page": False, "next_cursor": ""})
+
+    async def run():
+        settings = Settings(twitterapi_api_key="secret", twitterapi_base_url="https://api.twitterapi.io")
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await collect_twitterapi_search(
+                client, settings,
+                {**CONFIG, "segments": ["new_adoption"], "resultLimit": 1},
+                state_path=tmp_path / "watermarks.json",
+                about_cache_path=cache_path,
+            )
+
+    _, candidates, metrics = asyncio.run(run())
+    assert len(candidates) == 1
+    assert candidates[0]["status"] == "location_review"
+    assert candidates[0]["us_evidence"] == "location_conflict:profile_us_account_non_us"
+    assert metrics["about_cache_hits"] == 1
+    assert metrics["about_api_calls"] == 0
+
+
 def test_credit_exhaustion_is_terminal(tmp_path: Path) -> None:
     calls = 0
 
