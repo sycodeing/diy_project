@@ -4,7 +4,7 @@ export const X_REPLY_STATUS_LABELS: Record<string, string> = {
   claimed: "本机处理中",
   sent: "发送成功",
   failed: "发送失败",
-  uncertain: "结果不确定，禁止重试",
+  uncertain: "按未发送计 · 待核对，禁止自动重试",
   rejected: "已拒绝",
 };
 
@@ -122,7 +122,7 @@ export type XReplyBatchSummary = {
 
 const X_REPLY_TERMINAL_STATUSES = new Set(["sent", "failed", "uncertain", "rejected"]);
 
-export function summarizeLatestXReplyBatch(jobs: Array<Pick<XReplyJob, "approved_at" | "completed_at" | "status">>): XReplyBatchSummary | null {
+export function summarizeLatestXReplyBatch(jobs: Array<Pick<XReplyJob, "approved_at" | "completed_at" | "status" | "result_url">>): XReplyBatchSummary | null {
   const approvedAt = jobs.reduce<string | null>((latest, job) => {
     if (!job.approved_at) return latest;
     return !latest || job.approved_at > latest ? job.approved_at : latest;
@@ -130,9 +130,9 @@ export function summarizeLatestXReplyBatch(jobs: Array<Pick<XReplyJob, "approved
   if (!approvedAt) return null;
 
   const batch = jobs.filter((job) => job.approved_at === approvedAt);
-  const sent = batch.filter((job) => job.status === "sent").length;
+  const sent = batch.filter((job) => job.status === "sent" && Boolean(job.result_url)).length;
   const failed = batch.filter((job) => job.status === "failed").length;
-  const uncertain = batch.filter((job) => job.status === "uncertain").length;
+  const uncertain = batch.filter((job) => job.status === "uncertain" || (job.status === "sent" && !job.result_url)).length;
   const completed = batch.filter((job) => X_REPLY_TERMINAL_STATUSES.has(job.status)).length;
   const active = batch.filter((job) => ["queued", "claimed"].includes(job.status)).length;
   const completedAt = completed === batch.length

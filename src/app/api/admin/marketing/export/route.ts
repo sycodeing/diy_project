@@ -16,14 +16,14 @@ export async function GET(request: Request) {
   const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const header = ["链接ID", "创建时间", "营销活动", "渠道", "版本", "来源哈希", "跳转请求（原始）", "未标记异常原始请求", "设计页服务端请求", "本次访问浏览器确认", "本次访问首次操作", "浏览器确认落地（去重链接）", "逐次跳转时间", "去重漏斗阶段", "支付订单数", "营业额（美分）"];
+  const header = ["链接ID", "创建时间", "营销活动", "渠道", "版本", "来源哈希", "跳转请求（原始）", "未标记异常原始请求", "设计页服务端请求", "非已知机器人浏览器回传", "非已知机器人首次操作", "浏览器确认落地（历史链接数）", "逐次跳转时间", "去重漏斗阶段", "支付订单数", "营业额（美分）"];
   const lines = [header, ...(data ?? []).map((row) => {
     const orders = row.orders ?? [];
     const paid = orders.filter((order) => order.payment_status === "paid");
     const visits = row.marketing_link_visits ?? [];
     const qualifiedVisits = visits.filter((visit) => !visit.suspected_bot && !visit.is_internal);
     const reportableEvents = (row.marketing_events ?? []).filter((event) => ["link_generated", "link_clicked"].includes(event.event_type) || !event.is_internal);
-    return [row.id, row.created_at, row.campaign, marketingChannelLabel(row.channel), row.variant, row.source_hash, row.click_count, qualifiedVisits.length, visits.filter((visit) => visit.design_requested_at && !visit.is_internal).length, visits.filter((visit) => visit.browser_confirmed_at && !visit.is_internal).length, visits.filter((visit) => visit.first_interaction_at && !visit.is_internal).length, reportableEvents.some((event) => event.event_type === "landing_confirmed") ? 1 : 0, visits.map((visit) => visit.visited_at).join("|"), reportableEvents.map((event) => marketingStageLabel(event.event_type)).join("|"), paid.length, paid.reduce((sum, order) => sum + order.amount_cents, 0)];
+    return [row.id, row.created_at, row.campaign, marketingChannelLabel(row.channel), row.variant, row.source_hash, row.click_count, qualifiedVisits.length, visits.filter((visit) => visit.design_requested_at && !visit.is_internal).length, qualifiedVisits.filter((visit) => visit.browser_confirmed_at).length, qualifiedVisits.filter((visit) => visit.first_interaction_at).length, reportableEvents.some((event) => event.event_type === "landing_confirmed") ? 1 : 0, visits.map((visit) => visit.visited_at).join("|"), reportableEvents.map((event) => marketingStageLabel(event.event_type)).join("|"), paid.length, paid.reduce((sum, order) => sum + order.amount_cents, 0)];
   })].map((row) => row.map(csvCell).join(",")).join("\r\n");
   return new NextResponse(`\uFEFF${lines}`, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="marketing-${new Date().toISOString().slice(0, 10)}.csv"` } });
 }

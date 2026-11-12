@@ -6,7 +6,7 @@ import {
   ACTIVITY_SESSION_SECONDS,
   recordCustomerActivity,
 } from "@/lib/customer-activity";
-import { getActiveMarketingLinkFromCookie, markMarketingVisitStage, recordMarketingEvent } from "@/lib/marketing";
+import { getActiveMarketingLinkFromCookie, getRecentMarketingVisit, markMarketingVisitStage, markMarketingVisitStageById, recordMarketingEvent } from "@/lib/marketing";
 import { classifyTraffic } from "@/lib/traffic-classification";
 
 const clientEventTypes = [
@@ -23,6 +23,7 @@ const schema = z.object({
   target: z.string().regex(/^[a-z0-9:_-]{1,64}$/i).optional(),
   durationSeconds: z.number().int().min(0).max(3600).optional(),
   referrerGroup: z.enum(["direct", "internal", "search", "x", "other"]).optional(),
+  marketingVisitId: z.string().uuid().optional(),
 });
 
 export async function POST(request: Request) {
@@ -49,10 +50,12 @@ export async function POST(request: Request) {
   let decoded = "";
   try { decoded = existing ? decodeURIComponent(existing) : ""; } catch { decoded = ""; }
   const sessionId = /^[0-9a-f-]{36}$/i.test(decoded) ? decoded : randomUUID();
-  const { eventId, eventType, route, target, durationSeconds, referrerGroup } = parsed.data;
+  const { eventId, eventType, route, target, durationSeconds, referrerGroup, marketingVisitId } = parsed.data;
   const traffic = classifyTraffic(request.headers, new URL(request.url).origin);
-  const isInternal = /(?:^|;\s*)diy_internal_test=1(?:;|$)/.test(request.headers.get("cookie") ?? "");
+  const marketingVisit = route === "/design" ? await getRecentMarketingVisit(marketingVisitId) : null;
+  const isInternal = marketingVisit?.is_internal || /(?:^|;\s*)diy_internal_test=1(?:;|$)/.test(request.headers.get("cookie") ?? "");
   const marketingLink = await getActiveMarketingLinkFromCookie();
+  const marketingLinkId = marketingVisit?.marketing_link_id ?? marketingLink?.id ?? null;
   const { error } = await recordCustomerActivity({
     sessionId,
     eventType,
@@ -60,8 +63,9 @@ export async function POST(request: Request) {
     target: target ?? (eventType === "click" ? "button" : null),
     durationSeconds: eventType === "page_exit" ? durationSeconds ?? 0 : 0,
     eventKey: `client:${sessionId}:${eventId}`,
-    marketingLinkId: marketingLink?.id ?? null,
+    marketingLinkId,
     ...traffic,
+    suspectedBot: traffic.suspectedBot || Boolean(marketingVisit?.suspected_bot),
     referrerGroup: referrerGroup ?? traffic.referrerGroup,
     isInternal,
   });
@@ -69,18 +73,20 @@ export async function POST(request: Request) {
     console.error("Customer activity could not be recorded", { error: error.message });
     return NextResponse.json({ error: "Could not record activity." }, { status: 503 });
   }
-  if (marketingLink && route === "/design") {
+  if (marketingLinkId && route === "/design") {
     const stage = eventType === "landing_confirmed" ? "browser_confirmed_at"
       : eventType === "click" || eventType === "upload_started" || eventType === "crop_confirmed" || eventType === "delivery_opened"
         ? "first_interaction_at" : null;
     if (stage) {
-      const { error: visitError } = await markMarketingVisitStage(marketingLink.id, stage);
+      const { error: visitError } = marketingVisit
+        ? await markMarketingVisitStageById(marketingVisit.id, marketingLinkId, stage)
+        : await markMarketingVisitStage(marketingLinkId, stage);
       if (visitError) console.error("Marketing visit stage could not be recorded", { stage, error: visitError.message });
     }
   }
-  if (eventType === "landing_confirmed" && marketingLink) {
+  if (eventType === "landing_confirmed" && marketingLinkId && !traffic.suspectedBot && !marketingVisit?.suspected_bot) {
     const { error: marketingError } = await recordMarketingEvent(
-      marketingLink.id,
+      marketingLinkId,
       "landing_confirmed",
       {},
       undefined,

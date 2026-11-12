@@ -6,6 +6,7 @@ import {
   MARKETING_COOKIE_NAME,
   MARKETING_VISIT_COOKIE_NAME,
   MARKETING_VISIT_SECONDS,
+  MARKETING_VISIT_PARAM,
   hashMarketingToken,
 } from "@/lib/marketing";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
@@ -44,6 +45,7 @@ export async function handleMarketingRedirect(request: Request, token: string, s
   if (visitError) console.error("Marketing redirect visit could not be recorded", { error: visitError.message });
   const destination = new URL("/design", getAppUrl());
   if (link.source_image_url) destination.searchParams.set("image", link.source_image_url);
+  if (!visitError) destination.searchParams.set(MARKETING_VISIT_PARAM, visitId);
 
   const expires = new Date(
     Math.min(

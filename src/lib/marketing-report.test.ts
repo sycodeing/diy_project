@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { summarizeMarketing, type MarketingReportRow } from "./marketing-report";
+import { summarizeMarketing, type MarketingReportRow } from "./marketing-report.ts";
 
 test("keeps redirect requests separate from unflagged requests", () => {
   const row: MarketingReportRow = {
@@ -36,4 +36,12 @@ test("keeps redirect requests separate from unflagged requests", () => {
   assert.equal(summary.stageCounts.link_clicked, 1);
   assert.equal(summary.stageCounts.landing_confirmed, 1);
   assert.equal(summary.stageCounts.preview_ready, 0);
+});
+
+test("known-bot browser callbacks are not counted as qualified visits", () => {
+  const visit = { id: "visit-bot", visited_at: "2026-10-23T00:01:00.000Z", device_class: "desktop", referrer_group: "direct", suspected_bot: true, is_internal: false, design_requested_at: "2026-10-23T00:01:01.000Z", browser_confirmed_at: "2026-10-23T00:01:02.000Z", first_interaction_at: "2026-10-23T00:01:03.000Z" };
+  const summary = summarizeMarketing([{ id: "link-bot", campaign: "test", channel: "public_reply", variant: "a", source_hash: "a".repeat(64), click_count: 1, created_at: visit.visited_at, expires_at: "2026-10-30T00:00:00.000Z", marketing_events: [], marketing_link_visits: [visit], orders: [] }]);
+  assert.equal(summary.serverDesignRequests, 1);
+  assert.equal(summary.visitBrowserConfirmations, 0);
+  assert.equal(summary.visitInteractions, 0);
 });

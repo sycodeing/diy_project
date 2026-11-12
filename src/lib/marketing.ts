@@ -10,19 +10,38 @@ export const MARKETING_ATTRIBUTION_SECONDS = 7 * 24 * 60 * 60;
 
 export type MarketingVisitStage = "design_requested_at" | "browser_confirmed_at" | "first_interaction_at";
 
+export const MARKETING_VISIT_PARAM = "mv";
+
+export async function getRecentMarketingVisit(visitId: string | undefined) {
+  if (!visitId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(visitId)) return null;
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) return null;
+  const { data, error } = await supabase.from("marketing_link_visits")
+    .select("id,marketing_link_id,is_internal,suspected_bot")
+    .eq("id", visitId)
+    .gte("visited_at", new Date(Date.now() - MARKETING_VISIT_SECONDS * 1000).toISOString())
+    .maybeSingle();
+  if (error) console.error("Marketing visit lookup failed", { error: error.message });
+  return data ?? null;
+}
+
+export async function markMarketingVisitStageById(visitId: string, marketingLinkId: string, stage: MarketingVisitStage) {
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) return { error: new Error("Marketing storage is not configured.") };
+  const { error } = await supabase.from("marketing_link_visits")
+    .update({ [stage]: new Date().toISOString() })
+    .eq("id", visitId)
+    .eq("marketing_link_id", marketingLinkId)
+    .gte("visited_at", new Date(Date.now() - MARKETING_VISIT_SECONDS * 1000).toISOString())
+    .is(stage, null);
+  return { error };
+}
+
 export async function markMarketingVisitStage(marketingLinkId: string, stage: MarketingVisitStage) {
   const visitId = (await cookies()).get(MARKETING_VISIT_COOKIE_NAME)?.value;
   if (!visitId || !/^[0-9a-f-]{36}$/i.test(visitId)) return { error: null };
-  const supabase = getSupabaseServiceClient();
-  if (!supabase) return { error: new Error("Marketing storage is not configured.") };
   try {
-    const { error } = await supabase.from("marketing_link_visits")
-      .update({ [stage]: new Date().toISOString() })
-      .eq("id", visitId)
-      .eq("marketing_link_id", marketingLinkId)
-      .gte("visited_at", new Date(Date.now() - MARKETING_VISIT_SECONDS * 1000).toISOString())
-      .is(stage, null);
-    return { error };
+    return await markMarketingVisitStageById(visitId, marketingLinkId, stage);
   } catch (error) {
     return { error: error instanceof Error ? error : new Error("Marketing visit stage failed.") };
   }

@@ -3,7 +3,8 @@ import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { DiyDesigner } from "@/components/diy-designer";
 import { getPayPalConfig, getSupabaseBrowserConfig } from "@/lib/env";
-import { getMarketingPreviewUrls, getActiveMarketingLinkFromCookie, markMarketingVisitStage } from "@/lib/marketing";
+import { getMarketingPreviewUrls, getActiveMarketingLinkFromCookie, getRecentMarketingVisit, markMarketingVisitStage, markMarketingVisitStageById, MARKETING_VISIT_PARAM } from "@/lib/marketing";
+import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { DEFAULT_PRODUCT_CONFIG, type DesignerProductConfig } from "@/lib/product-config";
 import type { DesignPayload, ShippingAddress } from "@/lib/types";
@@ -17,6 +18,7 @@ const ALLOWED_PARAMS = new Set([
   "checkout",
   "product",
   "internal_test",
+  MARKETING_VISIT_PARAM,
 ]);
 
 export default async function DesignPage({
@@ -63,20 +65,32 @@ export default async function DesignPage({
         .maybeSingle()
     : { data: null };
   const defaultShippingAddress = toShippingAddress(latestOrder?.shipping);
-  const marketingLink = await getActiveMarketingLinkFromCookie();
+  const visitId = typeof initialParams[MARKETING_VISIT_PARAM] === "string" ? initialParams[MARKETING_VISIT_PARAM] : undefined;
+  const marketingVisit = await getRecentMarketingVisit(visitId);
+  const cookieMarketingLink = await getActiveMarketingLinkFromCookie();
+  const { data: visitMarketingLink } = marketingVisit
+    ? await getSupabaseServiceClient()!.from("marketing_links")
+        .select("id,expires_at,source_hash,source_image_url")
+        .eq("id", marketingVisit.marketing_link_id)
+        .gt("expires_at", new Date().toISOString())
+        .maybeSingle()
+    : { data: null };
+  const marketingLink = visitMarketingLink ?? cookieMarketingLink;
   const linkedImage = initialParams.image ?? initialParams.imageUrl ?? initialParams.img;
   const cachedMockupPreviews = marketingLink && linkedImage === marketingLink.source_image_url
     ? await getMarketingPreviewUrls(marketingLink.source_hash, marketingLink.expires_at)
     : [];
 
-  if (marketingLink) {
+  if (marketingVisit || marketingLink) {
     const requestHeaders = await headers();
     const destination = requestHeaders.get("sec-fetch-dest");
     const isPrefetch = requestHeaders.has("next-router-prefetch")
       || requestHeaders.get("purpose")?.includes("prefetch");
     const isRsc = requestHeaders.has("rsc");
     if (!isPrefetch && !isRsc && (destination === "document" || (!destination && requestHeaders.get("accept")?.includes("text/html")))) {
-      const { error } = await markMarketingVisitStage(marketingLink.id, "design_requested_at");
+      const { error } = marketingVisit
+        ? await markMarketingVisitStageById(marketingVisit.id, marketingVisit.marketing_link_id, "design_requested_at")
+        : await markMarketingVisitStage(marketingLink!.id, "design_requested_at");
       if (error) console.error("Marketing design request could not be recorded", { error: error.message });
     }
   }
@@ -89,7 +103,7 @@ export default async function DesignPage({
         autoCheckout={initialParams.checkout === "1"}
         cachedMockupPreviews={cachedMockupPreviews}
         cachedMockupSourceImageUrl={cachedMockupPreviews.length ? linkedImage : null}
-        initialParams={initialParams}
+        initialParams={Object.fromEntries(Object.entries(initialParams).filter(([key]) => key !== MARKETING_VISIT_PARAM))}
         isAuthenticated={Boolean(user)}
         userId={user?.id ?? null}
         defaultShippingAddress={defaultShippingAddress}

@@ -31,6 +31,9 @@ export function trackCustomerActivity(
     target: details.target,
     durationSeconds: details.durationSeconds,
     referrerGroup: classifyReferrer(document.referrer, window.location.origin),
+    marketingVisitId: details.route === "/design" || (!details.route && window.location.pathname === "/design")
+      ? new URLSearchParams(window.location.search).get("mv") ?? undefined
+      : undefined,
   };
   const body = JSON.stringify(event);
   if (keepalive && navigator.sendBeacon) {

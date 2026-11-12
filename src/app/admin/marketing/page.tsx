@@ -76,9 +76,9 @@ export default async function MarketingPage({ searchParams }: { searchParams: Se
           <Metric label="未标记异常的原始请求" value={summary.unflaggedRedirects} />
           <Metric label="已排除请求" value={summary.excludedRedirects} />
           <Metric label="设计页服务端请求" value={summary.serverDesignRequests} />
-          <Metric label="本次访问浏览器确认" value={summary.visitBrowserConfirmations} />
-          <Metric label="本次访问首次操作" value={summary.visitInteractions} />
-          <Metric label="浏览器确认落地" value={summary.stageCounts.landing_confirmed} />
+          <Metric label="非已知机器人浏览器回传" value={summary.visitBrowserConfirmations} />
+          <Metric label="非已知机器人首次操作" value={summary.visitInteractions} />
+          <Metric label="浏览器确认落地（历史链接数）" value={summary.stageCounts.landing_confirmed} />
           <Metric label="已支付订单" value={summary.paidOrders} />
           <Metric label="营业额" value={formatMoney(summary.revenue, "usd")} />
           <Metric label="平均订单金额" value={formatMoney(summary.averageOrderValue, "usd")} />
@@ -94,7 +94,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Se
             })}</tr></tbody>
           </table>
           <p className="text-sm text-muted">链接生成 → 支付完成：{summary.stageCounts.link_generated ? (summary.stageCounts.payment_completed / summary.stageCounts.link_generated * 100).toFixed(1) : "0.0"}%</p>
-          <p className="mt-1 text-xs text-muted">“设计页服务端请求”表示带同一次跳转标识的完整页面请求进入渲染流程，不证明页面已送达或真人访问；“本次访问浏览器确认”表示页面 JavaScript 回传；“首次操作”表示发生点击、上传等动作。这三个新指标按逐次跳转统计，排除内部测试；历史访问没有逐次关联数据。“浏览器确认落地”等漏斗阶段按链接去重。</p>
+          <p className="mt-1 text-xs text-muted">“设计页服务端请求”表示带同一次跳转标识的页面请求进入渲染流程，即使浏览器未保留 Cookie 也可归因；不证明页面送达或真人访问。浏览器回传和首次操作按逐次跳转统计，排除内部测试与已识别机器人；仍可能含伪装的自动访问。“浏览器确认落地（历史链接数）”为旧口径，不用于判断真人点击。不确定发送不计入确认发送数。</p>
         </section>
 
         <section className="mt-6 overflow-x-auto rounded-lg border border-line bg-panel/80 p-4">
