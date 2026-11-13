@@ -13,6 +13,7 @@ import {
   getXLeadTargetingChecks,
   getXLeadFunnelStatus,
   getXLeadPriorityScore,
+  getXLeadPurchaseIntent,
   getXLeadRejectionNote,
   getXLeadRejectionReason,
   sortXLeadsByPriority,
@@ -54,7 +55,7 @@ export type XLeadAccountOption = {
 export default async function XLeadsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ conclusion?: string; segment?: string; review?: string; reason?: string; notice?: string; page?: string }>;
+  searchParams: Promise<{ mode?: string; conclusion?: string; segment?: string; review?: string; reason?: string; notice?: string; page?: string }>;
 }) {
   await requireAdmin("/admin/x-leads");
   const supabase = getSupabaseServiceClient();
@@ -70,6 +71,8 @@ export default async function XLeadsPage({
     .order("id", { ascending: false })
     .limit(1000);
   if (filters.segment) query = query.eq("segment", filters.segment);
+  if (filters.mode === "purchase_intent") query = query.eq("targeting_data->>discovery_mode", "purchase_intent");
+  if (filters.mode === "legacy") query = query.or("targeting_data->>discovery_mode.is.null,targeting_data->>legacy_eligible.eq.true");
   if (filters.review === "rejected" || filters.reason) query = query.eq("selection_status", "rejected");
   else if (filters.review !== "all") query = query.neq("selection_status", "rejected");
   const [{ data, error }, { data: activeAccountRows, error: accountsError }, { data: searchConfig }, { data: rejectedRows }] = await Promise.all([
@@ -102,12 +105,16 @@ export default async function XLeadsPage({
   const usMinConfidence = searchConfig?.us_min_confidence ?? 70;
   const conclusionFilter = filters.conclusion || (filters.review === "rejected" || filters.review === "all" || filters.reason ? "all" : "");
   const filteredLeads = filterXLeadsForQueue(reasonFilteredLeads, conclusionFilter, usMinConfidence);
-  const sortedLeads = sortXLeadsByPriority(filteredLeads, usMinConfidence);
+  const priorityLeads = sortXLeadsByPriority(filteredLeads, usMinConfidence);
+  const sortedLeads = filters.mode === "purchase_intent"
+    ? priorityLeads.toSorted((a, b) => (getXLeadPurchaseIntent(b)?.score ?? 0) - (getXLeadPurchaseIntent(a)?.score ?? 0))
+    : priorityLeads;
   const requestedPage = Number.parseInt(filters.page ?? "1", 10);
   const totalPages = Math.max(1, Math.ceil(sortedLeads.length / X_LEADS_PAGE_SIZE));
   const currentPage = Math.min(Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1, totalPages);
   const leads = sortedLeads.slice((currentPage - 1) * X_LEADS_PAGE_SIZE, currentPage * X_LEADS_PAGE_SIZE);
   const paginationFilters = {
+    mode: filters.mode,
     conclusion: filters.conclusion,
     segment: filters.segment,
     review: filters.review,
@@ -156,6 +163,7 @@ export default async function XLeadsPage({
         </section> : null}
 
         <form className="mt-6 grid gap-3 rounded-xl border border-line bg-panel/90 p-4 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto]">
+          <SelectFilter label="筛选模式" name="mode" value={filters.mode ?? ""} options={[["", "全部模式"], ["legacy", "原模式：照片 / 场景"], ["purchase_intent", "新模式：购买需求验证"]]} />
           <SelectFilter label="参考结论" name="conclusion" value={conclusionFilter} options={[["", "待处理（含地点待核）"], ...Object.entries(X_LEAD_CONCLUSION_LABELS), ["all", "全部结论"]]} />
           <SelectFilter label="目标人群" name="segment" value={filters.segment ?? ""} options={[["", "全部人群"], ...Object.entries(X_LEAD_SEGMENT_LABELS)]} />
           <SelectFilter label="人工筛选" name="review" value={filters.review ?? ""} options={[["", "未标记不合适"], ["rejected", "只看已标记不合适"], ["all", "全部人工状态"]]} />
@@ -174,6 +182,7 @@ export default async function XLeadsPage({
         <div className="mt-6 space-y-5">
           {leads.map((lead) => {
             const targetingChecks = getXLeadTargetingChecks(lead, usMinConfidence);
+            const purchaseIntent = getXLeadPurchaseIntent(lead);
             const reviewEvidence = getXLeadReviewEvidence(lead);
             const failedChecks = targetingChecks.filter((check) => !check.passed);
             const conclusion = getXLeadReferenceConclusion(lead, usMinConfidence);
@@ -214,6 +223,11 @@ export default async function XLeadsPage({
                     <Metric label="候选优先分" value={`${getXLeadPriorityScore(lead)} 分`} />
                   </dl>
                   <QualificationSummary checks={targetingChecks} reviewEvidence={reviewEvidence} locationEvidence={describeUsEvidence(lead.us_evidence)} />
+                  {purchaseIntent ? <div className="mt-3 rounded-lg border border-line p-3 text-sm">
+                    <p className="font-bold">{purchaseIntent.label} · 规则排序 {purchaseIntent.score} 分</p>
+                    <p className="mt-1 whitespace-pre-wrap">{purchaseIntent.evidence}</p>
+                    <p className="mt-1 text-xs text-muted">不是购买概率。请核对原帖语境和交期；尚未经人工确认，不代表同意被联系。</p>
+                  </div> : null}
                 </div>
 
                 <aside className="space-y-3 rounded-lg border border-line bg-white p-3">

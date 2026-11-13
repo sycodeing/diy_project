@@ -107,6 +107,17 @@ export function buildXLeadDiscoveryUpsertRow({
   const preserveHumanDecision = Boolean(existing && HUMAN_X_LEAD_STATUSES.has(existing.selection_status));
   const candidateMediaUrls = uniqueMediaUrls(candidate.mediaUrls, candidate.mediaUrl);
   const mediaUrls = uniqueMediaUrls(existing?.media_urls, ...candidateMediaUrls);
+  // A legacy rediscovery must not erase a demand signal for the same post.
+  // Preserve human-reviewed metadata unchanged; never revive rejected accounts.
+  const previousIntent = existing?.targeting_data?.purchase_intent;
+  const isDemand = candidate.targetingData.discovery_mode === "purchase_intent";
+  const mergedTargeting = {
+    ...existing?.targeting_data,
+    ...candidate.targetingData,
+    ...(previousIntent && !isDemand ? { purchase_intent: previousIntent, discovery_mode: "purchase_intent" } : {}),
+    ...(!isDemand || (existing && (!existing.targeting_data?.discovery_mode || existing.targeting_data?.legacy_eligible === true))
+      ? { legacy_eligible: true } : {}),
+  };
   return {
     source_job_id: existing?.source_job_id ?? jobId,
     post_id: candidate.postId,
@@ -131,7 +142,7 @@ export function buildXLeadDiscoveryUpsertRow({
     repost_count: candidate.repostCount,
     view_count: candidate.viewCount,
     followers_count: candidate.followersCount,
-    targeting_data: preserveHumanDecision ? (existing!.targeting_data ?? candidate.targetingData) : candidate.targetingData,
+    targeting_data: preserveHumanDecision ? (existing!.targeting_data ?? candidate.targetingData) : mergedTargeting,
     consent_copy: candidate.consentCopy ?? null,
     public_copy: candidate.publicCopy ?? null,
     direct_message_copy: candidate.directMessageCopy ?? null,

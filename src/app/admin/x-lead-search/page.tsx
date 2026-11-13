@@ -6,12 +6,14 @@ import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { formatAdminDate, getServerNowMillis } from "@/lib/utils";
 import {
   X_JOB_STATUS_LABELS,
+  X_DEMAND_SEGMENTS,
+  X_DEMAND_SEGMENT_LABELS,
   X_LEAD_SEGMENTS,
   X_LEAD_SEGMENT_LABELS,
   X_SEARCH_INTERVAL_LABELS,
   X_SEARCH_PRODUCT_LABELS,
 } from "@/lib/x-lead";
-import { saveXLeadSearchConfiguration } from "./actions";
+import { runDemandLeadSearch, saveXLeadSearchConfiguration } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +40,7 @@ type SearchJob = {
   worker_id: string | null;
   error_message: string | null;
   metrics: Record<string, unknown> | null;
+  configuration: { discoveryMode?: string } | null;
   started_at: string | null;
   finished_at: string | null;
   created_at: string;
@@ -78,7 +81,7 @@ export default async function XLeadSearchPage({
 
   const [{ data: configData }, { data: jobsData }, { data: workersData }] = await Promise.all([
     supabase.from("x_lead_search_configs").select("*").eq("config_key", "default").maybeSingle(),
-    supabase.from("x_lead_search_jobs").select("id,trigger_type,status,received_count,inserted_count,worker_id,error_message,metrics,started_at,finished_at,created_at").order("created_at", { ascending: false }).limit(20),
+    supabase.from("x_lead_search_jobs").select("id,trigger_type,status,received_count,inserted_count,worker_id,error_message,metrics,configuration,started_at,finished_at,created_at").order("created_at", { ascending: false }).limit(20),
     supabase.from("x_lead_workers").select("worker_id,status,cookie_configured,last_error,last_seen_at").order("last_seen_at", { ascending: false }).limit(1),
   ]);
   const config = (configData ?? defaults) as SearchConfig;
@@ -86,7 +89,7 @@ export default async function XLeadSearchPage({
   const worker = ((workersData ?? [])[0] ?? null) as Worker | null;
   const workerOnline = Boolean(worker && getServerNowMillis() - new Date(worker.last_seen_at).getTime() < 120_000);
   const { notice } = await searchParams;
-  const noticeText = notice === "queued"
+  const noticeText = notice === "demand-queued" ? "需求验证任务已入队。不会修改旧筛选配置，也不会发送消息。" : notice === "queued"
     ? "筛选任务已加入队列，本机执行器会自动领取。"
     : notice === "saved"
       ? "筛选与定时配置已保存。"
@@ -107,9 +110,30 @@ export default async function XLeadSearchPage({
 
         {noticeText ? <p className="mt-5 rounded-lg border border-line bg-panel p-3 text-sm font-bold">{noticeText}</p> : null}
 
+        <section className="mt-6 rounded-xl border border-line bg-panel/90 p-5">
+          <h2 className="text-xl font-black">新模式：购买需求验证</h2>
+          <p className="mt-2 text-sm text-muted">寻找正在询问定制商品或表达宠物装饰兴趣的人。保留美国位置、本人猫狗实拍、非广告和历史去重门槛。意向信号不代表购买承诺或联系许可。</p>
+          <form action={runDemandLeadSearch} className="mt-4 space-y-4">
+            <fieldset className="space-y-2"><legend className="text-sm font-bold">独立查询组</legend>
+              {X_DEMAND_SEGMENTS.map((segment) => <label className="flex items-center gap-2 text-sm" key={segment}>
+                <input name="segments" type="checkbox" value={segment} defaultChecked={segment !== "demand_decor"} />{X_DEMAND_SEGMENT_LABELS[segment]}
+              </label>)}
+            </fieldset>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <NumberField label="最多获取帖子（不是保证合格人数）" name="resultLimit" value={60} min={1} max={100} />
+              <SelectField label="需求发布时间" name="lookbackDays" value="7" options={[["3", "最近 3 天"], ["7", "最近 7 天"], ["14", "最近 14 天"]]} />
+            </div>
+            <p className="text-xs text-muted">仅启动一次有上限的任务，参数随任务保存；不自动定时、不补量凑数。需本机 worker 1.7.0 或更新版本。两套模式共存，由同一执行器依次处理。</p>
+            <div className="flex flex-wrap gap-3">
+              <button className="focus-ring rounded-lg bg-accent px-4 py-3 font-bold text-accent-ink" type="submit">启动需求验证筛选</button>
+              <Link className="focus-ring rounded-lg border border-line px-4 py-3 font-bold" href="/admin/x-leads?mode=purchase_intent">查看需求验证候选</Link>
+            </div>
+          </form>
+        </section>
+
         <section className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
           <form action={saveXLeadSearchConfiguration} className="rounded-xl border border-line bg-panel/90 p-5">
-            <h2 className="text-xl font-black">筛选条件</h2>
+            <h2 className="text-xl font-black">原模式：宠物照片 / 场景筛选</h2>
             <div className="mt-5 grid gap-5 sm:grid-cols-2">
               <fieldset>
                 <legend className="text-sm font-black">目标人群</legend>
@@ -172,7 +196,7 @@ export default async function XLeadSearchPage({
             <thead className="text-muted"><tr><th className="pb-3">创建时间</th><th>触发方式</th><th>状态</th><th>获取帖子</th><th>发现漏斗</th><th>新增用户</th><th>执行器</th><th>结果</th></tr></thead>
             <tbody>{jobs.map((job) => <tr className="border-t border-line" key={job.id}>
               <td className="py-3">{formatAdminDate(job.created_at)}</td>
-              <td>{job.trigger_type === "manual" ? "手动" : "定时"}</td>
+              <td>{job.configuration?.discoveryMode === "purchase_intent" ? "需求验证 · " : "原模式 · "}{job.trigger_type === "manual" ? "手动" : "定时"}</td>
               <td className="font-bold">{X_JOB_STATUS_LABELS[job.status] ?? job.status}</td>
               <td>{job.received_count}</td><td className="min-w-52 text-xs leading-5 text-muted">{formatDiscoveryMetrics(job.metrics)}</td><td>{job.inserted_count}</td><td>{job.worker_id ?? "—"}</td>
               <td className="max-w-80 text-muted">{job.error_message ?? (job.finished_at ? `完成于 ${formatAdminDate(job.finished_at)}` : "—")}</td>

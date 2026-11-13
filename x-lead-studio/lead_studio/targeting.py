@@ -143,6 +143,25 @@ SEARCH_SEGMENTS = (
 )
 
 
+# Separate keys give demand discovery independent incremental cursors.
+DEMAND_SEARCH_SEGMENTS = (
+    SearchSegment("demand_custom", "Pet custom product request",
+        '("my dog" OR "my cat" OR "our dog" OR "our cat") '
+        '(pillow OR cushion OR portrait OR print) '
+        '("looking for" OR "where can I" OR "want to buy" OR "want to order") '
+        'filter:images -filter:replies lang:en'),
+    SearchSegment("demand_recommendation", "Pet product recommendations",
+        '("my dog" OR "my cat" OR "our dog" OR "our cat") '
+        '(pillow OR cushion OR portrait OR keepsake) '
+        '(recommend OR recommendations OR "anyone know" OR "anybody know") '
+        'filter:images -filter:replies lang:en'),
+    SearchSegment("demand_decor", "Pet decor interest (exploration)",
+        '("my dog" OR "my cat" OR "our dog" OR "our cat") '
+        '(pillow OR cushion OR "wall art" OR portrait) '
+        '("would love" OR "thinking about" OR "thinking of" OR "would look great") '
+        'filter:images -filter:replies lang:en'),
+)
+
 US_STATE_NAMES = {
     "alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut",
     "delaware", "florida", "georgia", "hawaii", "idaho", "illinois", "indiana", "iowa",

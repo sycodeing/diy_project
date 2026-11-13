@@ -6,8 +6,31 @@ import { requireAdmin } from "@/lib/auth";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import {
   searchConfigurationSchema,
+  demandSearchConfigurationSchema,
   type XSearchConfiguration,
 } from "@/lib/x-lead";
+
+// Independent, bounded manual jobs. Never saves or enables the legacy schedule.
+export async function runDemandLeadSearch(formData: FormData) {
+  const user = await requireAdmin("/admin/x-lead-search");
+  const configuration = demandSearchConfigurationSchema.parse({
+    segments: formData.getAll("segments").map(String),
+    resultLimit: Number(formData.get("resultLimit") ?? 60),
+    lookbackDays: Number(formData.get("lookbackDays") ?? 7),
+  });
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) throw new Error("Supabase 服务端配置缺失。");
+  const { data: active, error: activeError } = await supabase.from("x_lead_search_jobs")
+    .select("id").in("status", ["queued", "running"]).limit(1).maybeSingle();
+  if (activeError) throw new Error(activeError.message);
+  if (active) redirect("/admin/x-lead-search?notice=active");
+  const { error } = await supabase.from("x_lead_search_jobs").insert({
+    trigger_type: "manual", status: "queued", configuration, created_by: user.id,
+  });
+  if (error) throw new Error(error.message);
+  revalidatePath("/admin/x-lead-search");
+  redirect("/admin/x-lead-search?notice=demand-queued");
+}
 
 function parseConfiguration(formData: FormData): XSearchConfiguration {
   return searchConfigurationSchema.parse({

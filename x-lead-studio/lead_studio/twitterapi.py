@@ -20,7 +20,7 @@ from .config import (
     TWITTERAPI_STATE_PATH,
 )
 from .discovery import candidate_from_tweet
-from .targeting import SEARCH_SEGMENTS, SearchSegment
+from .targeting import SEARCH_SEGMENTS, DEMAND_SEARCH_SEGMENTS, SearchSegment
 
 
 ADVANCED_SEARCH_PATH = "/twitter/tweet/advanced_search"
@@ -293,7 +293,7 @@ def build_query_plan(
     now: datetime | None = None,
 ) -> list[QueryPlan]:
     selected = {str(value) for value in configuration.get("segments", [])}
-    segments = [segment for segment in SEARCH_SEGMENTS if segment.key in selected]
+    segments = [segment for segment in (*SEARCH_SEGMENTS, *DEMAND_SEARCH_SEGMENTS) if segment.key in selected]
     if not segments:
         raise ValueError("No supported audience segment was selected.")
 
@@ -313,6 +313,8 @@ def build_query_plan(
     watermarks = state or {}
     share = max(50, min(100, us_share))
     for segment, segment_limit in zip(segments, per_segment, strict=True):
+        if segment_limit <= 0:
+            continue
         if not include_geo:
             key = f"{segment.key}:broad"
             since_time = max(initial_since, int(watermarks.get(key, initial_since)))
@@ -668,7 +670,7 @@ def _save_state(path: Path, state: dict[str, int]) -> None:
 
 
 def _archive_configuration(configuration: dict[str, Any]) -> dict[str, Any]:
-    allowed = ("segments", "searchProduct", "resultLimit", "lookbackDays", "usRequired", "usMinConfidence")
+    allowed = ("segments", "searchProduct", "resultLimit", "lookbackDays", "usRequired", "usMinConfidence", "discoveryMode")
     return {key: configuration[key] for key in allowed if key in configuration}
 
 

@@ -8,6 +8,33 @@ export const X_LEAD_SEGMENTS = [
   "pet_portrait",
 ] as const;
 export const X_LEAD_DISCOVERY_SEGMENTS = [...X_LEAD_SEGMENTS, "custom"] as const;
+export const X_DEMAND_SEGMENTS = ["demand_custom", "demand_recommendation", "demand_decor"] as const;
+export const X_DEMAND_SEGMENT_LABELS: Record<string, string> = {
+  demand_custom: "主动寻找宠物定制商品",
+  demand_recommendation: "询问宠物装饰 / 定制推荐",
+  demand_decor: "表达宠物装饰兴趣（探索组）",
+};
+export const demandSearchConfigurationSchema = z.object({
+  discoveryMode: z.literal("purchase_intent").default("purchase_intent"),
+  segments: z.array(z.enum(X_DEMAND_SEGMENTS)).min(1).max(3),
+  resultLimit: z.number().int().min(1).max(100),
+  lookbackDays: z.number().int().min(1).max(14),
+  searchProduct: z.literal("Latest").default("Latest"),
+  usRequired: z.literal(true).default(true),
+  usMinConfidence: z.number().int().min(70).max(100).default(70),
+});
+
+export function getXLeadPurchaseIntent(lead: Pick<XLeadRow, "targeting_data">) {
+  const value = lead.targeting_data?.purchase_intent;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const data = value as Record<string, unknown>;
+  if (data.tier !== "explicit_request" && data.tier !== "exploratory") return null;
+  return {
+    label: data.tier === "explicit_request" ? "明确寻求商品 / 推荐（待验证）" : "相关兴趣（探索组）",
+    score: typeof data.score === "number" && Number.isFinite(data.score) ? data.score : 0,
+    evidence: Array.isArray(data.evidence) ? data.evidence.filter((item): item is string => typeof item === "string").join("；") : "",
+  };
+}
 export const X_SEARCH_PRODUCTS = ["Latest", "Top", "Media"] as const;
 export const X_SEARCH_INTERVALS = [60, 180, 360, 720, 1440] as const;
 

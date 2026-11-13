@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .targeting import build_targeting, candidate_status
+from .purchase_intent import DEMAND_SEGMENT_KEYS, assess_purchase_intent
 from .xclient import read
 
 
@@ -60,6 +61,14 @@ def candidate_from_tweet(
         "post_excerpt": text_excerpt(tweet),
     }
     source_metadata = tweet.get("_source_metadata")
+    if source_segment in DEMAND_SEGMENT_KEYS:
+        intent = assess_purchase_intent(text_excerpt(tweet))
+        stored_targeting["purchase_intent"] = intent
+        stored_targeting["discovery_mode"] = "purchase_intent"
+        if intent["tier"] == "excluded":
+            status = "rejected_targeting"
+        elif status == "new":
+            status = "targeting_review"
     if isinstance(source_metadata, dict):
         stored_targeting["source"] = source_metadata
     raw_posted_at = tweet.get("date") or tweet.get("created_at")

@@ -12,6 +12,7 @@ from .config import CREDENTIAL_PATH, Settings
 from .discovery import collect_search, dedupe_candidates_by_author
 from .pet_image_gate import ensure_pet_image_verifier, verify_pet_photo
 from .targeting import SEARCH_SEGMENTS
+from .purchase_intent import DEMAND_SEGMENT_KEYS
 from .twitterapi import collect_twitterapi_search
 
 
@@ -35,7 +36,7 @@ async def run_x_lead_worker(settings: Settings) -> None:
                     json={
                         "workerId": worker_id,
                         "cookieConfigured": _provider_is_configured(settings, provider),
-                        "version": "1.6.3",
+                        "version": "1.7.0",
                     },
                 )
                 if response.status_code == 204:
@@ -68,6 +69,11 @@ async def _execute_job(
     try:
         configuration = job.get("configuration") or {}
         provider = _selected_provider(settings)
+        is_demand = bool(set(configuration.get("segments", [])) & set(DEMAND_SEGMENT_KEYS))
+        if is_demand:
+            if provider != "twitterapi" or not set(configuration.get("segments", [])).issubset(DEMAND_SEGMENT_KEYS):
+                raise ValueError("Demand discovery requires TwitterAPI and separate demand-only segments")
+            configuration = {**configuration, "usRequired": True, "usMinConfidence": max(70, int(configuration.get("usMinConfidence", 70)))}
         await ensure_pet_image_verifier(client, settings)
         if provider == "twitterapi":
             items, found, metrics = await collect_twitterapi_search(
@@ -94,6 +100,18 @@ async def _execute_job(
         else:
             raise ValueError(f"Unsupported X lead provider: {provider}")
         if provider in {"twitterapi", "apify", "x-cookie"}:
+            if is_demand:
+                metrics["discovery_mode"] = "purchase_intent"
+                metrics["intent_rejected"] = sum(
+                    json.loads(c.get("targeting_json") or "{}").get("purchase_intent", {}).get("tier") == "excluded"
+                    for c in found_for_image_review
+                )
+                metrics["intent_location_pending"] = sum(c.get("status") == "location_review" for c in found_for_image_review)
+                found_for_image_review = [c for c in found_for_image_review
+                    if c.get("status") in {"new", "targeting_review"}
+                    and int(c.get("us_confidence", 0)) >= 70
+                    and c.get("us_evidence") != "profile_location_state"]
+                found_for_image_review.sort(key=lambda c: json.loads(c.get("targeting_json") or "{}").get("purchase_intent", {}).get("score", 0), reverse=True)
             checked = 0
             verified = 0
             for candidate in found_for_image_review:
