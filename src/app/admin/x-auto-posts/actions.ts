@@ -7,7 +7,7 @@ import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
 import { prepareXLeadQueueTask } from "@/lib/x-lead-materials";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
-import { getXApprovalBlockReason } from "@/lib/x-reply-safety";
+import { getXApprovalBlockReason, supportsXFirstContactWorker } from "@/lib/x-reply-safety";
 
 const PAGE_PATH = "/admin/x-auto-posts";
 const idSchema = z.string().uuid();
@@ -93,7 +93,7 @@ async function approveXAutoJobs(requestedJobIds: string[] | null, userId: string
   const jobIds = requestedJobIds ? [...new Set(requestedJobIds)] : null;
   let jobsQuery = supabase
     .from("x_reply_jobs")
-    .select("id,status,account_id,scheduled_for,preparation_status,x_reply_accounts!inner(account_key,positioning,daily_limit,active,executor_id,network_mode,expected_egress_ip,verification_status,x_reply_account_proxies(account_id,status))");
+    .select("id,status,account_id,content_mode,scheduled_for,preparation_status,x_reply_accounts!inner(account_key,positioning,daily_limit,active,executor_id,network_mode,expected_egress_ip,verification_status,x_reply_account_proxies(account_id,status))");
   jobsQuery = jobIds
     ? jobsQuery.in("id", jobIds)
     : jobsQuery.eq("status", "draft").eq("preparation_status", "ready").order("created_at", { ascending: true });
@@ -109,7 +109,7 @@ async function approveXAutoJobs(requestedJobIds: string[] | null, userId: string
   const { data: workers, error: workerError } = executorIds.length
     ? await supabase
       .from("x_reply_workers")
-      .select("executor_id,execution_mode,xuse_available,configured_accounts,current_egress_ip,network_probe_status,last_seen_at")
+      .select("executor_id,worker_version,execution_mode,xuse_available,configured_accounts,current_egress_ip,network_probe_status,last_seen_at")
       .in("executor_id", executorIds)
       .gte("last_seen_at", new Date(Date.now() - 5 * 60_000).toISOString())
     : { data: [], error: null };
@@ -137,6 +137,9 @@ async function approveXAutoJobs(requestedJobIds: string[] | null, userId: string
       nowMillis: approvedAt.getTime(),
     });
     if (safetyError) throw new XAutoApprovalError(safetyError);
+    if (job.content_mode === "first_contact_text" && !supportsXFirstContactWorker(worker?.worker_version)) {
+      throw new XAutoApprovalError("首条纯文字接触需要先升级并重启本机执行器至 4.8.0 或更新版本。");
+    }
     if (!account || worker?.execution_mode !== "send") throw new XAutoApprovalError("绑定的 Mac Worker 当前不是发送模式。");
     const group = groups.get(job.account_id) ?? {
       accountKey: account.account_key,
@@ -205,10 +208,15 @@ export async function retryXAutoPreparation(formData: FormData) {
     .from("x_reply_jobs")
     .select("id,x_lead_id,preparation_status")
     .eq("id", taskId)
-    .eq("preparation_status", "failed")
+    .eq("status", "draft").eq("attempt_count", 0).is("approved_at", null)
+    .in("preparation_status", ["failed", "ready"])
     .maybeSingle();
   if (error || !task?.x_lead_id) throw new Error(error?.message ?? "该任务不能重新生成素材。");
-  await supabase.from("x_reply_jobs").update({ preparation_status: "pending", preparation_error: null }).eq("id", taskId);
+  const { data: reset, error: resetError } = await supabase.from("x_reply_jobs").update({
+    preparation_status: "pending", preparation_error: null, content_mode: "first_contact_text",
+  }).eq("id", taskId).eq("status", "draft").eq("attempt_count", 0).is("approved_at", null)
+    .eq("preparation_status", task.preparation_status).select("id").maybeSingle();
+  if (resetError || !reset) throw new Error(resetError?.message ?? "任务状态已经变化，未修改文案。");
   after(() => prepareXLeadQueueTask({ queue: "automatic", taskId, leadId: task.x_lead_id }));
   revalidatePath(PAGE_PATH);
 }

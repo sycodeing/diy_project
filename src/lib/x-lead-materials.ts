@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { getAppUrl, getMarketingIngestSecret } from "@/lib/env";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
-import { createXLeadDrafts, getXLeadShortCopyVariant, type XLeadCopyProfile } from "@/lib/x-lead-copy";
+import { createXLeadDrafts, createXLeadFirstContactDraft, getXLeadShortCopyVariant, type XLeadCopyProfile } from "@/lib/x-lead-copy";
 import { getXLeadTargetingChecks, type XLeadRow } from "@/lib/x-lead";
 
 type QueueKind = "manual" | "automatic";
@@ -139,62 +139,62 @@ export async function prepareXLeadQueueTask({
   if (!supabase) return;
   const table = queue === "manual" ? "x_manual_posts" : "x_reply_jobs";
 
-  await supabase.from(table).update({
+  let claim = supabase.from(table).update({
     preparation_status: "processing",
     preparation_error: null,
-  }).eq("id", taskId).in("preparation_status", ["pending", "failed"]);
+  }).eq("id", taskId).eq("status", "draft").in("preparation_status", ["pending", "failed"]);
+  if (queue === "automatic") claim = claim.eq("attempt_count", 0).is("approved_at", null);
+  const { data: claimed, error: claimError } = await claim.select("id").maybeSingle();
+  if (claimError) throw new Error(claimError.message);
+  if (!claimed) return;
 
   try {
-    let copyProfile: XLeadCopyProfile | undefined;
     if (queue === "automatic") {
-      const { data: automaticTask, error: taskError } = await supabase
-        .from("x_reply_jobs")
-        .select("x_reply_accounts!inner(account_key,copy_style,voice,positioning,copy_variation_notes)")
-        .eq("id", taskId)
-        .maybeSingle();
-      if (taskError || !automaticTask) throw new Error(taskError?.message ?? "自动发送账号不存在。");
-      const relation = Array.isArray(automaticTask.x_reply_accounts)
-        ? automaticTask.x_reply_accounts[0]
-        : automaticTask.x_reply_accounts;
-      if (!relation) throw new Error("自动发送账号不存在。");
-      copyProfile = {
-        accountKey: relation.account_key,
-        style: relation.copy_style,
-        voice: relation.voice,
-        positioning: relation.positioning,
-        variationNotes: relation.copy_variation_notes,
-        variationSeed: taskId,
-      };
-    } else {
-      copyProfile = {
-        accountKey: "manual-review",
-        style: "warm",
-        voice: "warm, specific, and respectful",
-        positioning: "private custom pet keepsake previews",
-        variationSeed: `${leadId}:${taskId}`,
-      };
+      const [{ data: lead, error: leadError }, { data: searchConfig }] = await Promise.all([
+        supabase.from("x_leads").select("*").eq("id", leadId).maybeSingle(),
+        supabase.from("x_lead_search_configs").select("us_min_confidence").eq("config_key", "default").maybeSingle(),
+      ]);
+      if (leadError || !lead) throw new Error(leadError?.message ?? "候选不存在。");
+      if (["rejected", "suppressed", "contacted"].includes(lead.selection_status)) throw new Error("该候选不可生成新的接触文案。");
+      const failures = getXLeadTargetingChecks(lead as XLeadRow, Math.max(70, searchConfig?.us_min_confidence ?? 70)).filter((check) => !check.passed);
+      if (failures.length) throw new Error(`候选未达到硬性条件：${failures.map((check) => check.label).join("、")}`);
+      const draft = createXLeadFirstContactDraft({
+        occasion: lead.occasion, occasionConfidence: lead.occasion_confidence,
+        petType: lead.pet_type, targetingData: lead.targeting_data,
+      });
+      const { error } = await supabase.from("x_reply_jobs").update({
+        reply_text: draft.text, copy_variant: draft.variantKey, content_mode: draft.contentMode,
+        preparation_status: "ready", preparation_error: null, prepared_at: new Date().toISOString(),
+      }).eq("id", taskId).eq("status", "draft").eq("attempt_count", 0)
+        .is("approved_at", null).eq("preparation_status", "processing");
+      if (error) throw new Error(error.message);
+      return; // No marketing link, image generation, or photo download for first contact.
     }
+    const copyProfile: XLeadCopyProfile = {
+      accountKey: "manual-review",
+      style: "warm",
+      voice: "warm, specific, and respectful",
+      positioning: "private custom pet keepsake previews",
+      variationSeed: `${leadId}:${taskId}`,
+    };
     const assets = await ensureXLeadMarketingAssets(leadId, "reply", copyProfile);
     if (!assets.previewCacheReady) throw new Error("宠物图片已找到，但预览图生成失败，请稍后重试。");
-    const contentField = queue === "manual"
-      ? { post_text: assets.drafts.publicCopy }
-      : { reply_text: assets.drafts.publicCopy };
+    const contentField = { post_text: assets.drafts.publicCopy };
     const preparedAt = new Date().toISOString();
-    const downloadFields = queue === "manual" ? {
+    const downloadFields = {
       preview_download_status: "pending",
       preview_download_worker_id: null,
       preview_download_error: null,
       preview_download_requested_at: preparedAt,
       preview_downloaded_at: null,
-    } : {};
-    let update = supabase.from(table).update({
+    };
+    const update = supabase.from(table).update({
       ...contentField,
       ...downloadFields,
       preparation_status: "ready",
       preparation_error: null,
       prepared_at: preparedAt,
-    }).eq("id", taskId);
-    if (queue === "manual") update = update.eq("status", "draft");
+    }).eq("id", taskId).eq("status", "draft").eq("preparation_status", "processing");
     const { error } = await update;
     if (error) throw error;
   } catch (error) {
@@ -202,6 +202,6 @@ export async function prepareXLeadQueueTask({
     await supabase.from(table).update({
       preparation_status: "failed",
       preparation_error: message.slice(0, 1000),
-    }).eq("id", taskId);
+    }).eq("id", taskId).eq("status", "draft").eq("preparation_status", "processing");
   }
 }

@@ -7,6 +7,7 @@ import { decryptProxyUrl } from "@/lib/x-proxy-crypto";
 import { isAuthorizedXReplyWorker } from "@/lib/x-reply-worker-auth";
 import { isBoundProxyEgress, isXAccountClaimEligible, isXDailyGateClaimAllowed, isXJobClaimEligible } from "@/lib/x-reply-safety";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { isValidXFirstContactText } from "@/lib/x-lead-copy";
 
 export const runtime = "nodejs";
 
@@ -15,6 +16,7 @@ const requestSchema = z.object({
   executorId: z.string().trim().min(1).max(120),
   executionMode: z.enum(["observe", "send"]),
   workerVersion: z.string().trim().min(1).max(80),
+  capabilities: z.array(z.string().max(80)).max(20).default([]),
   deviceLabel: z.string().trim().max(120).nullable().optional(),
   xUseAvailable: z.boolean(),
   configuredAccounts: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)).max(100),
@@ -207,7 +209,7 @@ export async function POST(request: Request) {
 
   let queuedQuery = supabase
     .from("x_reply_jobs")
-    .select("id,account_id,action_type,target_post_url,reply_text,scheduled_for,created_at,status,preparation_status,attempt_count,approved_at,x_leads(marketing_links!x_leads_marketing_link_id_fkey(source_hash,expires_at))")
+    .select("id,account_id,action_type,target_post_url,reply_text,content_mode,copy_variant,scheduled_for,created_at,status,preparation_status,attempt_count,approved_at,x_leads(marketing_links!x_leads_marketing_link_id_fkey(source_hash,expires_at))")
     .eq("status", "queued")
     .eq("preparation_status", "ready")
     .eq("attempt_count", 0)
@@ -215,6 +217,7 @@ export async function POST(request: Request) {
     .lte("scheduled_for", now)
     .in("account_id", eligibleAccountIds);
   if (heartbeat.networkVerification) queuedQuery = queuedQuery.eq("id", heartbeat.networkVerification.jobId);
+  if (!heartbeat.capabilities.includes("first_contact_text_v1")) queuedQuery = queuedQuery.eq("content_mode", "legacy_preview");
   const { data: queued, error: readError } = await queuedQuery
     .order("scheduled_for", { ascending: true })
     .order("created_at", { ascending: true })
@@ -234,10 +237,16 @@ export async function POST(request: Request) {
   const leadRelation = Array.isArray(queued.x_leads) ? queued.x_leads[0] : queued.x_leads;
   const linkRelation = leadRelation?.marketing_links;
   const marketingLink = Array.isArray(linkRelation) ? linkRelation[0] : linkRelation;
-  const preview = marketingLink
+  const textOnly = queued.content_mode === "first_contact_text";
+  if (textOnly && (queued.action_type !== "reply" || !queued.target_post_url || !isValidXFirstContactText(queued.reply_text))) {
+    await supabase.from("x_reply_jobs").update({ preparation_status: "failed", preparation_error: "首条接触必须是无链接的有效回复文案，请人工检查。" })
+      .eq("id", queued.id).eq("status", "queued");
+    return new Response(null, { status: 204 });
+  }
+  const preview = !textOnly && marketingLink
     ? await getMarketingReplyPreviewUrl(marketingLink.source_hash, marketingLink.expires_at)
     : null;
-  if (!preview) {
+  if (!textOnly && !preview) {
     await supabase.from("x_reply_jobs").update({
       preparation_status: "failed",
       preparation_error: "发送预览图暂时不可用；任务未下发，请重新生成素材。",
@@ -303,6 +312,9 @@ export async function POST(request: Request) {
     error_message: null,
   }).eq("id", queued.id).eq("status", "queued").eq("attempt_count", 0)
     .not("approved_at", "is", null)
+    .eq("content_mode", queued.content_mode)
+    .eq("reply_text", queued.reply_text)
+    .eq("preparation_status", "ready")
     .lte("scheduled_for", now)
     .select("id,account_id,action_type,target_post_url,reply_text,scheduled_for,created_at")
     .maybeSingle();
@@ -341,7 +353,9 @@ export async function POST(request: Request) {
     actionType: claimed.action_type,
     targetPostUrl: claimed.target_post_url,
     postText: claimed.reply_text,
-    previewImageUrl: preview.url,
+    contentMode: queued.content_mode,
+    copyVariant: queued.copy_variant,
+    previewImageUrl: preview?.url ?? null,
   } });
 }
 

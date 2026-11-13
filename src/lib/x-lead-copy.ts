@@ -11,6 +11,22 @@ export type XLeadDraftContext = {
 };
 
 export type XLeadCopyOccasion = "generic";
+export const X_FIRST_CONTACT_VARIANT = "first_contact_v1" as const;
+
+export function createXLeadFirstContactDraft(context: XLeadDraftContext) {
+  const pet = context.petType === "cat" ? "cat" : context.petType === "dog" ? "dog" : "pet";
+  return {
+    variantKey: X_FIRST_CONTACT_VARIANT,
+    contentMode: "first_contact_text" as const,
+    text: `I make custom ${pet}-photo pillow covers. $19.99 shipped to the US, delivery in about 15 days. Cover only, no insert. Would you like to see a sample?`,
+  };
+}
+
+// Text-only is an explicit job contract, never inferred from a missing image.
+export function isValidXFirstContactText(text: string) {
+  return text.trim().length > 0 && text.length <= 280
+    && !/(?:https?:\/\/|www\.|\{link\})/i.test(text);
+}
 export type XLeadShortCopyVariant =
   | "short_direct_a_v1"
   | "short_direct_b_v1"

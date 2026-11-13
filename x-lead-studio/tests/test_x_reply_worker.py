@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import replace
 
 import httpx
+import pytest
 
 from lead_studio.config import Settings
 from lead_studio import x_reply_worker
@@ -219,3 +220,43 @@ def test_login_challenge_and_rate_limit_halt_worker():
     assert x_reply_worker._must_halt("login_challenge", None) is True
     assert x_reply_worker._must_halt("rate_limit", "slow down") is True
     assert x_reply_worker._must_halt("proxy_failed", "route unavailable") is False
+
+
+@pytest.mark.parametrize("patch,expected_sends", [
+    ({}, 1),
+    ({"previewImageUrl": "https://stale.example/image.jpg"}, 1),
+    ({"contentMode": "legacy_preview"}, 0),
+    ({"contentMode": "unknown"}, 0),
+    ({"actionType": "post"}, 0),
+    ({"postText": ""}, 0),
+    ({"postText": "https://example.com"}, 0),
+    ({"postText": "x" * 281}, 0),
+])
+def test_explicit_text_only_contract_without_media_download(monkeypatch, patch, expected_sends):
+    sent = []
+    completions = []
+
+    async def forbidden_download(*args):
+        raise AssertionError("Text-only first contact must never download media")
+
+    async def fake_send(**kwargs):
+        assert kwargs["media"] == []
+        assert kwargs["text"] == "Would you like to see a sample?"
+        sent.append(kwargs)
+        return ReplyResult(status="sent", result_url="https://x.com/owner/status/2")
+
+    class FakeClient:
+        async def post(self, url, **kwargs):
+            completions.append(kwargs["json"])
+            return httpx.Response(200, json={"ok": True}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(x_reply_worker, "download_image", forbidden_download)
+    monkeypatch.setattr(x_reply_worker, "send_approved_action", fake_send)
+    result = asyncio.run(x_reply_worker._execute_job(Settings(), FakeClient(), {
+        "id": "job-text", "accountKey": "pet_account", "actionType": "reply",
+        "targetPostUrl": "https://x.com/owner/status/1", "postText": "Would you like to see a sample?",
+        "contentMode": "first_contact_text", "networkMode": "vpn_direct", **patch,
+    }))
+    assert len(sent) == expected_sends
+    assert len(completions) == 1
+    assert result.status == ("sent" if expected_sends else "failed")

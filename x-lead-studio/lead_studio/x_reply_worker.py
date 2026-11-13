@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import re
 import socket
 import tempfile
 import time
@@ -24,7 +25,7 @@ from .xuse_client import (
 )
 
 
-WORKER_VERSION = "4.7.3-direct-profile-inspection"
+WORKER_VERSION = "4.8.0-first-contact-text"
 BATCH_DELAY_MIN_SECONDS = 15.0
 BATCH_DELAY_MAX_SECONDS = 30.0
 PROFILE_INSPECTION_SECONDS = 10 * 60.0
@@ -79,6 +80,7 @@ async def run_x_reply_iteration(
         "executorId": settings.x_reply_executor_id,
         "executionMode": settings.x_reply_execution_mode,
         "workerVersion": WORKER_VERSION,
+        "capabilities": ["first_contact_text_v1"],
         "deviceLabel": settings.x_reply_device_label or socket.gethostname()[:120],
         "xUseAvailable": xuse_available,
         "configuredAccounts": configured_accounts,
@@ -210,17 +212,28 @@ async def _execute_job(settings: Settings, client: httpx.AsyncClient, job: dict[
 
     try:
         preview_url = str(job.get("previewImageUrl") or "")
-        if not preview_url:
+        content_mode = job.get("contentMode", "legacy_preview")
+        if content_mode not in {"first_contact_text", "legacy_preview"}:
+            raise ValueError("Unknown automatic reply content mode.")
+        text_only = content_mode == "first_contact_text"
+        text = str(job.get("postText") or "")
+        if text_only and (job.get("actionType") != "reply" or not job.get("targetPostUrl")
+                or not text.strip() or len(text) > 280 or re.search(r"https?://|www\.|\{link\}", text, re.I)):
+            raise ValueError("Invalid text-only first-contact reply.")
+        if not text_only and not preview_url:
             raise ValueError("The approved automatic reply has no preview image attachment.")
         with tempfile.TemporaryDirectory(prefix="diy-x-preview-") as directory:
-            preview_path, _ = await download_image(preview_url, Path(directory))
+            media = []
+            if not text_only:
+                preview_path, _ = await download_image(preview_url, Path(directory))
+                media = [str(preview_path)]
             result = await send_approved_action(
                 x_use_home=settings.x_use_home,
                 account=str(job["accountKey"]),
                 action_type=str(job["actionType"]),
                 tweet_url=str(job["targetPostUrl"]) if job.get("targetPostUrl") else None,
                 text=str(job["postText"]),
-                media=[str(preview_path)],
+                media=media,
                 network_mode=str(job["networkMode"]),
                 ip_check_url=settings.x_reply_ip_check_url,
                 proxy_url=str(job["proxyUrl"]) if job.get("proxyUrl") else None,

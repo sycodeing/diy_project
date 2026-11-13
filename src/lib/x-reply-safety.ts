@@ -20,6 +20,11 @@ export type ApprovalSafetyInput = {
   nowMillis: number;
 };
 
+export function supportsXFirstContactWorker(version: string | null | undefined) {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-|$)/.exec(version ?? "");
+  return Boolean(match && (Number(match[1]) > 4 || (Number(match[1]) === 4 && Number(match[2]) >= 8)));
+}
+
 export type ClaimSafetyInput = {
   executionMode: string;
   executorId: string;

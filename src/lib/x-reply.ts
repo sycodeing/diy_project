@@ -77,6 +77,8 @@ export type XReplyJob = {
   action_type: "post" | "reply";
   target_post_url: string | null;
   reply_text: string;
+  content_mode: "legacy_preview" | "first_contact_text";
+  copy_variant: string | null;
   scheduled_for: string;
   status: string;
   account_key_snapshot: string | null;
