@@ -24,7 +24,7 @@ preview has already been made; no short link or image attachment.
 
 ## Rollout
 
-1. Apply `20261113061456_x_reply_first_contact_text_mode.sql` (additive, legacy default).
+1. Apply `20261113062541_x_reply_first_contact_text_mode.sql` (additive, legacy default).
 2. Deploy the web code and upgrade the sending worker to 4.8.0+ without changing its
    current observe/send authorization. Do not start sending as part of deployment.
 3. Inspect a newly prepared draft or explicitly regenerate an unsent legacy draft.
