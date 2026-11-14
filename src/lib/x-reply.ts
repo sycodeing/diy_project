@@ -133,6 +133,17 @@ export type XReplyBatchSummary = {
 
 const X_REPLY_TERMINAL_STATUSES = new Set(["sent", "failed", "uncertain", "rejected"]);
 
+export function isLatestXReplyBatchFailure(
+  job: Pick<XReplyJob, "approved_at" | "status">,
+  latestApprovedAt: string | null | undefined,
+) {
+  return Boolean(
+    latestApprovedAt
+    && job.approved_at === latestApprovedAt
+    && ["failed", "uncertain"].includes(job.status),
+  );
+}
+
 export function summarizeLatestXReplyBatch(jobs: Array<Pick<XReplyJob, "approved_at" | "completed_at" | "status" | "result_url">>): XReplyBatchSummary | null {
   const approvedAt = jobs.reduce<string | null>((latest, job) => {
     if (!job.approved_at) return latest;

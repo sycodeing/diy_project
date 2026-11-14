@@ -14,6 +14,7 @@ import {
   X_ACTION_LABELS,
   X_REPLY_STATUS_LABELS,
   X_REPLY_STATUS_STYLES,
+  isLatestXReplyBatchFailure,
   summarizeLatestXReplyBatch,
   type XReplyJob,
   type XReplyAccount,
@@ -64,12 +65,6 @@ function formatShanghaiDate(value: string) {
   }).format(new Date(value));
 }
 
-function retryDisplayPriority(job: XReplyJob) {
-  if (["queued", "claimed"].includes(job.status) && job.error_code === "manual_retry_not_sent") return 0;
-  if (job.status === "uncertain" && job.action_id) return 1;
-  return 2;
-}
-
 export default async function XAutoPostsPage({ searchParams }: { searchParams: Promise<{ notice?: string; count?: string }> }) {
   await requireAdmin("/admin/x-auto-posts");
   const supabase = getSupabaseServiceClient();
@@ -83,6 +78,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
     supabase.from("x_manual_posts").select("id", { count: "exact", head: true }).eq("status", "sent"),
   ]);
   const jobs = (jobRows ?? []) as unknown as XReplyJob[];
+  const latestBatch = summarizeLatestXReplyBatch(jobs);
   const cards = await Promise.all(jobs.map(async (job) => {
     const link = job.x_leads?.marketing_links;
     const preview = job.content_mode !== "first_contact_text" && job.preparation_status === "ready" && link
@@ -91,15 +87,11 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
     return { job, preview: preview?.url ?? null };
   }));
   cards.sort((left, right) => {
-    const priority = retryDisplayPriority(left.job) - retryDisplayPriority(right.job);
-    if (priority) return priority;
-    if (retryDisplayPriority(left.job) < 2) {
-      return Date.parse(right.job.completed_at ?? right.job.scheduled_for)
-        - Date.parse(left.job.completed_at ?? left.job.scheduled_for);
-    }
-    return Date.parse(right.job.created_at) - Date.parse(left.job.created_at);
+    const leftPinned = isLatestXReplyBatchFailure(left.job, latestBatch?.approvedAt);
+    const rightPinned = isLatestXReplyBatchFailure(right.job, latestBatch?.approvedAt);
+    // Stable sort preserves the database's default created_at-desc order inside both groups.
+    return Number(rightPinned) - Number(leftPinned);
   });
-  const latestBatch = summarizeLatestXReplyBatch(jobs);
   const readyToStartCount = jobs.filter((job) => job.status === "draft" && job.preparation_status === "ready").length;
   const preparingToStartCount = jobs.filter((job) => job.status === "draft" && ["pending", "processing"].includes(job.preparation_status)).length;
   const workers = (workerRows ?? []) as XReplyWorker[];

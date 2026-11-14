@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { summarizeLatestXReplyBatch } from "./x-reply.ts";
+import { isLatestXReplyBatchFailure, summarizeLatestXReplyBatch } from "./x-reply.ts";
+
+test("pins only failed records from the latest approved batch", () => {
+  const latestApprovedAt = "2026-11-14T01:00:00.000Z";
+
+  assert.equal(isLatestXReplyBatchFailure({ approved_at: latestApprovedAt, status: "failed" }, latestApprovedAt), true);
+  assert.equal(isLatestXReplyBatchFailure({ approved_at: latestApprovedAt, status: "uncertain" }, latestApprovedAt), true);
+  assert.equal(isLatestXReplyBatchFailure({ approved_at: latestApprovedAt, status: "sent" }, latestApprovedAt), false);
+  assert.equal(isLatestXReplyBatchFailure({ approved_at: latestApprovedAt, status: "queued" }, latestApprovedAt), false);
+  assert.equal(isLatestXReplyBatchFailure({ approved_at: "2026-11-13T01:00:00.000Z", status: "failed" }, latestApprovedAt), false);
+  assert.equal(isLatestXReplyBatchFailure({ approved_at: null, status: "failed" }, latestApprovedAt), false);
+});
 
 test("summarizes only the latest approved batch", () => {
   const summary = summarizeLatestXReplyBatch([
