@@ -31,6 +31,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const X_LEADS_PAGE_SIZE = 40;
+const CONTACT_SHORTLIST_BATCH = "cold-contact-2026-11-14";
 
 type ManualQueueTaskSummary = {
   id: string;
@@ -55,7 +56,7 @@ export type XLeadAccountOption = {
 export default async function XLeadsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ mode?: string; conclusion?: string; segment?: string; review?: string; reason?: string; notice?: string; page?: string }>;
+  searchParams: Promise<{ batch?: string; mode?: string; conclusion?: string; segment?: string; review?: string; reason?: string; notice?: string; page?: string }>;
 }) {
   await requireAdmin("/admin/x-leads");
   const supabase = getSupabaseServiceClient();
@@ -63,6 +64,7 @@ export default async function XLeadsPage({
     return <AppShell admin><main className="mx-auto w-full max-w-3xl px-4 py-10"><SetupWarning /></main></AppShell>;
   }
   const filters = await searchParams;
+  const isContactShortlist = filters.batch === CONTACT_SHORTLIST_BATCH;
   let query = supabase
     .from("x_leads")
     .select("id,post_id,x_handle,post_url,media_url,media_urls,posted_at,discovered_at,selection_status,segment,pet_type,occasion,occasion_confidence,ownership_confidence,us_confidence,us_evidence,lead_score,like_count,reply_count,repost_count,view_count,followers_count,targeting_data,consent_copy,public_copy,direct_message_copy,marketing_link_id,marketing_links!x_leads_marketing_link_id_fkey(id,idempotency_key,source_hash,expires_at,account_user_id,account_was_created,marketing_events(event_type,created_at),orders(id,payment_status,paid_at)),x_manual_posts(id,status,preparation_status,created_at),x_reply_jobs(id,status,preparation_status,created_at)")
@@ -70,11 +72,12 @@ export default async function XLeadsPage({
     .order("discovered_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(1000);
+  if (isContactShortlist) query = query.eq("targeting_data->>shortlist_batch", CONTACT_SHORTLIST_BATCH);
   if (filters.segment) query = query.eq("segment", filters.segment);
   if (filters.mode === "purchase_intent") query = query.eq("targeting_data->>discovery_mode", "purchase_intent");
   if (filters.mode === "legacy") query = query.or("targeting_data->>discovery_mode.is.null,targeting_data->>legacy_eligible.eq.true");
   if (filters.review === "rejected" || filters.reason) query = query.eq("selection_status", "rejected");
-  else if (filters.review !== "all") query = query.neq("selection_status", "rejected");
+  else if (filters.review !== "all" && !isContactShortlist) query = query.neq("selection_status", "rejected");
   const [{ data, error }, { data: activeAccountRows, error: accountsError }, { data: searchConfig }, { data: rejectedRows }] = await Promise.all([
     query,
     supabase.from("x_reply_accounts").select("id,account_key,display_name").eq("active", true).order("display_name"),
@@ -103,7 +106,7 @@ export default async function XLeadsPage({
     ? allLeads.filter((lead) => getXLeadRejectionReason(lead) === filters.reason)
     : allLeads;
   const usMinConfidence = searchConfig?.us_min_confidence ?? 70;
-  const conclusionFilter = filters.conclusion || (filters.review === "rejected" || filters.review === "all" || filters.reason ? "all" : "");
+  const conclusionFilter = filters.conclusion || (isContactShortlist || filters.review === "rejected" || filters.review === "all" || filters.reason ? "all" : "");
   const filteredLeads = filterXLeadsForQueue(reasonFilteredLeads, conclusionFilter, usMinConfidence);
   const priorityLeads = sortXLeadsByPriority(filteredLeads, usMinConfidence);
   const sortedLeads = filters.mode === "purchase_intent"
@@ -114,6 +117,7 @@ export default async function XLeadsPage({
   const currentPage = Math.min(Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1, totalPages);
   const leads = sortedLeads.slice((currentPage - 1) * X_LEADS_PAGE_SIZE, currentPage * X_LEADS_PAGE_SIZE);
   const paginationFilters = {
+    batch: isContactShortlist ? CONTACT_SHORTLIST_BATCH : undefined,
     mode: filters.mode,
     conclusion: filters.conclusion,
     segment: filters.segment,
@@ -146,6 +150,14 @@ export default async function XLeadsPage({
           <Link className="focus-ring rounded-lg border border-line px-4 py-2 font-bold hover:bg-surface" href="/admin/x-lead-search">筛选设置</Link>
         </div>
         {noticeText ? <p className="mt-5 rounded-lg border border-line bg-panel p-3 text-sm font-bold">{noticeText}</p> : null}
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Link className="focus-ring rounded-lg border border-line bg-white px-4 py-2 text-sm font-bold text-accent hover:bg-surface" href={`/admin/x-leads?batch=${CONTACT_SHORTLIST_BATCH}`}>查看 11 月 14 日待审核 30 人</Link>
+          {isContactShortlist ? <Link className="text-sm font-bold text-accent underline" href="/admin/x-leads">返回全部候选</Link> : null}
+        </div>
+        {isContactShortlist ? <section className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+          <p className="font-black">11 月 14 日冷接触候选 · 当前显示 {sortedLeads.length} 人</p>
+          <p className="mt-1">来自历史宠物主人候选池，尚未确认购买需求。仍需逐条审核原帖、图片和账号；批次标记不会批准或发送回复。</p>
+        </section> : null}
 
         <section className="mt-5 rounded-xl border border-line bg-panel/90 px-4 py-3">
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs leading-5">
@@ -163,6 +175,7 @@ export default async function XLeadsPage({
         </section> : null}
 
         <form className="mt-6 grid gap-3 rounded-xl border border-line bg-panel/90 p-4 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto]">
+          <SelectFilter label="候选批次" name="batch" value={isContactShortlist ? CONTACT_SHORTLIST_BATCH : ""} options={[["", "全部批次"], [CONTACT_SHORTLIST_BATCH, "11 月 14 日待审核 30 人"]]} />
           <SelectFilter label="筛选模式" name="mode" value={filters.mode ?? ""} options={[["", "全部模式"], ["legacy", "原模式：照片 / 场景"], ["purchase_intent", "新模式：购买需求验证"]]} />
           <SelectFilter label="参考结论" name="conclusion" value={conclusionFilter} options={[["", "待处理（含地点待核）"], ...Object.entries(X_LEAD_CONCLUSION_LABELS), ["all", "全部结论"]]} />
           <SelectFilter label="目标人群" name="segment" value={filters.segment ?? ""} options={[["", "全部人群"], ...Object.entries(X_LEAD_SEGMENT_LABELS)]} />
