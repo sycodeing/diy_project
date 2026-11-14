@@ -25,12 +25,13 @@ from .xuse_client import (
 )
 
 
-WORKER_VERSION = "4.8.0-first-contact-text"
+WORKER_VERSION = "4.10.1-first-contact-text"
 BATCH_DELAY_MIN_SECONDS = 15.0
 BATCH_DELAY_MAX_SECONDS = 30.0
 PROFILE_INSPECTION_SECONDS = 10 * 60.0
 HALT_ERROR_MARKERS = ("captcha", "challenge", "login", "locked", "rate_limit", "rate limit", "verification")
 _BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
+_BACKGROUND_TASK_ACCOUNTS: dict[asyncio.Task[Any], str] = {}
 
 
 async def run_x_reply_worker(settings: Settings) -> None:
@@ -40,6 +41,7 @@ async def run_x_reply_worker(settings: Settings) -> None:
     last_error: str | None = None
     cached_direct_probe: NetworkProbeResult | None = None
     direct_probe_checked_at = 0.0
+    writes_paused = False
     while True:
         try:
             now = time.monotonic()
@@ -51,9 +53,11 @@ async def run_x_reply_worker(settings: Settings) -> None:
                 settings,
                 last_error=last_error,
                 direct_probe=cached_direct_probe,
+                writes_paused=writes_paused,
             )
             if halt:
-                return
+                writes_paused = True
+                last_error = "Automatic writes paused by a critical account safety condition; inspections remain available."
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -69,6 +73,7 @@ async def run_x_reply_iteration(
     *,
     last_error: str | None = None,
     direct_probe: NetworkProbeResult | None = None,
+    writes_paused: bool = False,
 ) -> tuple[str | None, bool, str | None]:
     """Report one heartbeat and, only in send mode, execute at most one approved write."""
     if direct_probe is None:
@@ -87,9 +92,12 @@ async def run_x_reply_iteration(
         "currentEgressIp": direct_probe.egress_ip,
         "networkProbeStatus": "healthy" if direct_probe.ok else "error",
         "lastError": probe_error or last_error,
-        # Keep heartbeating while a visible account inspection is open, but
-        # do not claim another inspection or an approved write until it closes.
+        "writesPaused": writes_paused,
+        # Visible inspections only pause writes for their own bound account.
         "inspectionBusy": any(not task.done() for task in _BACKGROUND_TASKS),
+        "inspectionAccountKeys": sorted({
+            account for task, account in _BACKGROUND_TASK_ACCOUNTS.items() if not task.done()
+        }),
     }
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -103,9 +111,15 @@ async def run_x_reply_iteration(
         verification = body.get("verification")
         if isinstance(verification, dict):
             task = asyncio.create_task(_execute_mapping_verification(settings, verification))
-            _BACKGROUND_TASKS.add(task)
-            task.add_done_callback(_finish_background_task)
+            _track_background_task(task, str(verification.get("accountKey") or ""))
             # Let the task enter the x-use session before this iteration returns.
+            await asyncio.sleep(0)
+            return None, False, None
+
+        inspection = body.get("inspection")
+        if isinstance(inspection, dict):
+            task = asyncio.create_task(_execute_bound_inspection(settings, inspection))
+            _track_background_task(task, str(inspection.get("accountKey") or ""))
             await asyncio.sleep(0)
             return None, False, None
 
@@ -152,8 +166,16 @@ def _batch_delay_seconds() -> float:
 
 def _finish_background_task(task: asyncio.Task[Any]) -> None:
     _BACKGROUND_TASKS.discard(task)
+    _BACKGROUND_TASK_ACCOUNTS.pop(task, None)
     if not task.cancelled():
         task.exception()
+
+
+def _track_background_task(task: asyncio.Task[Any], account_key: str) -> None:
+    _BACKGROUND_TASKS.add(task)
+    if account_key:
+        _BACKGROUND_TASK_ACCOUNTS[task] = account_key
+    task.add_done_callback(_finish_background_task)
 
 
 async def _execute_mapping_verification(settings: Settings, verification: dict[str, Any]) -> str | None:
@@ -165,10 +187,40 @@ async def _execute_mapping_verification(settings: Settings, verification: dict[s
         proxy_url=str(verification.get("proxyUrl") or "") or None,
         ip_check_url=settings.x_reply_ip_check_url,
         hold_open_seconds=PROFILE_INSPECTION_SECONDS,
+        expected_egress_ip=str(verification.get("expectedEgressIp") or "") or None,
     )
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
             f"{settings.diy_site_url}/api/x-replies/worker/account-verifications/{verification['id']}/complete",
+            headers={"Authorization": f"Bearer {settings.x_reply_worker_secret}"},
+            json={
+                "executorId": settings.x_reply_executor_id,
+                "actualHandle": result.actual_handle,
+                "egressIp": result.egress_ip,
+                "errorCode": result.error_code,
+                "errorMessage": result.error_message,
+            },
+        )
+        response.raise_for_status()
+    return result.error_message
+
+
+async def _execute_bound_inspection(settings: Settings, inspection: dict[str, Any]) -> str | None:
+    result = await verify_account_mapping(
+        x_use_home=settings.x_use_home,
+        account=str(inspection.get("accountKey") or ""),
+        expected_handle=str(inspection.get("expectedXHandle") or "") or None,
+        network_mode=str(inspection.get("networkMode") or ""),
+        proxy_url=str(inspection.get("proxyUrl") or "") or None,
+        ip_check_url=settings.x_reply_ip_check_url,
+        hold_open_seconds=PROFILE_INSPECTION_SECONDS,
+        target_url=str(inspection.get("targetUrl") or "") or None,
+        expected_egress_ip=str(inspection.get("expectedEgressIp") or "") or None,
+    )
+    async with httpx.AsyncClient(timeout=30) as client:
+        completion_kind = "manual-inspections" if inspection.get("kind") == "manual" else "inspections"
+        response = await client.post(
+            f"{settings.diy_site_url}/api/x-replies/worker/{completion_kind}/{inspection['id']}/complete",
             headers={"Authorization": f"Bearer {settings.x_reply_worker_secret}"},
             json={
                 "executorId": settings.x_reply_executor_id,
@@ -212,18 +264,23 @@ async def _execute_job(settings: Settings, client: httpx.AsyncClient, job: dict[
 
     try:
         preview_url = str(job.get("previewImageUrl") or "")
-        content_mode = job.get("contentMode", "legacy_preview")
+        content_mode = str(job.get("contentMode") or "legacy_preview")
         if content_mode not in {"first_contact_text", "legacy_preview"}:
             raise ValueError("Unknown automatic reply content mode.")
-        text_only = content_mode == "first_contact_text"
         text = str(job.get("postText") or "")
-        if text_only and (job.get("actionType") != "reply" or not job.get("targetPostUrl")
-                or not text.strip() or len(text) > 280 or re.search(r"https?://|www\.|\{link\}", text, re.I)):
+        text_only = content_mode == "first_contact_text"
+        if text_only and (
+            job.get("actionType") != "reply"
+            or not job.get("targetPostUrl")
+            or not text.strip()
+            or len(text) > 280
+            or re.search(r"https?://|www\.|\{link\}", text, re.I)
+        ):
             raise ValueError("Invalid text-only first-contact reply.")
         if not text_only and not preview_url:
             raise ValueError("The approved automatic reply has no preview image attachment.")
         with tempfile.TemporaryDirectory(prefix="diy-x-preview-") as directory:
-            media = []
+            media: list[str] = []
             if not text_only:
                 preview_path, _ = await download_image(preview_url, Path(directory))
                 media = [str(preview_path)]
@@ -232,12 +289,13 @@ async def _execute_job(settings: Settings, client: httpx.AsyncClient, job: dict[
                 account=str(job["accountKey"]),
                 action_type=str(job["actionType"]),
                 tweet_url=str(job["targetPostUrl"]) if job.get("targetPostUrl") else None,
-                text=str(job["postText"]),
+                text=text,
                 media=media,
                 network_mode=str(job["networkMode"]),
                 ip_check_url=settings.x_reply_ip_check_url,
                 proxy_url=str(job["proxyUrl"]) if job.get("proxyUrl") else None,
                 verify_route=verify_route,
+                retry_action_id=str(job["retryActionId"]) if job.get("retryActionId") else None,
             )
     except Exception as error:
         result = ReplyResult(status="failed", error_code=type(error).__name__[:100], error_message=f"{type(error).__name__}: local execution failed"[:1000])

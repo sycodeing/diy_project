@@ -56,6 +56,24 @@ export function isXDailyGateClaimAllowed(requiresConfirmation: boolean, status: 
   return !requiresConfirmation || status == null || status === "pending" || status === "authorized";
 }
 
+export function getXPausedGateResumeStatus(firstJobStatus: string | null): "authorized" | "pending" | null {
+  if (firstJobStatus === "uncertain" || firstJobStatus === "claimed") return null;
+  return firstJobStatus === "sent" ? "authorized" : "pending";
+}
+
+export function isXAccountCooldownActive(cooldownUntil: string | null | undefined, nowMillis: number): boolean {
+  return Boolean(cooldownUntil && new Date(cooldownUntil).getTime() > nowMillis);
+}
+
+export function getNextXAccountBatchState(batchSentCount: number, nowMillis: number) {
+  const nextBatchCount = batchSentCount + 1;
+  const startsBreak = nextBatchCount >= 12;
+  return {
+    batchSentCount: startsBreak ? 0 : nextBatchCount,
+    cooldownUntil: startsBreak ? new Date(nowMillis + 45 * 60_000).toISOString() : null,
+  };
+}
+
 export function isBoundProxyEgress(boundEgressIp: string | null, observedEgressIp: string): boolean {
   return !boundEgressIp || boundEgressIp === observedEgressIp;
 }

@@ -55,6 +55,8 @@ export type XReplyAccount = {
   verified_egress_ip: string | null;
   verification_error: string | null;
   require_daily_first_confirmation: boolean;
+  batch_sent_count: number;
+  cooldown_until: string | null;
   active: boolean;
   created_at: string;
 };
@@ -87,6 +89,13 @@ export type XReplyJob = {
   xuse_draft_id: string | null;
   action_id: string | null;
   result_url: string | null;
+  inspection_status: "idle" | "pending" | "running" | "completed" | "failed";
+  inspection_target_url: string | null;
+  inspection_executor_id: string | null;
+  inspection_requested_at: string | null;
+  inspection_started_at: string | null;
+  inspection_completed_at: string | null;
+  inspection_error: string | null;
   error_code: string | null;
   error_message: string | null;
   egress_ip: string | null;
@@ -171,6 +180,13 @@ export type XManualPost = {
   status: "draft" | "sent" | "discarded";
   result_url: string | null;
   sent_at: string | null;
+  bound_open_status: "idle" | "pending" | "running" | "completed" | "failed";
+  bound_open_target_url: string | null;
+  bound_open_executor_id: string | null;
+  bound_open_requested_at: string | null;
+  bound_open_started_at: string | null;
+  bound_open_completed_at: string | null;
+  bound_open_error: string | null;
   created_at: string;
   preparation_status: "pending" | "processing" | "ready" | "failed";
   preparation_error: string | null;

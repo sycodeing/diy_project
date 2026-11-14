@@ -7,11 +7,13 @@ import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
 import { prepareXLeadQueueTask } from "@/lib/x-lead-materials";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
-import { getXApprovalBlockReason, supportsXFirstContactWorker } from "@/lib/x-reply-safety";
+import { getXApprovalBlockReason, getXPausedGateResumeStatus, supportsXFirstContactWorker } from "@/lib/x-reply-safety";
 
 const PAGE_PATH = "/admin/x-auto-posts";
 const idSchema = z.string().uuid();
 const batchIdsSchema = z.array(idSchema).min(1).max(100);
+const xStatusUrlSchema = z.string().url().max(2048)
+  .refine((value) => /^https:\/\/(?:www\.)?(?:x|twitter)\.com\/[A-Za-z0-9_]+\/status\/[0-9]+/i.test(value));
 
 export type XAutoApprovalResult =
   | { ok: true; approvedCount: number }
@@ -77,6 +79,21 @@ export async function startAllXAutoSending(): Promise<XAutoApprovalResult> {
   } catch (error) {
     return approvalFailure(error, "开始全部发送失败，请刷新页面后重试。");
   }
+}
+
+export async function stopXAutoBatch(formData: FormData) {
+  await requireAdmin(PAGE_PATH);
+  const approvedAt = z.string().datetime({ offset: true }).parse(String(formData.get("approvedAt") ?? ""));
+  const supabase = serviceClient();
+  const { error } = await supabase.from("x_reply_jobs").update({
+    status: "rejected",
+    completed_at: new Date().toISOString(),
+    error_code: "batch_stopped",
+    error_message: "管理员已立即停止本批发送；任务未下发到 X。",
+  }).eq("approved_at", approvedAt).eq("status", "queued");
+  if (error) throw new Error(error.message);
+  revalidatePath(PAGE_PATH);
+  redirect(`${PAGE_PATH}?notice=batch-stopped`);
 }
 
 function approvalFailure(error: unknown, fallback: string): XAutoApprovalResult {
@@ -233,16 +250,138 @@ export async function authorizeXDailySending(formData: FormData) {
   const user = await requireAdmin(PAGE_PATH);
   const accountId = idSchema.parse(String(formData.get("accountId") ?? ""));
   const supabase = serviceClient();
+  const { data: gate, error: gateError } = await supabase.from("x_reply_daily_gates")
+    .select("first_job_id")
+    .eq("account_id", accountId).eq("gate_date", shanghaiToday())
+    .eq("status", "awaiting_confirmation").not("first_sent_at", "is", null)
+    .maybeSingle();
+  if (gateError || !gate?.first_job_id) {
+    throw new Error(gateError?.message ?? "今日首条尚未确认发送成功，不能放行后续任务。");
+  }
   const { data, error } = await supabase.from("x_reply_daily_gates").update({
     status: "authorized",
     authorized_at: new Date().toISOString(),
     authorized_by: user.id,
-  }).eq("account_id", accountId).eq("gate_date", shanghaiToday())
+  }).eq("account_id", accountId).eq("gate_date", shanghaiToday()).eq("first_job_id", gate.first_job_id)
     .eq("status", "awaiting_confirmation").not("first_sent_at", "is", null)
     .select("account_id").maybeSingle();
   if (error || !data) throw new Error(error?.message ?? "今日首条尚未确认发送成功，不能放行后续任务。");
   revalidatePath(PAGE_PATH);
   redirect(`${PAGE_PATH}?notice=daily-authorized`);
+}
+
+export async function requestBoundXJobInspection(formData: FormData) {
+  await requireAdmin(PAGE_PATH);
+  const jobId = idSchema.parse(String(formData.get("jobId") ?? ""));
+  const supabase = serviceClient();
+  const { data: job, error: jobError } = await supabase.from("x_reply_jobs")
+    .select("id,result_url,target_post_url,inspection_status,x_reply_accounts!inner(account_key,active,executor_id,network_mode,expected_egress_ip,verification_status,x_reply_account_proxies(status,egress_ip))")
+    .eq("id", jobId)
+    .maybeSingle();
+  if (jobError || !job) throw new Error(jobError?.message ?? "自动任务不存在。");
+  if (["pending", "running"].includes(job.inspection_status)) {
+    redirect(`${PAGE_PATH}?notice=inspection-already-active`);
+  }
+  const account = Array.isArray(job.x_reply_accounts) ? job.x_reply_accounts[0] : job.x_reply_accounts;
+  if (!account?.active || !account.executor_id) throw new Error("该任务的 X 账号未启用或未绑定执行器。");
+  if (account.verification_status !== "passed") throw new Error("该账号尚未通过账号与出口映射验证。");
+  const proxyRelation = account.x_reply_account_proxies;
+  const proxy = Array.isArray(proxyRelation) ? proxyRelation[0] : proxyRelation;
+  if (account.network_mode === "fixed_proxy" && (proxy?.status !== "healthy" || !proxy.egress_ip)) {
+    throw new Error("该账号的固定代理尚未确认健康出口。");
+  }
+  const { data: worker, error: workerError } = await supabase.from("x_reply_workers")
+    .select("execution_mode,xuse_available,configured_accounts,current_egress_ip,network_probe_status,last_seen_at")
+    .eq("executor_id", account.executor_id)
+    .gte("last_seen_at", new Date(Date.now() - 5 * 60_000).toISOString())
+    .maybeSingle();
+  if (workerError || !worker) throw new Error(workerError?.message ?? "绑定的 Mac 执行器不在线。");
+  if (!worker.xuse_available || !worker.configured_accounts.includes(account.account_key)) {
+    throw new Error("绑定执行器缺少该账号的本地 x-use 登录数据。");
+  }
+  if (account.network_mode === "vpn_direct"
+    && (!account.expected_egress_ip || worker.network_probe_status !== "healthy"
+      || String(account.expected_egress_ip) !== String(worker.current_egress_ip ?? ""))) {
+    throw new Error("当前 VPN 出口与该账号锁定的出口不一致。");
+  }
+  const resultTarget = xStatusUrlSchema.safeParse(job.result_url);
+  const sourceTarget = xStatusUrlSchema.safeParse(job.target_post_url);
+  const targetUrl = resultTarget.success ? resultTarget.data : sourceTarget.success ? sourceTarget.data : null;
+  if (!targetUrl) throw new Error("该自动任务没有可通过绑定 IP 打开的 X 帖子链接。");
+  const requestedAt = new Date().toISOString();
+  const { data: updated, error } = await supabase.from("x_reply_jobs").update({
+    inspection_status: "pending",
+    inspection_target_url: targetUrl,
+    inspection_executor_id: null,
+    inspection_requested_at: requestedAt,
+    inspection_started_at: null,
+    inspection_completed_at: null,
+    inspection_error: null,
+  }).eq("id", job.id).in("inspection_status", ["idle", "completed", "failed"])
+    .select("id").maybeSingle();
+  if (error || !updated) throw new Error(error?.message ?? "打开请求状态已经变化，请刷新页面后重试。");
+  revalidatePath(PAGE_PATH);
+  redirect(`${PAGE_PATH}?notice=inspection-requested`);
+}
+
+export async function resumeXDailySendingAfterUncertainReview(formData: FormData) {
+  const user = await requireAdmin(PAGE_PATH);
+  const accountId = idSchema.parse(String(formData.get("accountId") ?? ""));
+  const supabase = serviceClient();
+  const { data: gate, error: gateError } = await supabase.from("x_reply_daily_gates")
+    .select("first_job_id,status")
+    .eq("account_id", accountId)
+    .eq("gate_date", shanghaiToday())
+    .eq("status", "paused")
+    .maybeSingle();
+  if (gateError || !gate?.first_job_id) {
+    throw new Error(gateError?.message ?? "今日暂停状态已经变化，请刷新页面后重试。");
+  }
+  const { data: firstJob, error: jobError } = await supabase.from("x_reply_jobs")
+    .select("id")
+    .eq("id", gate.first_job_id)
+    .eq("account_id", accountId)
+    .eq("status", "uncertain")
+    .maybeSingle();
+  if (jobError || !firstJob) {
+    throw new Error(jobError?.message ?? "只有结果不确定的今日首条才能放行剩余任务。");
+  }
+  const { data, error } = await supabase.from("x_reply_daily_gates").update({
+    status: "authorized",
+    authorized_at: new Date().toISOString(),
+    authorized_by: user.id,
+  }).eq("account_id", accountId).eq("gate_date", shanghaiToday())
+    .eq("status", "paused").eq("first_job_id", firstJob.id)
+    .select("account_id").maybeSingle();
+  if (error || !data) throw new Error(error?.message ?? "今日暂停状态已经变化，请刷新页面后重试。");
+  revalidatePath(PAGE_PATH);
+  redirect(`${PAGE_PATH}?notice=daily-reviewed-continue`);
+}
+
+export async function retryUnsentXAutoJob(formData: FormData) {
+  await requireAdmin(PAGE_PATH);
+  const jobId = idSchema.parse(String(formData.get("jobId") ?? ""));
+  const supabase = serviceClient();
+  const { data: job, error: readError } = await supabase.from("x_reply_jobs")
+    .select("id,status,action_id,account_id,error_code")
+    .eq("id", jobId).maybeSingle();
+  if (readError || !job || job.status !== "uncertain" || !job.action_id) {
+    throw new Error(readError?.message ?? "只有带 x-use 操作记录的结果不确定任务可以单条重试。");
+  }
+  const { data: updated, error } = await supabase.from("x_reply_jobs").update({
+    status: "queued",
+    attempt_count: 0,
+    scheduled_for: new Date().toISOString(),
+    claimed_at: null,
+    completed_at: null,
+    worker_id: null,
+    error_code: "manual_retry_not_sent",
+    error_message: "管理员确认 X 上未发出；本机将先对账原操作，再仅重试此条。",
+  }).eq("id", jobId).eq("status", "uncertain").eq("action_id", job.action_id)
+    .select("id").maybeSingle();
+  if (error || !updated) throw new Error(error?.message ?? "任务状态已变化，请刷新页面后重试。");
+  revalidatePath(PAGE_PATH);
+  redirect(`${PAGE_PATH}?notice=single-retry-queued`);
 }
 
 export async function pauseXDailySending(formData: FormData) {
@@ -258,4 +397,42 @@ export async function pauseXDailySending(formData: FormData) {
   if (error) throw new Error(error.message);
   revalidatePath(PAGE_PATH);
   redirect(`${PAGE_PATH}?notice=daily-paused`);
+}
+
+export async function resumePausedXDailySending(formData: FormData) {
+  const user = await requireAdmin(PAGE_PATH);
+  const accountId = idSchema.parse(String(formData.get("accountId") ?? ""));
+  const supabase = serviceClient();
+  const today = shanghaiToday();
+  const { data: gate, error: gateError } = await supabase.from("x_reply_daily_gates")
+    .select("first_job_id,status,first_sent_at")
+    .eq("account_id", accountId).eq("gate_date", today).eq("status", "paused")
+    .maybeSingle();
+  if (gateError || !gate) throw new Error(gateError?.message ?? "该账号今天已不是暂停状态，请刷新页面。");
+
+  const [{ data: firstJob, error: jobError }, { count: activeCount, error: activeError }] = await Promise.all([
+    gate.first_job_id
+      ? supabase.from("x_reply_jobs").select("id,status").eq("id", gate.first_job_id).eq("account_id", accountId).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    supabase.from("x_reply_jobs").select("id", { count: "exact", head: true })
+      .eq("account_id", accountId).eq("status", "claimed"),
+  ]);
+  if (jobError || activeError) throw new Error(jobError?.message ?? activeError?.message);
+  if ((activeCount ?? 0) > 0) throw new Error("该账号仍有任务正在执行，请等待其完成后再恢复。");
+  const nextStatus = getXPausedGateResumeStatus(firstJob?.status ?? null);
+  if (!nextStatus) throw new Error("今日首条结果尚不确定，请使用对应的核对或单条重试入口。");
+
+  const now = new Date().toISOString();
+  let update = supabase.from("x_reply_daily_gates").update({
+    status: nextStatus,
+    first_job_id: nextStatus === "pending" ? null : gate.first_job_id,
+    first_sent_at: nextStatus === "pending" ? null : gate.first_sent_at,
+    authorized_at: nextStatus === "authorized" ? now : null,
+    authorized_by: nextStatus === "authorized" ? user.id : null,
+  }).eq("account_id", accountId).eq("gate_date", today).eq("status", "paused");
+  update = gate.first_job_id ? update.eq("first_job_id", gate.first_job_id) : update.is("first_job_id", null);
+  const { data: resumed, error } = await update.select("account_id").maybeSingle();
+  if (error || !resumed) throw new Error(error?.message ?? "暂停状态已变化，请刷新页面后重试。");
+  revalidatePath(PAGE_PATH);
+  redirect(`${PAGE_PATH}?notice=daily-resumed`);
 }

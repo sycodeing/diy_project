@@ -205,7 +205,7 @@ export default async function XLeadsPage({
             return <article className="overflow-hidden rounded-xl border border-line bg-panel/90" key={lead.id}>
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-surface px-4 py-2.5">
                 <div className="flex flex-wrap items-center gap-2">
-                  <a className="font-black text-accent" href={lead.post_url} rel="noreferrer" target="_blank">@{lead.x_handle}</a>
+                  <span className="font-black text-accent">@{lead.x_handle}</span>
                   <span className="rounded-md border border-line bg-white px-2 py-1 text-xs font-bold">{X_LEAD_SEGMENT_LABELS[lead.segment] ?? lead.segment}</span>
                   <span className="rounded-md bg-accent-soft px-2 py-1 text-xs font-black text-accent-strong">{getXLeadFunnelStatus(lead)}</span>
                 </div>
@@ -220,7 +220,7 @@ export default async function XLeadsPage({
                     mediaUrl={lead.media_url}
                     mediaUrls={lead.media_urls}
                   />
-                  <a className="mt-2 inline-block text-xs font-bold text-accent" href={lead.post_url} rel="noreferrer" target="_blank">打开原帖 ↗</a>
+                  <p className="mt-2 text-xs font-bold text-muted">选择账号并加入队列后，只能从对应队列使用该账号绑定 IP 打开原帖。</p>
                 </div>
 
                 <div>

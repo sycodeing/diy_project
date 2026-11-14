@@ -5,7 +5,7 @@ import { getXReplyWorkerSecret } from "@/lib/env";
 import { getMarketingReplyPreviewUrl } from "@/lib/marketing";
 import { decryptProxyUrl } from "@/lib/x-proxy-crypto";
 import { isAuthorizedXReplyWorker } from "@/lib/x-reply-worker-auth";
-import { isBoundProxyEgress, isXAccountClaimEligible, isXDailyGateClaimAllowed, isXJobClaimEligible } from "@/lib/x-reply-safety";
+import { isBoundProxyEgress, isXAccountClaimEligible, isXAccountCooldownActive, isXDailyGateClaimAllowed, isXJobClaimEligible } from "@/lib/x-reply-safety";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { isValidXFirstContactText } from "@/lib/x-lead-copy";
 
@@ -23,7 +23,9 @@ const requestSchema = z.object({
   currentEgressIp: ipSchema.nullable(),
   networkProbeStatus: z.enum(["unknown", "healthy", "mismatch", "error"]),
   lastError: z.string().trim().max(1000).nullable().optional(),
+  writesPaused: z.boolean().optional(),
   inspectionBusy: z.boolean().optional(),
+  inspectionAccountKeys: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)).max(100).optional(),
   networkVerification: z.object({
     jobId: z.string().uuid(),
     accountKey: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
@@ -52,12 +54,12 @@ export async function POST(request: Request) {
   const heartbeat = parsed.data;
   const now = new Date().toISOString();
   const available = heartbeat.xUseAvailable && heartbeat.configuredAccounts.length > 0;
-  const { data: workerState, error: heartbeatError } = await supabase.from("x_reply_workers").upsert({
+  const { error: heartbeatError } = await supabase.from("x_reply_workers").upsert({
     worker_id: heartbeat.executorId,
     executor_id: heartbeat.executorId,
     execution_mode: heartbeat.executionMode,
     device_label: heartbeat.deviceLabel ?? null,
-    status: heartbeat.executionMode === "observe" ? "paused" : available ? "online" : "error",
+    status: heartbeat.executionMode === "observe" || heartbeat.writesPaused ? "paused" : available ? "online" : "error",
     xuse_available: heartbeat.xUseAvailable,
     configured_accounts: heartbeat.configuredAccounts,
     current_egress_ip: heartbeat.currentEgressIp,
@@ -69,7 +71,7 @@ export async function POST(request: Request) {
     worker_version: heartbeat.workerVersion,
     last_error: heartbeat.lastError ?? (available ? null : "x-use 不可用或没有本地账号。"),
     last_seen_at: now,
-  }, { onConflict: "worker_id" }).select("cooldown_until").maybeSingle();
+  }, { onConflict: "worker_id" });
   if (heartbeatError) return NextResponse.json({ error: heartbeatError.message }, { status: 500 });
 
   const staleVerificationBefore = new Date(Date.now() - 15 * 60_000).toISOString();
@@ -79,9 +81,178 @@ export async function POST(request: Request) {
     verification_error: "上次验证超时，已自动重新排队。",
   }).eq("executor_id", heartbeat.executorId).eq("verification_status", "running").lt("verification_started_at", staleVerificationBefore);
 
-  // Keep the heartbeat fresh while a profile inspection is visibly open,
-  // but do not claim another verification or approved write in parallel.
-  if (heartbeat.inspectionBusy) return new Response(null, { status: 204 });
+  const staleInspectionBefore = new Date(Date.now() - 15 * 60_000).toISOString();
+  await supabase.from("x_reply_jobs").update({
+    inspection_status: "failed",
+    inspection_completed_at: now,
+    inspection_error: "绑定路由浏览窗口超时或执行器已重启，请重新打开。",
+  }).eq("inspection_status", "running").eq("inspection_executor_id", heartbeat.executorId)
+    .lt("inspection_started_at", staleInspectionBefore);
+
+  const staleManualOpenBefore = new Date(Date.now() - 15 * 60_000).toISOString();
+  await supabase.from("x_manual_posts").update({
+    bound_open_status: "failed",
+    bound_open_completed_at: now,
+    bound_open_error: "Latte 绑定发送窗口超时或执行器已重启，请重新打开。",
+  }).eq("bound_open_status", "running").eq("bound_open_executor_id", heartbeat.executorId)
+    .lt("bound_open_started_at", staleManualOpenBefore);
+
+  if (!heartbeat.inspectionBusy) {
+    const { data: manualPost, error: manualReadError } = await supabase.from("x_manual_posts")
+      .select("id,bound_open_target_url,x_reply_accounts!inner(account_key,expected_x_handle,active,executor_id,network_mode,expected_egress_ip,verification_status,x_reply_account_proxies(encrypted_url,status,egress_ip))")
+      .eq("bound_open_status", "pending")
+      .eq("x_reply_accounts.active", true)
+      .eq("x_reply_accounts.executor_id", heartbeat.executorId)
+      .order("bound_open_requested_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (manualReadError) return NextResponse.json({ error: manualReadError.message }, { status: 500 });
+    if (manualPost) {
+      const accountRelation = manualPost.x_reply_accounts;
+      const account = Array.isArray(accountRelation) ? accountRelation[0] : accountRelation;
+      const proxyRelation = account?.x_reply_account_proxies;
+      const proxy = Array.isArray(proxyRelation) ? proxyRelation[0] : proxyRelation;
+      let routeError: string | null = null;
+      let inspectionProxyUrl: string | null = null;
+      let expectedInspectionEgressIp: string | null = null;
+      if (!heartbeat.xUseAvailable || !account || !heartbeat.configuredAccounts.includes(account.account_key)) {
+        routeError = "绑定执行器缺少 Latte 的本地 x-use 登录数据。";
+      } else if (account.account_key !== "Latte192837465") {
+        routeError = "手动发送窗口只能使用 Latte192837465。";
+      } else if (account.verification_status !== "passed") {
+        routeError = "Latte 尚未通过账号与出口映射验证。";
+      } else if (!manualPost.bound_open_target_url) {
+        routeError = "没有可打开的 X 目标链接。";
+      } else if (account.network_mode === "vpn_direct") {
+        expectedInspectionEgressIp = account.expected_egress_ip ? String(account.expected_egress_ip) : null;
+        if (!expectedInspectionEgressIp || heartbeat.networkProbeStatus !== "healthy"
+          || heartbeat.currentEgressIp !== expectedInspectionEgressIp) {
+          routeError = "当前 VPN 出口与 Latte 锁定的出口不一致。";
+        }
+      } else if (account.network_mode === "fixed_proxy") {
+        expectedInspectionEgressIp = proxy?.egress_ip ? String(proxy.egress_ip) : null;
+        if (!proxy?.encrypted_url || proxy.status !== "healthy" || !expectedInspectionEgressIp) {
+          routeError = "Latte 的固定代理尚未确认健康出口。";
+        } else {
+          const workerSecret = getXReplyWorkerSecret();
+          if (!workerSecret) {
+            routeError = "Worker 加密密钥不可用。";
+          } else {
+            try {
+              inspectionProxyUrl = decryptProxyUrl(proxy.encrypted_url, workerSecret);
+            } catch {
+              routeError = "固定代理密文无法解密。";
+            }
+          }
+        }
+      } else {
+        routeError = "Latte 网络模式无效。";
+      }
+      if (routeError) {
+        await supabase.from("x_manual_posts").update({
+          bound_open_status: "failed",
+          bound_open_completed_at: now,
+          bound_open_error: routeError,
+        }).eq("id", manualPost.id).eq("bound_open_status", "pending");
+        return new Response(null, { status: 204 });
+      }
+      const { data: claimedManual, error: manualClaimError } = await supabase.from("x_manual_posts").update({
+        bound_open_status: "running",
+        bound_open_started_at: now,
+        bound_open_completed_at: null,
+        bound_open_error: null,
+        bound_open_executor_id: heartbeat.executorId,
+      }).eq("id", manualPost.id).eq("bound_open_status", "pending").select("id").maybeSingle();
+      if (manualClaimError) return NextResponse.json({ error: manualClaimError.message }, { status: 500 });
+      if (claimedManual && account) return NextResponse.json({ inspection: {
+        id: manualPost.id,
+        kind: "manual",
+        accountKey: account.account_key,
+        expectedXHandle: account.expected_x_handle,
+        networkMode: account.network_mode,
+        expectedEgressIp: expectedInspectionEgressIp,
+        proxyUrl: inspectionProxyUrl,
+        targetUrl: manualPost.bound_open_target_url,
+      } });
+    }
+  }
+
+  if (!heartbeat.inspectionBusy) {
+    const { data: inspectionJob, error: inspectionReadError } = await supabase.from("x_reply_jobs")
+      .select("id,inspection_target_url,x_reply_accounts!inner(account_key,expected_x_handle,active,executor_id,network_mode,expected_egress_ip,verification_status,x_reply_account_proxies(encrypted_url,status,egress_ip))")
+      .eq("inspection_status", "pending")
+      .eq("x_reply_accounts.active", true)
+      .eq("x_reply_accounts.executor_id", heartbeat.executorId)
+      .order("inspection_requested_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (inspectionReadError) return NextResponse.json({ error: inspectionReadError.message }, { status: 500 });
+    if (inspectionJob) {
+      const accountRelation = inspectionJob.x_reply_accounts;
+      const account = Array.isArray(accountRelation) ? accountRelation[0] : accountRelation;
+      const proxyRelation = account?.x_reply_account_proxies;
+      const proxy = Array.isArray(proxyRelation) ? proxyRelation[0] : proxyRelation;
+      let routeError: string | null = null;
+      let inspectionProxyUrl: string | null = null;
+      let expectedInspectionEgressIp: string | null = null;
+      if (!heartbeat.xUseAvailable || !account || !heartbeat.configuredAccounts.includes(account.account_key)) {
+        routeError = "绑定执行器缺少该账号的本地 x-use 登录数据。";
+      } else if (account.verification_status !== "passed") {
+        routeError = "该账号尚未通过账号与出口映射验证。";
+      } else if (!inspectionJob.inspection_target_url) {
+        routeError = "没有可打开的 X 原帖链接。";
+      } else if (account.network_mode === "vpn_direct") {
+        expectedInspectionEgressIp = account.expected_egress_ip ? String(account.expected_egress_ip) : null;
+        if (!expectedInspectionEgressIp || heartbeat.networkProbeStatus !== "healthy"
+          || heartbeat.currentEgressIp !== expectedInspectionEgressIp) {
+          routeError = "当前 VPN 出口与该账号锁定的出口不一致。";
+        }
+      } else if (account.network_mode === "fixed_proxy") {
+        expectedInspectionEgressIp = proxy?.egress_ip ? String(proxy.egress_ip) : null;
+        if (!proxy?.encrypted_url || proxy.status !== "healthy" || !expectedInspectionEgressIp) {
+          routeError = "该账号的固定代理尚未确认健康出口。";
+        } else {
+          const workerSecret = getXReplyWorkerSecret();
+          if (!workerSecret) {
+            routeError = "Worker 加密密钥不可用。";
+          } else {
+            try {
+              inspectionProxyUrl = decryptProxyUrl(proxy.encrypted_url, workerSecret);
+            } catch {
+              routeError = "固定代理密文无法解密。";
+            }
+          }
+        }
+      } else {
+        routeError = "账号网络模式无效。";
+      }
+      if (routeError) {
+        await supabase.from("x_reply_jobs").update({
+          inspection_status: "failed",
+          inspection_completed_at: now,
+          inspection_error: routeError,
+        }).eq("id", inspectionJob.id).eq("inspection_status", "pending");
+        return new Response(null, { status: 204 });
+      }
+      const { data: claimedInspection, error: inspectionClaimError } = await supabase.from("x_reply_jobs").update({
+        inspection_status: "running",
+        inspection_started_at: now,
+        inspection_completed_at: null,
+        inspection_error: null,
+        inspection_executor_id: heartbeat.executorId,
+      }).eq("id", inspectionJob.id).eq("inspection_status", "pending").select("id").maybeSingle();
+      if (inspectionClaimError) return NextResponse.json({ error: inspectionClaimError.message }, { status: 500 });
+      if (claimedInspection && account) return NextResponse.json({ inspection: {
+        id: inspectionJob.id,
+        accountKey: account.account_key,
+        expectedXHandle: account.expected_x_handle,
+        networkMode: account.network_mode,
+        expectedEgressIp: expectedInspectionEgressIp,
+        proxyUrl: inspectionProxyUrl,
+        targetUrl: inspectionJob.inspection_target_url,
+      } });
+    }
+  }
 
   const { data: verificationAccount, error: verificationReadError } = await supabase.from("x_reply_accounts")
     .select("id,account_key,expected_x_handle,executor_id,network_mode,expected_egress_ip,x_reply_account_proxies(encrypted_url)")
@@ -92,7 +263,9 @@ export async function POST(request: Request) {
     .limit(1)
     .maybeSingle();
   if (verificationReadError) return NextResponse.json({ error: verificationReadError.message }, { status: 500 });
-  if (verificationAccount) {
+  // One visible inspection may stay open, but it only blocks another inspection.
+  // Writes for other eligible accounts can continue in parallel.
+  if (verificationAccount && !heartbeat.inspectionBusy) {
     const proxyRelation = verificationAccount.x_reply_account_proxies;
     const proxy = Array.isArray(proxyRelation) ? proxyRelation[0] : proxyRelation;
     let verificationProxyUrl: string | null = null;
@@ -134,8 +307,9 @@ export async function POST(request: Request) {
   }
 
   // Observe may execute the explicit read-only mapping verification above, but never claims writes.
-  if (heartbeat.executionMode !== "send") return new Response(null, { status: 204 });
-  if (workerState?.cooldown_until && Date.parse(workerState.cooldown_until) > Date.now()) return new Response(null, { status: 204 });
+  // A worker paused by a critical account-safety signal keeps heartbeating so
+  // admins can still launch bound-route, read-only inspections.
+  if (heartbeat.executionMode !== "send" || heartbeat.writesPaused) return new Response(null, { status: 204 });
 
   // A claimed write can already have reached X before the worker disappeared.
   // Only an active send-mode executor may reconcile stale claims.
@@ -153,15 +327,18 @@ export async function POST(request: Request) {
 
   const { data: accountRows, error: accountsError } = await supabase
     .from("x_reply_accounts")
-    .select("id,account_key,executor_id,network_mode,expected_egress_ip,verification_status,require_daily_first_confirmation,x_reply_account_proxies(encrypted_url,status,egress_ip)")
+    .select("id,account_key,executor_id,network_mode,expected_egress_ip,verification_status,require_daily_first_confirmation,cooldown_until,x_reply_account_proxies(encrypted_url,status,egress_ip)")
     .eq("active", true)
     .eq("executor_id", heartbeat.executorId);
   if (accountsError) return NextResponse.json({ error: accountsError.message }, { status: 500 });
 
   const accountRoutes = new Map<string, AccountRoute>();
+  const inspectionAccountKeys = new Set(heartbeat.inspectionAccountKeys ?? []);
   for (const account of accountRows ?? []) {
     if (account.network_mode !== "vpn_direct" && account.network_mode !== "fixed_proxy") continue;
     if (["pending", "running"].includes(account.verification_status)) continue;
+    if (inspectionAccountKeys.has(account.account_key)) continue;
+    if (isXAccountCooldownActive(account.cooldown_until, Date.parse(now))) continue;
     const proxy = Array.isArray(account.x_reply_account_proxies)
       ? account.x_reply_account_proxies[0]
       : account.x_reply_account_proxies;
@@ -197,33 +374,54 @@ export async function POST(request: Request) {
 
   const shanghaiDate = getShanghaiDate();
   const { data: gates, error: gatesError } = await supabase.from("x_reply_daily_gates")
-    .select("account_id,status")
+    .select("account_id,status,first_job_id")
     .eq("gate_date", shanghaiDate)
     .in("account_id", [...accountRoutes.keys()]);
   if (gatesError) return NextResponse.json({ error: gatesError.message }, { status: 500 });
   const gateStatus = new Map((gates ?? []).map((gate) => [gate.account_id, gate.status]));
+  const gateFirstJob = new Map((gates ?? []).map((gate) => [gate.account_id, gate.first_job_id]));
   const eligibleAccountIds = [...accountRoutes.entries()]
     .filter(([accountId, route]) => isXDailyGateClaimAllowed(route.requiresConfirmation, gateStatus.get(accountId)))
     .map(([accountId]) => accountId);
-  if (!eligibleAccountIds.length) return new Response(null, { status: 204 });
-
-  let queuedQuery = supabase
+  const jobSelect = "id,account_id,action_type,target_post_url,reply_text,content_mode,copy_variant,scheduled_for,created_at,status,preparation_status,attempt_count,approved_at,action_id,error_code,x_leads(marketing_links!x_leads_marketing_link_id_fkey(source_hash,expires_at))";
+  let retryQuery = supabase
     .from("x_reply_jobs")
-    .select("id,account_id,action_type,target_post_url,reply_text,content_mode,copy_variant,scheduled_for,created_at,status,preparation_status,attempt_count,approved_at,x_leads(marketing_links!x_leads_marketing_link_id_fkey(source_hash,expires_at))")
+    .select(jobSelect)
     .eq("status", "queued")
     .eq("preparation_status", "ready")
     .eq("attempt_count", 0)
+    .eq("error_code", "manual_retry_not_sent")
+    .not("action_id", "is", null)
     .not("approved_at", "is", null)
     .lte("scheduled_for", now)
-    .in("account_id", eligibleAccountIds);
-  if (heartbeat.networkVerification) queuedQuery = queuedQuery.eq("id", heartbeat.networkVerification.jobId);
-  if (!heartbeat.capabilities.includes("first_contact_text_v1")) queuedQuery = queuedQuery.eq("content_mode", "legacy_preview");
-  const { data: queued, error: readError } = await queuedQuery
+    .in("account_id", [...accountRoutes.keys()]);
+  if (heartbeat.networkVerification) retryQuery = retryQuery.eq("id", heartbeat.networkVerification.jobId);
+  if (!heartbeat.capabilities.includes("first_contact_text_v1")) retryQuery = retryQuery.eq("content_mode", "legacy_preview");
+  const { data: retryCandidates, error: retryReadError } = await retryQuery
     .order("scheduled_for", { ascending: true })
     .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  if (readError) return NextResponse.json({ error: readError.message }, { status: 500 });
+    .limit(100);
+  if (retryReadError) return NextResponse.json({ error: retryReadError.message }, { status: 500 });
+  let queued = retryCandidates?.find((job) => {
+    const route = accountRoutes.get(job.account_id);
+    if (!route) return false;
+    return isXDailyGateClaimAllowed(route.requiresConfirmation, gateStatus.get(job.account_id))
+      || (gateStatus.get(job.account_id) === "paused" && gateFirstJob.get(job.account_id) === job.id);
+  }) ?? null;
+  if (!queued && eligibleAccountIds.length) {
+    let queuedQuery = supabase.from("x_reply_jobs").select(jobSelect)
+      .eq("status", "queued").eq("preparation_status", "ready").eq("attempt_count", 0)
+      .or("error_code.is.null,error_code.neq.manual_retry_not_sent")
+      .not("approved_at", "is", null).lte("scheduled_for", now)
+      .in("account_id", eligibleAccountIds);
+    if (heartbeat.networkVerification) queuedQuery = queuedQuery.eq("id", heartbeat.networkVerification.jobId);
+    if (!heartbeat.capabilities.includes("first_contact_text_v1")) queuedQuery = queuedQuery.eq("content_mode", "legacy_preview");
+    const { data, error } = await queuedQuery
+      .order("scheduled_for", { ascending: true }).order("created_at", { ascending: true })
+      .limit(1).maybeSingle();
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    queued = data;
+  }
   if (!queued) return new Response(null, { status: 204 });
   if (!isXJobClaimEligible({
     status: queued.status,
@@ -303,19 +501,21 @@ export async function POST(request: Request) {
     if (proxyError || !verifiedProxy) return new Response(null, { status: 204 });
   }
 
-  const { data: claimed, error: claimError } = await supabase.from("x_reply_jobs").update({
+  let claimQuery = supabase.from("x_reply_jobs").update({
     status: "claimed",
     worker_id: heartbeat.executorId,
     claimed_at: now,
     attempt_count: 1,
-    error_code: null,
+    error_code: queued.error_code === "manual_retry_not_sent" ? "manual_retry_not_sent" : null,
     error_message: null,
   }).eq("id", queued.id).eq("status", "queued").eq("attempt_count", 0)
     .not("approved_at", "is", null)
     .eq("content_mode", queued.content_mode)
     .eq("reply_text", queued.reply_text)
     .eq("preparation_status", "ready")
-    .lte("scheduled_for", now)
+    .lte("scheduled_for", now);
+  if (queued.error_code === "manual_retry_not_sent") claimQuery = claimQuery.eq("error_code", "manual_retry_not_sent");
+  const { data: claimed, error: claimError } = await claimQuery
     .select("id,account_id,action_type,target_post_url,reply_text,scheduled_for,created_at")
     .maybeSingle();
   if (claimError) return NextResponse.json({ error: claimError.message }, { status: 500 });
@@ -356,6 +556,7 @@ export async function POST(request: Request) {
     contentMode: queued.content_mode,
     copyVariant: queued.copy_variant,
     previewImageUrl: preview?.url ?? null,
+    retryActionId: queued.error_code === "manual_retry_not_sent" ? queued.action_id : null,
   } });
 }
 

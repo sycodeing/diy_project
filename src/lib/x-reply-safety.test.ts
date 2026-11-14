@@ -1,14 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  getNextXAccountBatchState,
+  getXPausedGateResumeStatus,
   getXApprovalBlockReason,
   isBoundProxyEgress,
   isXAccountClaimEligible,
+  isXAccountCooldownActive,
   isXDailyGateClaimAllowed,
   isXJobClaimEligible,
   type ApprovalSafetyInput,
   type ClaimSafetyInput,
 } from "./x-reply-safety.ts";
+
+test("manual resume releases a sent first job but keeps uncertain and in-flight jobs blocked", () => {
+  assert.equal(getXPausedGateResumeStatus("sent"), "authorized");
+  assert.equal(getXPausedGateResumeStatus(null), "pending");
+  assert.equal(getXPausedGateResumeStatus("failed"), "pending");
+  assert.equal(getXPausedGateResumeStatus("uncertain"), null);
+  assert.equal(getXPausedGateResumeStatus("claimed"), null);
+});
 
 const nowMillis = Date.parse("2026-10-31T02:00:00.000Z");
 
@@ -157,4 +168,21 @@ test("daily first-success gate pauses later jobs until explicit authorization", 
   assert.equal(isXDailyGateClaimAllowed(true, "paused"), false);
   assert.equal(isXDailyGateClaimAllowed(true, "authorized"), true);
   assert.equal(isXDailyGateClaimAllowed(false, "awaiting_confirmation"), true);
+});
+
+test("cooldowns apply to one account until their own deadline", () => {
+  assert.equal(isXAccountCooldownActive(null, nowMillis), false);
+  assert.equal(isXAccountCooldownActive("2026-10-31T01:59:59.000Z", nowMillis), false);
+  assert.equal(isXAccountCooldownActive("2026-10-31T02:45:00.000Z", nowMillis), true);
+});
+
+test("the twelfth confirmed send starts a 45-minute rest for only that account", () => {
+  assert.deepEqual(getNextXAccountBatchState(10, nowMillis), {
+    batchSentCount: 11,
+    cooldownUntil: null,
+  });
+  assert.deepEqual(getNextXAccountBatchState(11, nowMillis), {
+    batchSentCount: 0,
+    cooldownUntil: "2026-10-31T02:45:00.000Z",
+  });
 });

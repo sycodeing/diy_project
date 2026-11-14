@@ -920,6 +920,8 @@ create table if not exists public.x_reply_accounts (
   verified_egress_ip inet,
   verification_error text check (verification_error is null or length(verification_error) <= 1000),
   require_daily_first_confirmation boolean not null default true,
+  batch_sent_count integer not null default 0 check (batch_sent_count between 0 and 11),
+  cooldown_until timestamptz,
   active boolean not null default true,
   created_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
@@ -962,6 +964,15 @@ create table if not exists public.x_reply_jobs (
   xuse_draft_id text,
   action_id text,
   result_url text,
+  inspection_status text not null default 'idle'
+    check (inspection_status in ('idle', 'pending', 'running', 'completed', 'failed')),
+  inspection_target_url text
+    check (inspection_target_url is null or inspection_target_url ~ '^https://(www\.)?(x|twitter)\.com/[A-Za-z0-9_]+/status/[0-9]+'),
+  inspection_executor_id text check (inspection_executor_id is null or length(inspection_executor_id) between 1 and 120),
+  inspection_requested_at timestamptz,
+  inspection_started_at timestamptz,
+  inspection_completed_at timestamptz,
+  inspection_error text check (inspection_error is null or length(inspection_error) <= 1000),
   error_code text,
   error_message text,
   egress_ip inet,
@@ -992,6 +1003,14 @@ create table if not exists public.x_manual_posts (
   prepared_at timestamptz,
   result_url text check (result_url is null or result_url ~ '^https://(www\.)?(x|twitter)\.com/[A-Za-z0-9_]+/status/[0-9]+'),
   sent_at timestamptz,
+  bound_open_status text not null default 'idle'
+    check (bound_open_status in ('idle', 'pending', 'running', 'completed', 'failed')),
+  bound_open_target_url text check (bound_open_target_url is null or bound_open_target_url ~ '^https://(www\.)?x\.com/'),
+  bound_open_executor_id text check (bound_open_executor_id is null or length(bound_open_executor_id) between 1 and 120),
+  bound_open_requested_at timestamptz,
+  bound_open_started_at timestamptz,
+  bound_open_completed_at timestamptz,
+  bound_open_error text check (bound_open_error is null or length(bound_open_error) <= 1000),
   created_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -1060,6 +1079,9 @@ create unique index if not exists x_manual_posts_one_task_per_lead_idx
 create index if not exists x_manual_posts_preparation_idx
   on public.x_manual_posts (preparation_status, created_at desc)
   where preparation_status in ('pending', 'processing', 'failed');
+create index if not exists x_manual_posts_pending_bound_open_idx
+  on public.x_manual_posts (bound_open_requested_at)
+  where bound_open_status = 'pending';
 create index if not exists x_manual_posts_created_by_idx
   on public.x_manual_posts (created_by) where created_by is not null;
 create index if not exists x_reply_accounts_created_by_idx
@@ -1073,6 +1095,10 @@ create index if not exists x_reply_accounts_executor_active_idx
 create index if not exists x_reply_accounts_pending_verification_idx
   on public.x_reply_accounts (executor_id, verification_requested_at)
   where verification_status = 'pending' and executor_id is not null;
+
+create index if not exists x_reply_jobs_pending_inspection_idx
+  on public.x_reply_jobs (inspection_requested_at)
+  where inspection_status = 'pending';
 create index if not exists x_reply_account_proxies_status_idx
   on public.x_reply_account_proxies (status, last_tested_at desc);
 create unique index if not exists x_reply_account_proxies_unique_egress_idx
@@ -1133,10 +1159,22 @@ comment on column public.x_reply_accounts.network_mode is
   'Network policy: vpn_direct uses the macOS system VPN; fixed_proxy uses one non-rotating per-account proxy.';
 comment on column public.x_reply_accounts.expected_egress_ip is
   'Administrator-confirmed VPN egress. Worker observations never replace this value automatically.';
+comment on column public.x_reply_accounts.batch_sent_count is
+  'Confirmed sends for this account since its last 45-minute rest; resets after the twelfth send.';
+comment on column public.x_reply_accounts.cooldown_until is
+  'This account cannot claim another write before this time; other accounts remain eligible.';
 comment on column public.x_reply_workers.execution_mode is
   'Fail-closed local mode. observe only reports health; send is required before any job can be claimed.';
 comment on column public.x_reply_workers.current_egress_ip is
   'Cookie-free Patchright browser egress observation. Never sourced from a plain HTTP client.';
+comment on column public.x_reply_workers.batch_sent_count is
+  'Legacy worker-wide counter retained for rollout compatibility; account counters control rests.';
+comment on column public.x_reply_workers.cooldown_until is
+  'Legacy worker-wide cooldown retained for rollout compatibility; account cooldowns control claims.';
+comment on column public.x_reply_jobs.inspection_status is
+  'Lifecycle for a read-only X post inspection opened by the bound Mac worker through the job account route.';
+comment on column public.x_reply_jobs.inspection_target_url is
+  'X status URL captured when an administrator requests a bound-route inspection.';
 comment on column public.x_reply_jobs.egress_ip is
   'Browser route observed immediately before the single X write attempt.';
 comment on table public.x_reply_daily_gates is

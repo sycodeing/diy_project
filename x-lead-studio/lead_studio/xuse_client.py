@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -50,6 +51,25 @@ class AccountMappingVerificationResult:
     egress_ip: str | None = None
     error_code: str | None = None
     error_message: str | None = None
+
+
+async def _hold_profile_until_closed(page: Any, browser: Any, hold_open_seconds: float) -> None:
+    """Keep a verified profile visible until its window closes or the hold expires."""
+    if hold_open_seconds <= 0:
+        return
+    closed = asyncio.Event()
+
+    def mark_closed(*_args: Any) -> None:
+        closed.set()
+
+    page.on("close", mark_closed)
+    browser.on("disconnected", mark_closed)
+    if page.is_closed() or not browser.is_connected():
+        return
+    try:
+        await asyncio.wait_for(closed.wait(), timeout=hold_open_seconds)
+    except asyncio.TimeoutError:
+        pass
 
 
 def xuse_is_installed() -> bool:
@@ -122,6 +142,47 @@ def _account_cookies(x_use_home: Path, account_id: str) -> list[dict[str, Any]] 
         names = {cookie.get("name") for cookie in cookies if cookie.get("value")}
         return cookies if {"auth_token", "ct0"}.issubset(names) else None
     return None
+
+
+def _save_account_cookies(x_use_home: Path, account_id: str, cookies: list[dict[str, Any]]) -> None:
+    """Persist only a verified account's refreshed X cookies in its existing local store."""
+    from xuse.browser.cookies import normalize_cookies
+
+    # Chromium can export host-only and domain variants of an optional cookie.
+    # x-use intentionally rejects that ambiguity, so discard both variants.
+    counts: dict[tuple[str, str, str], int] = {}
+    for item in cookies:
+        key = (str(item.get("name")), str(item.get("domain", ".x.com")).lstrip("."), str(item.get("path", "/")))
+        counts[key] = counts.get(key, 0) + 1
+    cleaned = [item for item in cookies if item.get("name") in {"auth_token", "ct0"}
+               or (counts[(str(item.get("name")), str(item.get("domain", ".x.com")).lstrip("."), str(item.get("path", "/")))] == 1
+                   and item.get("partitionKey") is None
+                   and item.get("firstPartyDomain") in (None, "")
+                   and item.get("partitioned") in (None, False))]
+    validated = normalize_cookies(cleaned)
+    config_path = x_use_home / "config" / "accounts.json"
+    rows = json.loads(config_path.read_text(encoding="utf-8"))
+    for row in rows:
+        if not isinstance(row, dict) or row.get("account_id") != account_id:
+            continue
+        cookie_file = row.get("cookie_file_path")
+        if isinstance(cookie_file, str) and cookie_file:
+            path = Path(cookie_file)
+            if not path.is_absolute():
+                path = next((candidate for candidate in (x_use_home / path, x_use_home / "config" / path) if candidate.is_file()), x_use_home / path)
+        else:
+            row["cookies"] = validated
+            path = config_path
+            validated = rows
+        temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        try:
+            temporary.write_text(json.dumps(validated, ensure_ascii=False), encoding="utf-8")
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, path)
+        finally:
+            with suppress(FileNotFoundError):
+                temporary.unlink()
+        return
 
 
 def _patchright_proxy(proxy_url: str | None) -> dict[str, str] | None:
@@ -277,7 +338,7 @@ def _server_parameters(x_use_home: Path) -> tuple[Any, dict[str, str]]:
     environment.pop("PYTHONPATH", None)
     parameters = StdioServerParameters(
         command=sys.executable,
-        args=["-m", "xuse.mcp.server"],
+        args=[str(Path(__file__).with_name("xuse_mcp_bootstrap.py"))],
         cwd=str(x_use_home),
         env=environment,
     )
@@ -330,8 +391,10 @@ async def verify_account_mapping(
     proxy_url: str | None,
     ip_check_url: str,
     hold_open_seconds: float = 0,
+    target_url: str | None = None,
+    expected_egress_ip: str | None = None,
 ) -> AccountMappingVerificationResult:
-    """Show the signed-in X profile through its bound route without opening Creator Studio."""
+    """Verify the account route, then show its profile, one X status URL, or the X composer."""
     if network_mode not in NETWORK_MODES:
         return AccountMappingVerificationResult(False, error_code="invalid_network_mode", error_message="Unsupported X network mode.")
     if account not in configured_account_keys(x_use_home):
@@ -340,12 +403,22 @@ async def verify_account_mapping(
         return AccountMappingVerificationResult(False, error_code="proxy_required", error_message="The fixed_proxy account has no dedicated route.")
     if expected_handle and not re.fullmatch(r"[A-Za-z0-9_]{1,15}", expected_handle):
         return AccountMappingVerificationResult(False, error_code="invalid_expected_handle", error_message="The expected X profile handle is invalid.")
+    inspection_url: str | None = None
+    if target_url:
+        parsed_target = urlsplit(target_url)
+        if parsed_target.scheme != "https" or parsed_target.hostname not in {"x.com", "www.x.com", "twitter.com", "www.twitter.com"}:
+            return AccountMappingVerificationResult(False, error_code="invalid_target_url", error_message="The inspection target must be an HTTPS X URL.")
+        target_path = parsed_target.path.rstrip("/")
+        if target_path != "/compose/post" and not re.fullmatch(r"/[A-Za-z0-9_]+/status/[0-9]+", target_path):
+            return AccountMappingVerificationResult(False, error_code="invalid_target_url", error_message="The inspection target is not an X status or compose URL.")
+        inspection_url = f"https://x.com{target_path}"
     cookies = _account_cookies(x_use_home, account)
     if cookies is None:
         return AccountMappingVerificationResult(False, error_code="invalid_cookies", error_message="The selected X account has no valid local auth cookies.")
 
     from patchright.async_api import async_playwright
 
+    stage = "starting the bound browser"
     try:
         async with browser_compatible_proxy(proxy_url) as effective_proxy_url:
             async with async_playwright() as playwright:
@@ -360,6 +433,7 @@ async def verify_account_mapping(
                     try:
                         probe_page = await context.new_page()
                         try:
+                            stage = "checking the bound IP"
                             probe_response = await probe_page.goto(ip_check_url, wait_until="domcontentloaded", timeout=25_000)
                             if probe_response is None or not 200 <= probe_response.status < 300:
                                 return AccountMappingVerificationResult(False, error_code="proxy_ip_unconfirmed", error_message="The browser could not confirm its egress IP.")
@@ -370,17 +444,22 @@ async def verify_account_mapping(
                                 egress_ip = _extract_ip(probe_body)
                             if not egress_ip:
                                 return AccountMappingVerificationResult(False, error_code="proxy_ip_unconfirmed", error_message="The browser did not return a valid egress IP.")
+                            if expected_egress_ip and egress_ip != expected_egress_ip:
+                                return AccountMappingVerificationResult(False, egress_ip=egress_ip, error_code="network_route_mismatch", error_message=f"The browser egress {egress_ip} does not match the bound route {expected_egress_ip}.")
                         finally:
                             await probe_page.close()
 
                         page = await context.new_page()
-                        response = await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30_000)
+                        stage = "loading the X page"
+                        response = await page.goto(inspection_url or "https://x.com/home", wait_until="domcontentloaded", timeout=45_000)
                         if response is None or response.status in (401, 403, 429):
                             return AccountMappingVerificationResult(False, egress_ip=egress_ip, error_code="account_restricted", error_message="X did not allow the signed-in home page to load.")
-                        if not 200 <= response.status < 300 or urlsplit(page.url).path.startswith(("/i/flow", "/login", "/account/access")):
-                            return AccountMappingVerificationResult(False, egress_ip=egress_ip, error_code="login_required", error_message="The selected X login session could not be confirmed.")
+                        if not 200 <= response.status < 300:
+                            return AccountMappingVerificationResult(False, egress_ip=egress_ip, error_code="inspection_unavailable", error_message="The requested X page did not load.")
+                        stage = "confirming the signed-in X account"
                         owner_link = page.locator('[data-testid="AppTabBar_Profile_Link"]')
-                        await owner_link.wait_for(state="visible", timeout=20_000)
+                        # Expired cookies can be renewed manually in this visible, bound-IP window.
+                        await owner_link.wait_for(state="visible", timeout=600_000 if inspection_url else 25_000)
                         switcher = page.locator('[data-testid="SideNav_AccountSwitcher_Button"]')
                         if not await switcher.is_visible():
                             return AccountMappingVerificationResult(False, egress_ip=egress_ip, error_code="owner_unconfirmed", error_message="The signed-in X account switcher is missing.")
@@ -391,24 +470,30 @@ async def verify_account_mapping(
                         actual_handle = owner_match.group(1)
                         if expected_handle and actual_handle.lower() != expected_handle.lower():
                             return AccountMappingVerificationResult(False, actual_handle=actual_handle, egress_ip=egress_ip, error_code="account_mismatch", error_message=f"The signed-in X account @{actual_handle} does not match @{expected_handle}.")
-                        profile_handle = expected_handle or actual_handle
-                        profile_response = await page.goto(f"https://x.com/{profile_handle}", wait_until="domcontentloaded", timeout=30_000)
-                        if profile_response is None or not 200 <= profile_response.status < 300:
-                            return AccountMappingVerificationResult(False, actual_handle=actual_handle, egress_ip=egress_ip, error_code="profile_unavailable", error_message="The expected X profile did not load.")
-                        await page.get_by_test_id("UserName").get_by_text(re.compile(rf"^@{re.escape(profile_handle)}$", re.I)).wait_for(state="visible", timeout=20_000)
-                        if urlsplit(page.url).path.rstrip("/").lower() != f"/{profile_handle.lower()}":
-                            return AccountMappingVerificationResult(False, actual_handle=actual_handle, egress_ip=egress_ip, error_code="profile_mismatch", error_message="X opened a different profile than expected.")
-                        if hold_open_seconds > 0:
-                            await asyncio.sleep(hold_open_seconds)
+                        _save_account_cookies(x_use_home, account, await context.cookies(["https://x.com"]))
+                        if not inspection_url:
+                            profile_handle = expected_handle or actual_handle
+                            stage = "loading the X profile"
+                            profile_response = await page.goto(f"https://x.com/{profile_handle}", wait_until="domcontentloaded", timeout=45_000)
+                            if profile_response is None or not 200 <= profile_response.status < 300:
+                                return AccountMappingVerificationResult(False, actual_handle=actual_handle, egress_ip=egress_ip, error_code="profile_unavailable", error_message="The requested X profile did not load.")
+                            if urlsplit(page.url).path.startswith(("/i/flow", "/login", "/account/access")):
+                                return AccountMappingVerificationResult(False, actual_handle=actual_handle, egress_ip=egress_ip, error_code="login_required", error_message="The selected X login session could not open the requested page.")
+                            await page.get_by_test_id("UserName").get_by_text(re.compile(rf"^@{re.escape(profile_handle)}$", re.I)).wait_for(state="visible", timeout=20_000)
+                            if urlsplit(page.url).path.rstrip("/").lower() != f"/{profile_handle.lower()}":
+                                return AccountMappingVerificationResult(False, actual_handle=actual_handle, egress_ip=egress_ip, error_code="profile_mismatch", error_message="X opened a different profile than expected.")
+                        await _hold_profile_until_closed(page, browser, hold_open_seconds)
                         return AccountMappingVerificationResult(True, actual_handle=actual_handle, egress_ip=egress_ip)
                     finally:
-                        await context.close()
+                        with suppress(Exception):
+                            await context.close()
                 finally:
-                    await browser.close()
+                    with suppress(Exception):
+                        await browser.close()
     except asyncio.TimeoutError:
-        return AccountMappingVerificationResult(False, error_code="mapping_verification_timeout", error_message="The account mapping verification timed out.")
+        return AccountMappingVerificationResult(False, error_code="mapping_verification_timeout", error_message=f"Timed out while {stage}.")
     except Exception as error:
-        return AccountMappingVerificationResult(False, error_code="mapping_verification_failed", error_message=f"{type(error).__name__}: visible X profile verification failed.")
+        return AccountMappingVerificationResult(False, error_code="mapping_verification_failed", error_message=f"{type(error).__name__} while {stage}.")
 
 
 async def send_approved_action(
@@ -423,6 +508,7 @@ async def send_approved_action(
     ip_check_url: str,
     proxy_url: str | None = None,
     verify_route: Callable[[str], Awaitable[tuple[bool, str | None]]] | None = None,
+    retry_action_id: str | None = None,
 ) -> ReplyResult:
     if action_type not in {"post", "reply"}:
         return ReplyResult(status="failed", error_code="invalid_action_type", error_message="X action type must be 'post' or 'reply'.")
@@ -471,6 +557,24 @@ async def send_approved_action(
                             if not accepted:
                                 return ReplyResult(status="failed", error_code="network_route_rejected", error_message=verification_error or "The browser route was rejected by the website.", egress_ip=egress_ip)
 
+                        if retry_action_id:
+                            reconciliation = _payload(await asyncio.wait_for(session.call_tool("resolve_action_outcome", {
+                                "account": account,
+                                "action_id": retry_action_id,
+                                "observed_outcome": "not_sent",
+                            }), timeout=45))
+                            if not reconciliation.get("ok"):
+                                code, message, _ = _error_fields(reconciliation)
+                                return ReplyResult(status="uncertain", action_id=retry_action_id, error_code=code,
+                                                   error_message=f"Original action reconciliation failed: {message}", egress_ip=egress_ip)
+                            resumed = _payload(await asyncio.wait_for(session.call_tool("resume_account_actions", {
+                                "account": account,
+                            }), timeout=120))
+                            if not resumed.get("ok"):
+                                code, message, _ = _error_fields(resumed)
+                                return ReplyResult(status="uncertain", action_id=retry_action_id, error_code=code,
+                                                   error_message=f"X login verification failed before retry: {message}", egress_ip=egress_ip)
+
                         tool_name = "post_tweet" if action_type == "post" else "reply_to_tweet"
                         tool_arguments = {"account": account, "text": text}
                         if tweet_url:
@@ -501,11 +605,12 @@ async def send_approved_action(
                             egress_ip=egress_ip,
                         )
     except asyncio.TimeoutError:
-        return ReplyResult(status="uncertain" if draft_id else "failed", draft_id=draft_id, error_code="xuse_timeout", error_message="x-use timed out. If approval had started, inspect X before any new action.", egress_ip=egress_ip)
+        return ReplyResult(status="uncertain" if draft_id or retry_action_id else "failed", draft_id=draft_id, action_id=retry_action_id if not draft_id else None, error_code="xuse_timeout", error_message="x-use timed out. If approval had started, inspect X before any new action.", egress_ip=egress_ip)
     except Exception as error:
         return ReplyResult(
-            status="uncertain" if draft_id else "failed",
+            status="uncertain" if draft_id or retry_action_id else "failed",
             draft_id=draft_id,
+            action_id=retry_action_id if not draft_id else None,
             error_code=type(error).__name__[:100],
             error_message=_redact_sensitive(f"{type(error).__name__}: {error}"),
             egress_ip=egress_ip,

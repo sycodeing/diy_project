@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isIP } from "node:net";
 import { z } from "zod";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getNextXAccountBatchState } from "@/lib/x-reply-safety";
 import { isAuthorizedXReplyWorker } from "@/lib/x-reply-worker-auth";
 
 export const runtime = "nodejs";
@@ -30,7 +31,7 @@ export async function POST(request: Request, context: RouteContext<"/api/x-repli
   if (!supabase) return NextResponse.json({ error: "Supabase is not configured." }, { status: 503 });
 
   const { data: job, error: readError } = await supabase.from("x_reply_jobs")
-    .select("id,status,worker_id,account_id,x_reply_accounts!inner(network_mode,expected_egress_ip)")
+    .select("id,status,worker_id,account_id,x_reply_accounts!inner(network_mode,expected_egress_ip,batch_sent_count)")
     .eq("id", id)
     .maybeSingle();
   if (readError || !job) return NextResponse.json({ error: readError?.message ?? "Job not found." }, { status: 404 });
@@ -68,20 +69,22 @@ export async function POST(request: Request, context: RouteContext<"/api/x-repli
   if (parsed.data.status === "sent") {
     await supabase.from("x_reply_daily_gates").update({ first_sent_at: completedAt })
       .eq("account_id", job.account_id).eq("first_job_id", job.id).eq("status", "awaiting_confirmation");
-  } else if (parsed.data.status === "failed") {
-    await supabase.from("x_reply_daily_gates").update({ status: "pending", first_job_id: null, first_sent_at: null })
-      .eq("account_id", job.account_id).eq("first_job_id", job.id).eq("status", "awaiting_confirmation");
   } else {
-    await supabase.from("x_reply_daily_gates").update({ status: "paused" })
+    await supabase.from("x_reply_daily_gates").update({ status: "pending", first_job_id: null, first_sent_at: null })
       .eq("account_id", job.account_id).eq("first_job_id", job.id).eq("status", "awaiting_confirmation");
   }
 
-  const { data: worker } = await supabase.from("x_reply_workers")
-    .select("batch_sent_count")
-    .eq("executor_id", parsed.data.executorId)
-    .maybeSingle();
-  const nextBatchCount = parsed.data.status === "sent" ? (worker?.batch_sent_count ?? 0) + 1 : (worker?.batch_sent_count ?? 0);
-  const startsBreak = nextBatchCount >= 12;
+  const nextAccountBatch = parsed.data.status === "sent"
+    ? getNextXAccountBatchState(account?.batch_sent_count ?? 0, Date.now())
+    : null;
+  if (parsed.data.status === "sent") {
+    const { error: accountUpdateError } = await supabase.from("x_reply_accounts").update({
+      batch_sent_count: nextAccountBatch?.batchSentCount,
+      cooldown_until: nextAccountBatch?.cooldownUntil,
+    }).eq("id", job.account_id);
+    if (accountUpdateError) return NextResponse.json({ error: accountUpdateError.message }, { status: 500 });
+  }
+
   await supabase.from("x_reply_workers").update({
     status: parsed.data.status === "failed" ? "error" : "online",
     current_job_id: null,
@@ -89,8 +92,9 @@ export async function POST(request: Request, context: RouteContext<"/api/x-repli
     last_seen_at: completedAt,
     current_egress_ip: parsed.data.egressIp ?? null,
     network_probe_status: parsed.data.egressIp ? "healthy" : "error",
-    batch_sent_count: startsBreak ? 0 : nextBatchCount,
-    cooldown_until: startsBreak ? new Date(Date.now() + 45 * 60_000).toISOString() : null,
   }).eq("executor_id", parsed.data.executorId);
-  return NextResponse.json({ ok: true, cooldownUntil: startsBreak ? new Date(Date.now() + 45 * 60_000).toISOString() : null });
+  return NextResponse.json({
+    ok: true,
+    cooldownUntil: nextAccountBatch?.cooldownUntil ?? null,
+  });
 }

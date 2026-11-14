@@ -38,11 +38,12 @@ Set the same dedicated `X_REPLY_WORKER_SECRET` on the website and in this worker
 2. The administrator approves that individual draft only after the bound executor, local account and network policy are healthy.
 3. `observe` mode reports x-use availability, configured account IDs and a cookie-free Patchright browser egress, but always receives HTTP 204 and never claims a task.
 4. In `send` mode, `vpn_direct` requires the live Patchright egress to match the administrator-locked VPN IP. `fixed_proxy` performs a read-only x-use `test_proxy` before the job is claimed. Neither mode can fall back to another route.
-5. The account-page “open X profile” action is also executed by the Mac worker. It opens the expected signed-in profile through that account's bound route, keeps the visible Patchright window available for about 10 minutes, and pauses writes for that account while inspection is active.
-6. After a fixed proxy's browser egress is first confirmed, later profile checks and automatic writes must return the same IP. A changed IP marks the route unhealthy and blocks the write.
-5. Immediately before the write, the route is checked again. Only then may x-use create its own pending draft (`post_tweet` or `reply_to_tweet`), verify the draft ID, and call `approve_draft` for that same approved text.
-6. `/admin/x-manual-posts` is a separate manual-only queue. It never reaches this worker and only records operator-confirmed results.
-7. The website records `sent`, `failed`, or `uncertain`. Claimed or uncertain writes are never automatically retried.
+5. The account-page “open X profile” action is also executed by the Mac worker. It opens the expected signed-in profile through that account's bound route and keeps the visible Patchright window available for up to about 10 minutes; manually closing the window ends inspection immediately. Only that account's writes pause while inspection is active.
+6. Every X post/result link on the automatic queue is opened by the bound Mac worker, never by a direct browser link. The worker verifies the local account and exact bound egress before showing the target status; confirmation actions remain locked until that inspection completes.
+7. After a fixed proxy's browser egress is first confirmed, later profile checks and automatic writes must return the same IP. A changed IP marks the route unhealthy and blocks the write.
+8. Immediately before the write, the route is checked again. Only then may x-use create its own pending draft (`post_tweet` or `reply_to_tweet`), verify the draft ID, and call `approve_draft` for that same approved text.
+9. `/admin/x-manual-posts` is a separate manual-only queue. It never reaches this worker and only records operator-confirmed results.
+10. The website records `sent`, `failed`, or `uncertain`. Claimed or uncertain writes are never automatically retried.
 
 No server-side LLM key is required because the approved text is passed explicitly.
 
@@ -79,7 +80,7 @@ The dashboard records the audience segment on each lead and uses it in the defau
 - Discovery remains read-only. Public replies require exact-text, per-item administrator approval.
 - No DMs, unreviewed copy changes, unapproved batch cycles, proxy rotation, fingerprint spoofing, CAPTCHA handling, or challenge bypass.
 - Every automatic item still requires exact-text administrator approval. `vpn_direct` uses only the macOS system VPN; `fixed_proxy` uses one non-rotating route per account. A missing, duplicate, changed, or failed route blocks sending.
-- Administrators can approve multiple prepared drafts in one batch. The worker still sends serially, preserves the daily first-send confirmation gate, and waits a fresh random 15–30 seconds after each confirmed send before claiming the next item. Configure x-use with `mcp.safety.write_interval_seconds: 15` so its local safety interval matches the worker.
+- Administrators can approve multiple prepared drafts in one batch. The worker still sends serially, preserves the daily first-send confirmation gate, and waits a fresh random 15–30 seconds after each confirmed send before claiming the next item. Each account independently rests for 45 minutes after its own 12th confirmed send; that rest does not block other accounts. Configure x-use with `mcp.safety.write_interval_seconds: 15` so its local safety interval matches the worker.
 - CAPTCHA, Cloudflare, authentication failure, or persistent throttling pauses collection.
 - Original images and mockups are removed after seven days. Anonymous statistics and suppression records remain.
 - Routine tests mock X and do not authenticate to X.
