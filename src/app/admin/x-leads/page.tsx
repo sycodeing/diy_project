@@ -58,13 +58,13 @@ export default async function XLeadsPage({
 }: {
   searchParams: Promise<{ batch?: string; mode?: string; conclusion?: string; segment?: string; review?: string; reason?: string; notice?: string; page?: string }>;
 }) {
-  await requireAdmin("/admin/x-leads");
+  const filters = await searchParams;
+  const isContactShortlist = filters.batch === CONTACT_SHORTLIST_BATCH;
+  await requireAdmin(isContactShortlist ? `/admin/x-leads?batch=${CONTACT_SHORTLIST_BATCH}` : "/admin/x-leads");
   const supabase = getSupabaseServiceClient();
   if (!supabase) {
     return <AppShell admin><main className="mx-auto w-full max-w-3xl px-4 py-10"><SetupWarning /></main></AppShell>;
   }
-  const filters = await searchParams;
-  const isContactShortlist = filters.batch === CONTACT_SHORTLIST_BATCH;
   let query = supabase
     .from("x_leads")
     .select("id,post_id,x_handle,post_url,media_url,media_urls,posted_at,discovered_at,selection_status,segment,pet_type,occasion,occasion_confidence,ownership_confidence,us_confidence,us_evidence,lead_score,like_count,reply_count,repost_count,view_count,followers_count,targeting_data,consent_copy,public_copy,direct_message_copy,marketing_link_id,marketing_links!x_leads_marketing_link_id_fkey(id,idempotency_key,source_hash,expires_at,account_user_id,account_was_created,marketing_events(event_type,created_at),orders(id,payment_status,paid_at)),x_manual_posts(id,status,preparation_status,created_at),x_reply_jobs(id,status,preparation_status,created_at)")
