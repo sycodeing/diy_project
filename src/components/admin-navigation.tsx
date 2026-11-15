@@ -9,6 +9,7 @@ const links = [
   { href: "/admin/products", label: "商品管理", matches: ["/admin/products"] },
   { href: "/admin/temu-purchases", label: "人工下单", matches: ["/admin/temu-purchases"] },
   { href: "/admin/marketing", label: "营销数据", matches: ["/admin/marketing"] },
+  { href: "/admin/promotions", label: "首单活动", matches: ["/admin/promotions"] },
   { href: "/admin/analytics", label: "用户行为", matches: ["/admin/analytics"] },
   { href: "/admin/x-leads", label: "X 候选", matches: ["/admin/x-leads", "/admin/x-lead-search"] },
   { href: "/admin/x-accounts", label: "X 账号/IP", matches: ["/admin/x-accounts"] },

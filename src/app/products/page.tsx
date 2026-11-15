@@ -1,10 +1,12 @@
 import Image from "next/image";
 import Link from "next/link";
+import { connection } from "next/server";
 import { ArrowRight, Clock3 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { PRODUCT_CATALOG } from "@/lib/product-catalog";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatMoney } from "@/lib/utils";
+import { getActiveFirstOrderPromotion, promotionalPrice } from "@/lib/first-order-promotion";
 
 type CatalogProduct = {
   slug: string;
@@ -17,7 +19,11 @@ type CatalogProduct = {
 };
 
 export default async function ProductsPage() {
+  await connection();
   const products = await getProducts();
+  const supabase = await createSupabaseServerClient();
+  const { data: { user } } = supabase ? await supabase.auth.getUser() : { data: { user: null } };
+  const promotion = await getActiveFirstOrderPromotion(user?.id);
 
   return (
     <AppShell>
@@ -43,7 +49,12 @@ export default async function ProductsPage() {
               <div className="p-5">
                 <div className="flex items-start justify-between gap-3">
                   <h2 className="text-xl font-black">{product.name}</h2>
-                  <p className="shrink-0 font-black">{formatMoney(product.priceCents, product.currency)}</p>
+                  <div className="shrink-0 text-right">
+                    <p className="font-black">{formatMoney(promotionalPrice(product.priceCents, product.currency, product.slug, promotion), product.currency)}</p>
+                    {promotionalPrice(product.priceCents, product.currency, product.slug, promotion) < product.priceCents
+                      ? <p className="text-xs text-muted"><span className="line-through">{formatMoney(product.priceCents, product.currency)}</span> · First order</p>
+                      : null}
+                  </div>
                 </div>
                 <p className="mt-2 min-h-12 text-sm leading-6 text-muted">{product.description}</p>
                 <Link className="focus-ring mt-5 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 font-bold text-accent-ink hover:bg-accent-strong" href={product.href}>

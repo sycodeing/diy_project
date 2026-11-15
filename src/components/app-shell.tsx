@@ -1,9 +1,12 @@
 import Link from "next/link";
+import { connection } from "next/server";
 import { ImageUp, Package, Shield, UserRound } from "lucide-react";
 import { getCurrentUser, getIsAdmin } from "@/lib/auth";
 import { SignOutButton } from "@/components/sign-out-button";
 import { AdminNavigation } from "@/components/admin-navigation";
 import { SiteFooter } from "@/components/site-footer";
+import { FirstOrderPromotionPopup } from "@/components/first-order-promotion-popup";
+import { getActiveFirstOrderPromotion } from "@/lib/first-order-promotion";
 
 export async function AppShell({
   children,
@@ -12,8 +15,10 @@ export async function AppShell({
   children: React.ReactNode;
   admin?: boolean;
 }) {
+  await connection();
   const user = await getCurrentUser();
   const isAdmin = await getIsAdmin();
+  const firstOrderPromotion = admin ? null : await getActiveFirstOrderPromotion(user?.id);
   const avatarUrl = user?.user_metadata?.avatar_url ?? user?.user_metadata?.picture;
   const nickname =
     user?.user_metadata?.display_name ??
@@ -118,6 +123,7 @@ export async function AppShell({
         {admin && isAdmin ? <AdminNavigation mobile /> : null}
       </header>
       {children}
+      {firstOrderPromotion ? <FirstOrderPromotionPopup priceCents={firstOrderPromotion.priceCents} currency={firstOrderPromotion.currency} /> : null}
       {!admin ? <SiteFooter /> : null}
     </div>
   );

@@ -14,6 +14,7 @@ import {
 } from "@/lib/marketing";
 import { getOrCreateActivitySessionId, recordCustomerActivity } from "@/lib/customer-activity";
 import { classifyTraffic } from "@/lib/traffic-classification";
+import { getActiveFirstOrderPromotion, promotionalPrice } from "@/lib/first-order-promotion";
 
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
@@ -104,6 +105,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Selected variant is unavailable." }, { status: 404 });
   }
 
+  let firstOrderPromotion;
+  try {
+    firstOrderPromotion = await getActiveFirstOrderPromotion(user.id);
+  } catch (error) {
+    console.error("First-order promotion eligibility could not be checked", error);
+    return NextResponse.json({ error: "Could not confirm the current price. Please try again." }, { status: 503 });
+  }
+  const amountCents = promotionalPrice(variant.price_cents, variant.currency, design.selection.productSlug, firstOrderPromotion);
+  const appliedPromotion = amountCents < variant.price_cents ? firstOrderPromotion : null;
+
   const { data: customDesign, error: designError } = await supabase
     .from("custom_designs")
     .insert({
@@ -120,7 +131,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Could not save design." }, { status: 500 });
   }
 
-  const amountCents = variant.price_cents;
   const currency = variant.currency;
   const marketingLink = await getActiveMarketingLinkFromCookie();
   const activitySessionId = await getOrCreateActivitySessionId();
@@ -142,6 +152,7 @@ export async function POST(request: Request) {
       temu_status_label: "Not submitted to Temu",
       design_snapshot: {
         ...design,
+        ...(appliedPromotion ? { promotion: { key: appliedPromotion.key, regularPriceCents: variant.price_cents, priceCents: amountCents } } : {}),
         productSnapshot: {
           slug: design.selection.productSlug,
           name: product.name,

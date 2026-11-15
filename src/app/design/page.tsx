@@ -7,6 +7,7 @@ import { getMarketingPreviewUrls, getActiveMarketingLinkFromCookie, getRecentMar
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { DEFAULT_PRODUCT_CONFIG, type DesignerProductConfig } from "@/lib/product-config";
+import { getActiveFirstOrderPromotion, promotionalPrice } from "@/lib/first-order-promotion";
 import type { DesignPayload, ShippingAddress } from "@/lib/types";
 
 const ALLOWED_PARAMS = new Set([
@@ -65,6 +66,7 @@ export default async function DesignPage({
         .maybeSingle()
     : { data: null };
   const defaultShippingAddress = toShippingAddress(latestOrder?.shipping);
+  const firstOrderPromotion = await getActiveFirstOrderPromotion(user?.id);
   const visitId = typeof initialParams[MARKETING_VISIT_PARAM] === "string" ? initialParams[MARKETING_VISIT_PARAM] : undefined;
   const marketingVisit = await getRecentMarketingVisit(visitId);
   const cookieMarketingLink = await getActiveMarketingLinkFromCookie();
@@ -108,6 +110,9 @@ export default async function DesignPage({
         userId={user?.id ?? null}
         defaultShippingAddress={defaultShippingAddress}
         productConfig={productConfig}
+        promotionPriceCents={promotionalPrice(productConfig.priceCents, productConfig.currency, productConfig.slug, firstOrderPromotion) < productConfig.priceCents
+          ? firstOrderPromotion?.priceCents
+          : null}
       />
     </AppShell>
   );

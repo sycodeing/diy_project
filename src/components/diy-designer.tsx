@@ -98,6 +98,7 @@ export function DiyDesigner({
   userId = null,
   defaultShippingAddress = null,
   productConfig = DEFAULT_PRODUCT_CONFIG,
+  promotionPriceCents = null,
 }: {
   authEnabled?: boolean;
   autoCheckout?: boolean;
@@ -109,8 +110,10 @@ export function DiyDesigner({
   userId?: string | null;
   defaultShippingAddress?: ShippingAddress | null;
   productConfig?: DesignerProductConfig;
+  promotionPriceCents?: number | null;
 }) {
   const router = useRouter();
+  const displayPriceCents = promotionPriceCents ?? productConfig.priceCents;
   const fallbackMockupPreviews = useMemo(
     () => getMockupFallbackPreviews(productConfig.mockupTemplateIds),
     [productConfig.mockupTemplateIds],
@@ -492,10 +495,11 @@ export function DiyDesigner({
                 </p>
               </div>
               <div className="min-w-[5.6rem] rounded-xl border border-line bg-surface px-3 py-2 text-right text-xs sm:min-w-36 sm:px-4 sm:py-3 sm:text-left sm:text-sm">
-                <p className="text-muted">Base price</p>
+                <p className="text-muted">{promotionPriceCents ? "First order offer" : "Base price"}</p>
                 <p className="text-xl font-black sm:text-2xl">
-                  {formatMoney(productConfig.priceCents, productConfig.currency)}
+                  {formatMoney(displayPriceCents, productConfig.currency)}
                 </p>
+                {promotionPriceCents ? <p className="text-xs text-muted line-through">{formatMoney(productConfig.priceCents, productConfig.currency)}</p> : null}
                 <p className="mt-0.5 text-[0.68rem] text-muted sm:mt-1 sm:text-xs">
                   {productConfig.sizeOptions[0]?.label ?? productConfig.name}
                 </p>
@@ -542,8 +546,9 @@ export function DiyDesigner({
             <p className="mt-2 text-sm leading-6 text-muted">{productConfig.description}</p>
             <div className="mt-5 flex items-center justify-between border-t border-line pt-4 text-sm">
               <span className="text-muted">Total</span>
-              <span className="text-xl font-black">{formatMoney(productConfig.priceCents, productConfig.currency)}</span>
+              <span className="text-xl font-black">{formatMoney(displayPriceCents, productConfig.currency)}</span>
             </div>
+            {promotionPriceCents ? <p className="mt-2 text-xs text-muted">First-order price is confirmed at checkout after sign-in.</p> : null}
             <p className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-sm text-accent-strong">{design.sides.front.imagePreviewUrl ? "Photo added. Review the preview, then continue." : "Start by adding your photo."}</p>
           </aside>
         </div>
