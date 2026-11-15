@@ -73,13 +73,13 @@ export function FirstOrderPromotionPopup({ priceCents, currency }: { priceCents:
         </button>
         <p className="pr-10 text-xs font-black uppercase tracking-[0.15em] text-accent">First order offer</p>
         <h2 className="mt-4 pr-5 text-3xl font-black leading-tight tracking-tight sm:text-4xl" id="first-order-promotion-title">
-          Your first custom pillow cover set for {formatMoney(priceCents, currency)}.
+          Your first custom order for {formatMoney(priceCents, currency)}.
         </h2>
         <p className="mt-4 text-sm leading-6 text-muted" id="first-order-promotion-description">
           Upload a photo, preview your design, and get the first-order price automatically at checkout. No code needed.
         </p>
         <p className="mt-3 text-xs leading-5 text-muted">
-          Set of two covers · Inserts not included · US shipping included · Estimated delivery about 15 days
+          US shipping included · Review product details before checkout
         </p>
         <Link
           className="focus-ring mt-6 flex min-h-12 w-full items-center justify-center rounded-lg bg-accent px-5 text-center font-black text-accent-ink hover:bg-accent-strong"

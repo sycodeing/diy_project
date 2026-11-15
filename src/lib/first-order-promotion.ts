@@ -5,7 +5,6 @@ export const FIRST_ORDER_PROMOTION_KEY = "first_order";
 
 export type FirstOrderPromotion = {
   key: string;
-  productSlug: string;
   priceCents: number;
   currency: string;
 };
@@ -16,7 +15,7 @@ export const getActiveFirstOrderPromotion = cache(async (userId?: string | null)
 
   const { data, error } = await supabase
     .from("sales_promotions")
-    .select("key,product_slug,price_cents,currency")
+    .select("key,price_cents,currency")
     .eq("key", FIRST_ORDER_PROMOTION_KEY)
     .eq("active", true)
     .maybeSingle();
@@ -36,7 +35,6 @@ export const getActiveFirstOrderPromotion = cache(async (userId?: string | null)
 
   return {
     key: data.key,
-    productSlug: data.product_slug,
     priceCents: data.price_cents,
     currency: data.currency,
   };
@@ -45,11 +43,9 @@ export const getActiveFirstOrderPromotion = cache(async (userId?: string | null)
 export function promotionalPrice(
   regularPriceCents: number,
   currency: string,
-  productSlug: string,
   promotion: FirstOrderPromotion | null,
 ) {
-  return promotion?.productSlug === productSlug &&
-    promotion.currency.toLowerCase() === currency.toLowerCase() &&
+  return promotion?.currency.toLowerCase() === currency.toLowerCase() &&
     promotion.priceCents < regularPriceCents
     ? promotion.priceCents
     : regularPriceCents;

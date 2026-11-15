@@ -50,8 +50,8 @@ export default async function ProductsPage() {
                 <div className="flex items-start justify-between gap-3">
                   <h2 className="text-xl font-black">{product.name}</h2>
                   <div className="shrink-0 text-right">
-                    <p className="font-black">{formatMoney(promotionalPrice(product.priceCents, product.currency, product.slug, promotion), product.currency)}</p>
-                    {promotionalPrice(product.priceCents, product.currency, product.slug, promotion) < product.priceCents
+                    <p className="font-black">{formatMoney(promotionalPrice(product.priceCents, product.currency, promotion), product.currency)}</p>
+                    {promotionalPrice(product.priceCents, product.currency, promotion) < product.priceCents
                       ? <p className="text-xs text-muted"><span className="line-through">{formatMoney(product.priceCents, product.currency)}</span> · First order</p>
                       : null}
                   </div>

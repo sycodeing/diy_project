@@ -13,7 +13,7 @@ export default async function PromotionsPage() {
   if (!supabase) throw new Error("Supabase 服务端配置缺失。");
   const { data: promotion, error } = await supabase
     .from("sales_promotions")
-    .select("key,product_slug,price_cents,currency,active,updated_at")
+    .select("key,price_cents,currency,active,updated_at")
     .eq("key", FIRST_ORDER_PROMOTION_KEY)
     .maybeSingle();
   if (error || !promotion) throw new Error(error?.message ?? "首单活动不存在。");
@@ -26,7 +26,7 @@ export default async function PromotionsPage() {
         <section className="mt-8 rounded-2xl border border-line bg-panel p-5 shadow-sm sm:p-7">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <p className="text-xs font-bold uppercase tracking-wide text-muted">{promotion.product_slug}</p>
+              <p className="text-xs font-bold uppercase tracking-wide text-muted">全店首单活动</p>
               <h2 className="mt-2 text-xl font-black">首单价 {formatMoney(promotion.price_cents, promotion.currency)}</h2>
               <p className="mt-2 text-sm text-muted">当前状态：{promotion.active ? "执行中" : "已暂停"}</p>
             </div>

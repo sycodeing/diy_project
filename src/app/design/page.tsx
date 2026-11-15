@@ -110,7 +110,7 @@ export default async function DesignPage({
         userId={user?.id ?? null}
         defaultShippingAddress={defaultShippingAddress}
         productConfig={productConfig}
-        promotionPriceCents={promotionalPrice(productConfig.priceCents, productConfig.currency, productConfig.slug, firstOrderPromotion) < productConfig.priceCents
+        promotionPriceCents={promotionalPrice(productConfig.priceCents, productConfig.currency, firstOrderPromotion) < productConfig.priceCents
           ? firstOrderPromotion?.priceCents
           : null}
       />

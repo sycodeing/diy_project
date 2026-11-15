@@ -112,7 +112,7 @@ export async function POST(request: Request) {
     console.error("First-order promotion eligibility could not be checked", error);
     return NextResponse.json({ error: "Could not confirm the current price. Please try again." }, { status: 503 });
   }
-  const amountCents = promotionalPrice(variant.price_cents, variant.currency, design.selection.productSlug, firstOrderPromotion);
+  const amountCents = promotionalPrice(variant.price_cents, variant.currency, firstOrderPromotion);
   const appliedPromotion = amountCents < variant.price_cents ? firstOrderPromotion : null;
 
   const { data: customDesign, error: designError } = await supabase
