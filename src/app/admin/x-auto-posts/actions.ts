@@ -96,6 +96,56 @@ export async function stopXAutoBatch(formData: FormData) {
   redirect(`${PAGE_PATH}?notice=batch-stopped`);
 }
 
+export async function retryLatestBatchDailyBudgetFailures(formData: FormData) {
+  await requireAdmin(PAGE_PATH);
+  const approvedAt = z.string().datetime({ offset: true }).parse(String(formData.get("approvedAt") ?? ""));
+  const supabase = serviceClient();
+  const { data: latest, error: latestError } = await supabase.from("x_reply_jobs")
+    .select("approved_at").not("approved_at", "is", null)
+    .order("approved_at", { ascending: false }).limit(1).maybeSingle();
+  if (latestError || latest?.approved_at !== approvedAt) {
+    throw new Error(latestError?.message ?? "本批状态已变化，请刷新页面后重试。");
+  }
+  const { data: failed, error: failedError } = await supabase.from("x_reply_jobs")
+    .select("id,account_id,target_post_url")
+    .eq("approved_at", approvedAt).eq("status", "failed")
+    .eq("error_code", "daily_budget")
+    .is("action_id", null).is("result_url", null);
+  if (failedError) throw new Error(failedError.message);
+  if (!failed?.length) throw new Error("本批没有可重试的额度拦截任务。");
+
+  const { data: sent, error: sentError } = await supabase.from("x_reply_jobs")
+    .select("account_id,target_post_url")
+    .in("account_id", [...new Set(failed.map((job) => job.account_id))])
+    .eq("status", "sent");
+  if (sentError) throw new Error(sentError.message);
+  const sentTargets = new Set((sent ?? []).map((job) => `${job.account_id}:${job.target_post_url}`));
+  const scheduledFor = new Date().toISOString();
+  let count = 0;
+  for (const job of failed) {
+    if (sentTargets.has(`${job.account_id}:${job.target_post_url}`)) continue;
+    const { data: updated, error } = await supabase.from("x_reply_jobs").update({
+      status: "queued",
+      attempt_count: 0,
+      scheduled_for: scheduledFor,
+      claimed_at: null,
+      completed_at: null,
+      worker_id: null,
+      xuse_draft_id: null,
+      error_code: null,
+      error_message: null,
+      egress_ip: null,
+    }).eq("id", job.id).eq("approved_at", approvedAt).eq("status", "failed")
+      .eq("error_code", "daily_budget").is("action_id", null).is("result_url", null)
+      .select("id").maybeSingle();
+    if (error) throw new Error(error.message);
+    if (updated) count++;
+  }
+  if (!count) throw new Error("没有可安全重试的任务；请检查是否已有发送记录。");
+  revalidatePath(PAGE_PATH);
+  redirect(`${PAGE_PATH}?notice=daily-budget-requeued&count=${count}`);
+}
+
 function approvalFailure(error: unknown, fallback: string): XAutoApprovalResult {
   if (error instanceof z.ZodError) {
     return { ok: false, error: "请至少勾选一条已就绪的草稿，单次最多选择 100 条。" };

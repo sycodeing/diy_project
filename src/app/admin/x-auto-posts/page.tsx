@@ -31,6 +31,7 @@ import {
   resumePausedXDailySending,
   retryXAutoPreparation,
   retryUnsentXAutoJob,
+  retryLatestBatchDailyBudgetFailures,
   stopXAutoBatch,
 } from "./actions";
 import { StartAllForm } from "./approval-form";
@@ -49,6 +50,7 @@ const notices: Record<string, string> = {
   "inspection-already-active": "该原帖已经在等待打开或浏览窗口仍处于打开状态。",
   "batch-stopped": "本批尚未领取的任务已停止；正在执行的任务会记录实际结果。",
   "single-retry-queued": "已将这一条加入单条重试；本机会先对账原操作，其他任务仍按原暂停状态等待。",
+  "daily-budget-requeued": "已将本批因本机日额度拦截且没有发送记录的任务重新加入发送队列。",
 };
 
 function shanghaiToday() {
@@ -79,6 +81,8 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
   ]);
   const jobs = (jobRows ?? []) as unknown as XReplyJob[];
   const latestBatch = summarizeLatestXReplyBatch(jobs);
+  const dailyBudgetRetryCount = latestBatch ? jobs.filter((job) => job.approved_at === latestBatch.approvedAt
+    && job.status === "failed" && job.error_code === "daily_budget" && !job.action_id && !job.result_url).length : 0;
   const cards = await Promise.all(jobs.map(async (job) => {
     const link = job.x_leads?.marketing_links;
     const preview = job.content_mode !== "first_contact_text" && job.preparation_status === "ready" && link
@@ -120,7 +124,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
             </div>
           </div>
         </div>
-        {notice ? <p className="mt-5 rounded-lg border border-line bg-panel p-3 text-sm font-bold">{notice}</p> : null}
+        {notice ? <p className="mt-5 rounded-lg border border-line bg-panel p-3 text-sm font-bold">{notice}{filters.notice === "daily-budget-requeued" && filters.count ? `（${filters.count} 条）` : ""}</p> : null}
         {jobsError ? <p className="mt-5 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{jobsError.message}</p> : null}
         <p className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950"><strong>加入队列不会立即发送。</strong>自动任务只从“X 待处理用户与帖子”选择账号后加入；等待全部素材准备完成，再点击本页的“开始全部发送”。启动后，成功任务之间随机等待 15–30 秒；每个账号分别累计，完成 12 条后该账号强制休息 45 分钟，其他账号可以继续。每日首条监督若启用，仍会在首条后等待确认；`observe` 模式只允许账号/IP 的只读验证，不能领取写任务。</p>
         {legacySentCount ? <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950"><strong>历史已发送记录仍在：</strong>启用本机自动发送前，已有 {legacySentCount} 条人工发送历史。<Link className="ml-1 font-black underline" href="/admin/x-manual-posts">打开历史记录</Link></p> : null}
@@ -163,7 +167,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
         </section>
 
         <section className="mt-8">
-          <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-black">自动发送队列与结果</h2><p className="mt-1 text-sm text-muted">先把候选任务加入并确认；点击开始后，Worker 串行发送，每条间隔 15–30 秒，每个账号各自每 12 条休息 45 分钟。</p></div><div className="flex max-w-full flex-wrap justify-end gap-2"><StartAllForm preparingCount={preparingToStartCount} readyCount={readyToStartCount} />{latestBatch?.active ? <form action={stopXAutoBatch}><input name="approvedAt" type="hidden" value={latestBatch.approvedAt} /><FormSubmitButton className="focus-ring h-11 rounded-lg bg-red-700 px-4 text-sm font-black text-white" idleLabel="立即停止本批发送" pendingLabel="正在停止…" /></form> : null}<Link className="focus-ring rounded-lg border border-line bg-white px-4 py-3 text-sm font-black" href="/admin/x-leads">返回候选列表</Link></div></div>
+          <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-black">自动发送队列与结果</h2><p className="mt-1 text-sm text-muted">先把候选任务加入并确认；点击开始后，Worker 串行发送，每条间隔 15–30 秒，每个账号各自每 12 条休息 45 分钟。</p></div><div className="flex max-w-full flex-wrap justify-end gap-2"><StartAllForm preparingCount={preparingToStartCount} readyCount={readyToStartCount} />{dailyBudgetRetryCount && latestBatch ? <form action={retryLatestBatchDailyBudgetFailures}><input name="approvedAt" type="hidden" value={latestBatch.approvedAt} /><FormSubmitButton className="focus-ring h-11 rounded-lg bg-orange-700 px-4 text-sm font-black text-white" idleLabel={`重试本批额度拦截任务（${dailyBudgetRetryCount}）`} pendingLabel="正在重新入队…" /></form> : null}{latestBatch?.active ? <form action={stopXAutoBatch}><input name="approvedAt" type="hidden" value={latestBatch.approvedAt} /><FormSubmitButton className="focus-ring h-11 rounded-lg bg-red-700 px-4 text-sm font-black text-white" idleLabel="立即停止本批发送" pendingLabel="正在停止…" /></form> : null}<Link className="focus-ring rounded-lg border border-line bg-white px-4 py-3 text-sm font-black" href="/admin/x-leads">返回候选列表</Link></div></div>
           <div aria-live="polite" className={cn("mt-4 rounded-xl border p-5", latestBatch?.state === "succeeded" ? "border-emerald-200 bg-emerald-50" : latestBatch?.state === "completed_with_issues" ? "border-amber-200 bg-amber-50" : "border-blue-200 bg-blue-50")}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
