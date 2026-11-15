@@ -4,15 +4,30 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { X } from "lucide-react";
 import { formatMoney } from "@/lib/utils";
+import { FIRST_ORDER_PROMOTION_DISMISSED_DATE_KEY, localDateKey, wasPromotionDismissedToday } from "@/lib/promotion-frequency";
 
 export function FirstOrderPromotionPopup({ priceCents, currency }: { priceCents: number; currency: string }) {
   const [open, setOpen] = useState(false);
   const closeButton = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    if (window.sessionStorage.getItem("first-order-promotion-seen")) return;
+    try {
+      if (wasPromotionDismissedToday(window.localStorage.getItem(FIRST_ORDER_PROMOTION_DISMISSED_DATE_KEY), new Date())) return;
+    } catch {
+      // Storage can be unavailable in privacy-restricted browsers; keep the offer usable.
+    }
     const frame = window.requestAnimationFrame(() => setOpen(true));
     return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    function onStorage(event: StorageEvent) {
+      if (event.key === FIRST_ORDER_PROMOTION_DISMISSED_DATE_KEY && wasPromotionDismissedToday(event.newValue, new Date())) {
+        setOpen(false);
+      }
+    }
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   useEffect(() => {
@@ -47,7 +62,11 @@ export function FirstOrderPromotionPopup({ priceCents, currency }: { priceCents:
   }, [open]);
 
   function dismiss() {
-    window.sessionStorage.setItem("first-order-promotion-seen", "1");
+    try {
+      window.localStorage.setItem(FIRST_ORDER_PROMOTION_DISMISSED_DATE_KEY, localDateKey(new Date()));
+    } catch {
+      // A blocked storage write should not prevent closing the dialog.
+    }
     setOpen(false);
   }
 
