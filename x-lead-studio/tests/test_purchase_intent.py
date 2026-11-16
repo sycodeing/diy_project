@@ -71,6 +71,12 @@ def test_new_scene_queries_keep_legacy_path_and_bounded_raw_budget():
     assert len(plans) == 3
     assert sum(plan.limit for plan in plans) == 90
     assert all(len(plan.query) < 440 and "filter:images" not in plan.query for plan in plans)
+    assert all(plan.state_key.endswith(":v5:broad") for plan in plans)
+    assert all('"my dog"' not in plan.query and '"my cat"' not in plan.query for plan in plans)
+    by_segment = {plan.segment.key: plan.query for plan in plans}
+    assert '"looking for"' in by_segment['demand_custom']
+    assert '"gift ideas"' in by_segment['demand_gift']
+    assert '"would love"' in by_segment['demand_decor']
     gift = make_candidate(text="Looking for a photo gift of my cat for my wife", segment="demand_gift")
     assert gift["status"] == "targeting_review"
     assert json.loads(gift["targeting_json"])["purchase_intent"]["scene"] == "gift"
@@ -121,7 +127,7 @@ def test_query_cursors_and_budget_are_separate():
     assert all(p.state_key.startswith("demand_") and len(p.query) < 440 for p in plans)
     revised = build_query_plan({"segments": ["demand_custom"], "resultLimit": 1, "lookbackDays": 3},
         state={"demand_custom:broad": int(now.timestamp()) - 100}, include_geo=False, now=now)
-    assert revised[0].state_key == "demand_custom:v3:broad"
+    assert revised[0].state_key == "demand_custom:v5:broad"
     assert revised[0].since_time == int(now.timestamp()) - 3 * 86400
     tiny = build_query_plan({"segments": ["demand_custom", "demand_decor"], "resultLimit": 1}, now=now)
     assert sum(p.limit for p in tiny) == 1
