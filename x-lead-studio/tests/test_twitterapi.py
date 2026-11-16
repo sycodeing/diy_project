@@ -233,6 +233,47 @@ def test_reply_search_is_separate_and_keeps_reply_provenance(tmp_path: Path) -> 
     assert parent_intent["parent_post_id"] == "9000"
 
 
+def test_explicit_owner_reply_at_position_eighteen_gets_parent_lookup_first(tmp_path: Path) -> None:
+    posts = []
+    for index in range(20):
+        item = _tweet()
+        item.update(id=str(9100 + index), text="How much for one?", isReply=True,
+                    inReplyToId=str(9000 + index))
+        posts.append(item)
+    posts[17]["text"] = "WAIT AWW can you make one for my cat!?"
+    requested_parents: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/twitter/tweets":
+            parent_id = request.url.params["tweet_ids"]
+            requested_parents.append(parent_id)
+            parent_text = ("I make custom pet photo pillow covers from your cat picture."
+                           if parent_id == "9017" else "Here is my new car")
+            return httpx.Response(200, json={"tweets": [{"id": parent_id, "text": parent_text}]})
+        return httpx.Response(200, json={"tweets": posts, "has_next_page": False})
+
+    settings = Settings(twitterapi_api_key="test", twitterapi_geo_query_enabled=False,
+                        twitterapi_about_enrichment_enabled=False)
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await collect_twitterapi_search(client, settings,
+                {**CONFIG, "segments": ["demand_reply"], "resultLimit": 6},
+                state_path=tmp_path / "state.json")
+
+    _, candidates, metrics = asyncio.run(run())
+    assert requested_parents[0] == "9017"
+    assert len(requested_parents) == metrics["reply_parent_lookups"] == 5
+    assert metrics["reply_parent_resolved"] == 1
+    assert {candidate["post_id"] for candidate in candidates} == {"9117"}
+    assert metrics["intent_rejection_reasons"] == {
+        "reply_parent_product_mismatch": 4,
+        "reply_parent_context_required": 15,
+    }
+    saved = json.loads(next((tmp_path / "runs").glob("*.json")).read_text(encoding="utf-8"))
+    assert saved["queries"][0]["parent_contexts"][0]["post_id"] == "9017"
+    assert saved["queries"][0]["decisions"][0] == {"post_id": "9117", "reason": "intent_passed"}
+
+
 def test_valid_demand_with_ambiguous_pet_type_survives_until_photo_check(tmp_path: Path) -> None:
     item = _tweet()
     item.update(id="9200", text="Where can I order a custom pet photo pillow for my dog and cat?")

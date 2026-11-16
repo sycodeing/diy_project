@@ -227,7 +227,11 @@ async def collect_twitterapi_search(
             slice_counts = {"received": len(items), "unique": 0, "unusable": 0,
                             "pet_type_unknown": 0, "pet_type_pending": 0, "intent_rejected": 0,
                             "targeting_rejected": 0, "intent_passed": 0}
-            for item in items:
+            # Parent lookups are capped per job. Review explicit owner requests before
+            # generic "how much for one" replies, regardless of provider result order.
+            review_items = (sorted(items, key=_reply_parent_priority)
+                            if plan.segment.key == "demand_reply" else items)
+            for item in review_items:
                 post_id = str(item.get("id") or item.get("id_str") or "").strip()
                 if not post_id:
                     metrics.unusable_posts += 1
@@ -732,6 +736,18 @@ async def _request_tweets_by_id(
             raise TwitterApiError(str(payload.get("message") or "TwitterAPI.io parent lookup failed."))
         return payload
     raise TwitterApiError("TwitterAPI.io parent lookup failed after retries.")
+
+
+def _reply_parent_priority(item: dict[str, Any]) -> int:
+    text = str(item.get("text") or "")
+    own_pet = re.search(r"\b(?:my|our)\s+(?:dog|cat|puppy|kitten)s?\b", text, re.I)
+    buyer_request = re.search(
+        r"\b(?:can|could)\s+you\s+make\b|\bhow\s+much\b|"
+        r"\bwhere\s+can\s+i\s+(?:buy|get|order)\b|"
+        r"\bi\s+(?:want|need|would\s+love)\b|\bi'd\s+love\b",
+        text, re.I,
+    )
+    return 0 if own_pet and buyer_request else 1
 
 
 def twitterapi_item_to_tweet(

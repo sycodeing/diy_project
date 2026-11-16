@@ -68,15 +68,20 @@ def candidate_from_tweet(
     if is_demand:
         intent = assess_purchase_intent(text_excerpt(tweet))
         parent_context = source_metadata.get("reply_parent_context") if isinstance(source_metadata, dict) else None
-        if (intent["tier"] == "excluded" and isinstance(parent_context, dict)
-                and str(parent_context.get("post_id") or "") == str(source_metadata.get("in_reply_to_id") or "")):
+        has_matching_parent = (isinstance(parent_context, dict)
+                               and str(parent_context.get("post_id") or "")
+                               == str(source_metadata.get("in_reply_to_id") or ""))
+        if intent["tier"] == "excluded" and has_matching_parent:
             intent = assess_reply_with_parent(text_excerpt(tweet), str(parent_context.get("text") or ""),
                                                str(parent_context["post_id"]))
         if (intent["tier"] == "excluded" and isinstance(source_metadata, dict)
                 and source_metadata.get("is_reply") and source_metadata.get("in_reply_to_id")
                 and re.search(r"\b(?:can\s+you\s+make|where\s+can\s+i\s+get|how\s+much|i\s+want|would\s+love)\b", text_excerpt(tweet), re.I)
-                and re.search(r"\b(?:one|this|it|same)\b", text_excerpt(tweet), re.I)):
-            intent["exclusion_reasons"] = ["reply_parent_context_required"]
+                and re.search(r"\b(?:one|this|it|same)\b", text_excerpt(tweet), re.I)
+                and intent["exclusion_reasons"] == ["no_current_product_request"]):
+            intent["exclusion_reasons"] = [
+                "reply_parent_product_mismatch" if has_matching_parent else "reply_parent_context_required"
+            ]
         stored_targeting["purchase_intent"] = intent
         stored_targeting["discovery_mode"] = "purchase_intent"
         stored_targeting["ownership_evidence_pending"] = targeting["ownership_confidence"] < MIN_OWNERSHIP_CONFIDENCE
