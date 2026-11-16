@@ -79,8 +79,12 @@ async def _execute_job(
                 raise ValueError("Demand discovery requires TwitterAPI and separate demand-only segments")
             configuration = {**configuration, "usRequired": True, "usMinConfidence": max(70, int(configuration.get("usMinConfidence", 70)))}
             scene_target = max(1, min(100, int(configuration.get("qualifiedPerScene", 20))))
-            requested_scenes = {"custom" if key == "demand_recommendation" else key.removeprefix("demand_")
-                                for key in configuration["segments"]}
+            requested_scenes = set()
+            for key in configuration["segments"]:
+                if key == "demand_reply":
+                    requested_scenes.update(("custom", "gift"))
+                else:
+                    requested_scenes.add("custom" if key == "demand_recommendation" else key.removeprefix("demand_"))
         await ensure_pet_image_verifier(client, settings)
         if provider == "twitterapi":
             items, found, metrics = await collect_twitterapi_search(

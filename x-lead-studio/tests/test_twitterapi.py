@@ -181,6 +181,52 @@ def test_normalizer_rejects_tco_when_no_direct_media_url_exists() -> None:
     assert twitterapi_item_to_tweet(item, search_query="pets") is None
 
 
+def test_reply_search_is_separate_and_keeps_reply_provenance(tmp_path: Path) -> None:
+    posts = []
+    for index, text in enumerate((
+        "Where can I buy a pillow with my dog on it?",
+        "Looking for a Dog Mom gift? Shop now for keychains",
+        "Looking for a pet pillow",
+        "Can you make one for my dog?",
+    )):
+        item = _tweet()
+        item.update(id=str(9100 + index), text=text, isReply=True, inReplyToId="9000")
+        posts.append(item)
+    retweet = _tweet()
+    retweet.update(id="9104", isRetweet=True)
+    posts.append(retweet)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "filter:replies" in request.url.params["query"]
+        assert "-filter:replies" not in request.url.params["query"]
+        return httpx.Response(200, json={"tweets": posts, "has_next_page": False})
+
+    settings = Settings(twitterapi_api_key="secret", twitterapi_base_url="https://api.twitterapi.io",
+                        twitterapi_geo_query_enabled=False, twitterapi_about_enrichment_enabled=False)
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await collect_twitterapi_search(client, settings,
+                {**CONFIG, "segments": ["demand_reply"], "resultLimit": 5},
+                state_path=tmp_path / "state.json")
+
+    _, candidates, metrics = asyncio.run(run())
+    assert len(candidates) == 1
+    assert candidates[0]["post_id"] == "9100"
+    assert json.loads(candidates[0]["targeting_json"])["source"]["in_reply_to_id"] == "9000"
+    assert (metrics["unusable_posts"], metrics["pet_type_unknown"], metrics["intent_prefilter_rejected"]) == (1, 1, 2)
+    assert metrics["intent_rejection_reasons"]["seller_or_giveaway"] == 1
+    assert metrics["intent_rejection_reasons"]["reply_parent_context_required"] == 1
+    archive = next((tmp_path / "runs").glob("*.json"))
+    saved_query = json.loads(archive.read_text(encoding="utf-8"))["queries"][0]
+    assert saved_query["counts"]["pet_type_unknown"] == 1
+    assert {entry["post_id"]: entry["reason"] for entry in saved_query["decisions"]} == {
+        "9100": "intent_passed", "9101": "intent_rejected", "9102": "pet_type_unknown",
+        "9103": "intent_rejected", "9104": "unusable_post",
+    }
+    assert saved_query["decisions"][3]["details"] == ["reply_parent_context_required"]
+
+
 def test_collection_paginates_deduplicates_and_persists_watermarks(tmp_path: Path) -> None:
     calls: list[httpx.Request] = []
 

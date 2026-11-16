@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -66,6 +67,11 @@ def candidate_from_tweet(
     source_metadata = tweet.get("_source_metadata")
     if is_demand:
         intent = assess_purchase_intent(text_excerpt(tweet))
+        if (intent["tier"] == "excluded" and isinstance(source_metadata, dict)
+                and source_metadata.get("is_reply") and source_metadata.get("in_reply_to_id")
+                and re.search(r"\b(?:can\s+you\s+make|where\s+can\s+i\s+get|how\s+much|i\s+want|would\s+love)\b", text_excerpt(tweet), re.I)
+                and re.search(r"\b(?:one|this|it|same)\b", text_excerpt(tweet), re.I)):
+            intent["exclusion_reasons"] = ["reply_parent_context_required"]
         stored_targeting["purchase_intent"] = intent
         stored_targeting["discovery_mode"] = "purchase_intent"
         stored_targeting["ownership_evidence_pending"] = targeting["ownership_confidence"] < MIN_OWNERSHIP_CONFIDENCE

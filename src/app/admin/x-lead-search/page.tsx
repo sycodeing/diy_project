@@ -116,7 +116,7 @@ export default async function XLeadSearchPage({
           <form action={runDemandLeadSearch} className="mt-4 space-y-4">
             <fieldset className="space-y-2"><legend className="text-sm font-bold">独立查询组</legend>
               {X_DEMAND_SEGMENTS.map((segment) => <label className="flex items-center gap-2 text-sm" key={segment}>
-                <input name="segments" type="checkbox" value={segment} defaultChecked={segment === "demand_custom" || segment === "demand_gift"} />{X_DEMAND_SEGMENT_LABELS[segment]}
+                <input name="segments" type="checkbox" value={segment} defaultChecked={segment === "demand_custom" || segment === "demand_gift" || segment === "demand_reply"} />{X_DEMAND_SEGMENT_LABELS[segment]}
               </label>)}
             </fieldset>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -124,7 +124,7 @@ export default async function XLeadSearchPage({
               <NumberField label="每个场景的候选目标（不足不凑数）" name="qualifiedPerScene" value={20} min={1} max={100} />
               <SelectField label="需求发布时间" name="lookbackDays" value="3" options={[["3", "最近 3 天"], ["7", "最近 7 天"], ["14", "最近 14 天"]]} />
             </div>
-            <p className="text-xs text-muted">定制与礼物默认查询，家居装饰可单独勾选。明确商品需求与送礼探索分别标记；需求帖可以没有图片，但必须补到同账号公开宠物照片并通过图像验证，候选页会并列显示两条证据。每位作者仅计一次；历史去重后实际新增可能少于目标。需本机 worker 1.10.0 或更新版本。</p>
+            <p className="text-xs text-muted">定制、礼物和回复默认查询，家居装饰可单独勾选。回复必须独立表达需求；依赖原帖才能理解的回复会记录在本机筛选归档中供核对。需求帖可以没有图片，但必须补到同账号公开宠物照片并通过图像验证，候选页会并列显示两条证据。每位作者仅计一次；历史去重后实际新增可能少于目标。需本机更新后的 worker。</p>
             <div className="flex flex-wrap gap-3">
               <button className="focus-ring rounded-lg bg-accent px-4 py-3 font-bold text-accent-ink" type="submit">启动需求验证筛选</button>
               <Link className="focus-ring rounded-lg border border-line px-4 py-3 font-bold" href="/admin/x-leads?mode=purchase_intent">查看需求验证候选</Link>

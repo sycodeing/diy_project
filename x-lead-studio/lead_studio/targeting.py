@@ -146,23 +146,26 @@ SEARCH_SEGMENTS = (
 
 # Separate keys give demand discovery independent incremental cursors.
 DEMAND_SEARCH_SEGMENTS = (
-    SearchSegment("demand_custom", "Pet custom product request",
-        '(dog OR cat) (pillow OR portrait) '
-        '("looking for" OR "where can I" OR "anyone recommend") '
-        '-filter:replies lang:en', "v5"),
+    SearchSegment("demand_custom", "Pet photo pillow request",
+        '("my dog" OR "my cat" OR "our dog" OR "our cat") '
+        '(pillow OR cushion OR pillowcase) '
+        '("looking for" OR "where can I" OR "I want") '
+        '-filter:replies lang:en', "v6"),
     SearchSegment("demand_recommendation", "Pet product recommendations",
-        '(dog OR cat) (pillow OR portrait) '
-        '(recommend OR recommendations OR "where can I") '
-        '-filter:replies lang:en', "v5"),
+        '("my dog" OR "my cat") ("photo pillow" OR "custom pillow" OR cushion) '
+        '(recommend OR "anyone know") -filter:replies lang:en', "v6"),
     SearchSegment("demand_decor", "Pet decor interest (exploration)",
         '(dog OR cat) (pillow OR portrait OR "wall art") '
         '("would love" OR "thinking about" OR "looking for") '
         '-filter:replies lang:en', "v5"),
-    SearchSegment("demand_gift", "Pet photo gift request",
-        '(dog OR cat) (gift OR present) '
-        '(wife OR husband OR mom OR dad OR partner OR friend OR owner OR lover) '
-        '("gift ideas" OR "need a gift" OR "looking for") '
-        '-filter:replies lang:en', "v6"),
+    SearchSegment("demand_gift", "Gift for a cat or dog lover",
+        '(dog OR cat) '
+        '("gift ideas for my" OR "need a gift for my" OR "what should I get my" OR "photo gift of my") '
+        '(wife OR husband OR sister OR brother OR friend OR mom OR dad OR partner) '
+        '-filter:replies lang:en', "v7"),
+    SearchSegment("demand_reply", "Pet photo pillow reply",
+        '("my dog" OR "my cat" OR "our dog" OR "our cat") '
+        '(pillow OR cushion OR pillowcase) filter:replies lang:en', "v1"),
 )
 
 US_STATE_NAMES = {

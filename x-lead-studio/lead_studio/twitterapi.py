@@ -50,7 +50,10 @@ class CollectionMetrics:
     duplicate_posts: int = 0
     photo_posts: int = 0
     candidate_posts: int = 0
+    unusable_posts: int = 0
+    pet_type_unknown: int = 0
     intent_prefilter_rejected: int = 0
+    intent_rejection_reasons: dict[str, int] = field(default_factory=dict)
     targeting_prefilter_rejected: int = 0
     query_slices: list[dict[str, Any]] = field(default_factory=list)
     new_status: int = 0
@@ -80,7 +83,10 @@ class CollectionMetrics:
             "duplicate_posts": self.duplicate_posts,
             "photo_posts": self.photo_posts,
             "candidate_posts": self.candidate_posts,
+            "unusable_posts": self.unusable_posts,
+            "pet_type_unknown": self.pet_type_unknown,
             "intent_prefilter_rejected": self.intent_prefilter_rejected,
+            "intent_rejection_reasons": self.intent_rejection_reasons,
             "targeting_prefilter_rejected": self.targeting_prefilter_rejected,
             "query_slices": self.query_slices,
             "new_status": self.new_status,
@@ -178,6 +184,7 @@ async def collect_twitterapi_search(
                 "limit": effective_plan.limit,
                 "query": effective_plan.query,
                 "pages": [],
+                "decisions": [],
             }
             archive["queries"].append(query_archive)
             _save_archive(archive_path, archive)
@@ -205,20 +212,31 @@ async def collect_twitterapi_search(
                 us_shortfall_by_segment[plan.segment.key] = max(0, plan.limit - len(items))
             metrics.page_count += pages
             metrics.received_posts += len(items)
-            slice_counts = {"received": len(items), "unique": 0, "intent_rejected": 0,
+            slice_counts = {"received": len(items), "unique": 0, "unusable": 0,
+                            "pet_type_unknown": 0, "intent_rejected": 0,
                             "targeting_rejected": 0, "intent_passed": 0}
             for item in items:
                 post_id = str(item.get("id") or item.get("id_str") or "").strip()
-                if not post_id or post_id in raw_by_id:
+                if not post_id:
+                    metrics.unusable_posts += 1
+                    slice_counts["unusable"] += 1
+                    query_archive["decisions"].append({"post_id": None, "reason": "missing_post_id"})
+                    continue
+                if post_id in raw_by_id:
                     metrics.duplicate_posts += 1
+                    query_archive["decisions"].append({"post_id": post_id, "reason": "duplicate_post"})
                     continue
                 slice_counts["unique"] += 1
                 raw_by_id[post_id] = item
                 tweet = twitterapi_item_to_tweet(
                     item, search_query=plan.query,
                     allow_no_photo=plan.segment.key in {segment.key for segment in DEMAND_SEARCH_SEGMENTS},
+                    allow_reply=plan.segment.key == "demand_reply",
                 )
                 if not tweet:
+                    metrics.unusable_posts += 1
+                    slice_counts["unusable"] += 1
+                    query_archive["decisions"].append({"post_id": post_id, "reason": "unusable_post"})
                     continue
                 if tweet["media"]["photos"]:
                     metrics.photo_posts += 1
@@ -228,19 +246,35 @@ async def collect_twitterapi_search(
                     us_required=bool(configuration.get("usRequired", True)),
                     us_min_confidence=max(0, min(100, int(configuration.get("usMinConfidence", 70)))),
                 )
-                if not preliminary or preliminary.get("pet_type") not in {"cat", "dog"}:
+                if not preliminary:
+                    metrics.unusable_posts += 1
+                    slice_counts["unusable"] += 1
+                    query_archive["decisions"].append({"post_id": post_id, "reason": "candidate_unavailable"})
+                    continue
+                if preliminary.get("pet_type") not in {"cat", "dog"}:
+                    metrics.pet_type_unknown += 1
+                    slice_counts["pet_type_unknown"] += 1
+                    query_archive["decisions"].append({"post_id": post_id, "reason": "pet_type_unknown"})
                     continue
                 if plan.segment.key in {segment.key for segment in DEMAND_SEARCH_SEGMENTS}:
                     intent = json.loads(preliminary["targeting_json"])["purchase_intent"]
                     if intent["tier"] == "excluded":
                         metrics.intent_prefilter_rejected += 1
                         slice_counts["intent_rejected"] += 1
+                        for reason in set(intent.get("exclusion_reasons") or ["unspecified"]):
+                            metrics.intent_rejection_reasons[reason] = metrics.intent_rejection_reasons.get(reason, 0) + 1
+                        query_archive["decisions"].append({"post_id": post_id, "reason": "intent_rejected",
+                                                           "details": intent.get("exclusion_reasons") or []})
                         continue
                     if preliminary["status"] == "rejected_targeting":
                         metrics.targeting_prefilter_rejected += 1
                         slice_counts["targeting_rejected"] += 1
+                        query_archive["decisions"].append({"post_id": post_id, "reason": "targeting_rejected"})
                         continue
                     slice_counts["intent_passed"] += 1
+                query_archive["decisions"].append({"post_id": post_id, "reason":
+                                                   "intent_passed" if plan.segment.key in {segment.key for segment in DEMAND_SEARCH_SEGMENTS}
+                                                   else "prefilter_passed"})
                 tweets_by_id[post_id] = (tweet, plan.segment.key)
             query_archive["counts"] = slice_counts
             metrics.query_slices.append({"segment": plan.segment.key, "mode": plan.mode,
@@ -630,11 +664,12 @@ async def _request_page(
 
 def twitterapi_item_to_tweet(
     item: dict[str, Any], *, search_query: str, allow_no_photo: bool = False,
+    allow_reply: bool = False,
 ) -> dict[str, Any] | None:
     post_id = str(item.get("id") or item.get("id_str") or "").strip()
     author = item.get("author") if isinstance(item.get("author"), dict) else {}
     handle = str(author.get("userName") or author.get("username") or "").strip().lstrip("@")
-    if not post_id or not handle or item.get("isRetweet") or item.get("isReply"):
+    if not post_id or not handle or item.get("isRetweet") or (item.get("isReply") and not allow_reply):
         return None
     photos = _photo_urls(item)
     if not photos and not allow_no_photo:
@@ -663,6 +698,8 @@ def twitterapi_item_to_tweet(
             "post_text": str(item.get("text") or "")[:1500],
             "media_kind": "photo" if photos else "none",
             "photo_count": len(photos),
+            "is_reply": bool(item.get("isReply")),
+            "in_reply_to_id": str(item.get("inReplyToId") or "") or None,
         },
     }
 

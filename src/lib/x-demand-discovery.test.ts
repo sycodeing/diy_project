@@ -18,6 +18,7 @@ test("demand configuration is bounded and cannot weaken US gates or mix legacy s
   const base = { segments: ["demand_custom"], resultLimit: 60, lookbackDays: 7 };
   assert.equal(demandSearchConfigurationSchema.parse(base).usRequired, true);
   assert.equal(demandSearchConfigurationSchema.parse(base).qualifiedPerScene, 20);
+  assert.equal(demandSearchConfigurationSchema.parse({ ...base, segments: ["demand_reply"] }).segments[0], "demand_reply");
   for (const patch of [{ segments: ["new_adoption"] }, { usRequired: false }, { usMinConfidence: 69 }, { resultLimit: 101 }, { lookbackDays: 30 }, { qualifiedPerScene: 0 }, { qualifiedPerScene: 101 }]) {
     assert.equal(demandSearchConfigurationSchema.safeParse({ ...base, ...patch }).success, false);
   }
