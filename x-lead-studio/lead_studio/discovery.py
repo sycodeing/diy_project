@@ -33,7 +33,8 @@ def candidate_from_tweet(
 ) -> dict[str, Any] | None:
     media = tweet.get("media") or {}
     photos = media.get("photos") or []
-    if not photos:
+    is_demand = source_segment in DEMAND_SEGMENT_KEYS
+    if not photos and not is_demand:
         return None
     media_urls: list[str] = []
     for photo in photos:
@@ -46,7 +47,7 @@ def candidate_from_tweet(
     user = tweet.get("user") or tweet.get("author") or {}
     username = user.get("username") or user.get("login")
     post_id = str(tweet.get("id") or tweet.get("id_str") or "")
-    if not media_url or not username or not post_id:
+    if (not media_url and not is_demand) or not username or not post_id:
         return None
 
     targeting = build_targeting(tweet, source_segment)
@@ -61,7 +62,7 @@ def candidate_from_tweet(
         "post_excerpt": text_excerpt(tweet),
     }
     source_metadata = tweet.get("_source_metadata")
-    if source_segment in DEMAND_SEGMENT_KEYS:
+    if is_demand:
         intent = assess_purchase_intent(text_excerpt(tweet))
         stored_targeting["purchase_intent"] = intent
         stored_targeting["discovery_mode"] = "purchase_intent"
@@ -79,7 +80,8 @@ def candidate_from_tweet(
         "post_id": post_id,
         "author_hash": hashlib.sha256(str(username).lower().encode()).hexdigest(),
         "author_handle": str(username),
-        "media_url": str(media_url),
+        "author_id": str(user.get("id") or user.get("id_str") or "").strip(),
+        "media_url": str(media_url or ""),
         "media_urls": media_urls,
         "post_url": f"https://x.com/{username}/status/{post_id}",
         "posted_at": posted_at or None,

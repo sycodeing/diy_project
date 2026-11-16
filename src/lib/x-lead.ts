@@ -41,6 +41,23 @@ export function getXLeadPurchaseIntent(lead: Pick<XLeadRow, "targeting_data">) {
     evidence: Array.isArray(data.evidence) ? data.evidence.filter((item): item is string => typeof item === "string").join("；") : "",
   };
 }
+
+export function getXLeadPhotoSource(lead: Pick<XLeadRow, "targeting_data" | "media_url" | "post_url">) {
+  const value = lead.targeting_data?.photo_source;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  if (source.verification_result !== "verified" || source.selected_media_url !== lead.media_url) return null;
+  if (source.relationship !== "same_account" && source.relationship !== "same_post") return null;
+  const postUrl = typeof source.post_url === "string" ? source.post_url : "";
+  if (!/^https:\/\/x\.com\/[A-Za-z0-9_]{1,15}\/status\/\d+$/.test(postUrl)) return null;
+  if (source.relationship === "same_post" && postUrl !== lead.post_url) return null;
+  return {
+    postUrl,
+    relationship: source.relationship,
+    postExcerpt: typeof source.post_excerpt === "string" ? source.post_excerpt : "",
+    postedAt: typeof source.posted_at === "string" ? source.posted_at : null,
+  };
+}
 export const X_SEARCH_PRODUCTS = ["Latest", "Top", "Media"] as const;
 export const X_SEARCH_INTERVALS = [60, 180, 360, 720, 1440] as const;
 

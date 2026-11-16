@@ -14,6 +14,7 @@ import {
   getXLeadFunnelStatus,
   getXLeadPriorityScore,
   getXLeadPurchaseIntent,
+  getXLeadPhotoSource,
   getXLeadRejectionNote,
   getXLeadRejectionReason,
   sortXLeadsByPriority,
@@ -196,6 +197,7 @@ export default async function XLeadsPage({
           {leads.map((lead) => {
             const targetingChecks = getXLeadTargetingChecks(lead, usMinConfidence);
             const purchaseIntent = getXLeadPurchaseIntent(lead);
+            const photoSource = getXLeadPhotoSource(lead);
             const reviewEvidence = getXLeadReviewEvidence(lead);
             const failedChecks = targetingChecks.filter((check) => !check.passed);
             const conclusion = getXLeadReferenceConclusion(lead, usMinConfidence);
@@ -211,8 +213,12 @@ export default async function XLeadsPage({
                 </div>
                 <span className="text-xs text-muted">发现于 {formatAdminDate(lead.discovered_at)}</span>
               </div>
-              <div className="grid gap-4 p-4 lg:grid-cols-[140px_minmax(300px,0.72fr)_minmax(520px,1.55fr)]">
+              <div className={`grid gap-4 p-4 ${purchaseIntent ? "lg:grid-cols-[minmax(240px,0.9fr)_minmax(300px,1.1fr)_minmax(320px,1fr)]" : "lg:grid-cols-[140px_minmax(300px,0.72fr)_minmax(520px,1.55fr)]"}`}>
                 <div>
+                  {purchaseIntent ? <div className="mb-2">
+                    <p className="text-sm font-black">宠物照片</p>
+                    <p className="text-xs text-muted">{photoSource?.relationship === "same_account" ? "同账号另一条公开帖子 · 图片已验证" : photoSource?.relationship === "same_post" ? "需求原帖图片 · 图片已验证" : "历史图片来源待核对"}</p>
+                  </div> : null}
                   <CandidateMediaPicker
                     handle={lead.x_handle}
                     leadId={lead.id}
@@ -220,10 +226,18 @@ export default async function XLeadsPage({
                     mediaUrl={lead.media_url}
                     mediaUrls={lead.media_urls}
                   />
-                  <a className="mt-2 inline-block text-xs font-bold text-accent" href={lead.post_url} rel="noreferrer" target="_blank">打开原帖 ↗</a>
+                  {photoSource ? <>
+                    <a className="mt-2 inline-block text-xs font-bold text-accent" href={photoSource.postUrl} rel="noreferrer" target="_blank">查看照片来源帖 ↗</a>
+                    {photoSource.postExcerpt ? <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-xs text-muted">{photoSource.postExcerpt}</p> : null}
+                  </> : <a className="mt-2 inline-block text-xs font-bold text-accent" href={lead.post_url} rel="noreferrer" target="_blank">打开原帖 ↗</a>}
                 </div>
 
                 <div>
+                  {purchaseIntent ? <section className="mb-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-black">需求原帖 · 回复目标</h2><a className="font-bold text-accent underline" href={lead.post_url} rel="noreferrer" target="_blank">查看原帖 ↗</a></div>
+                    <p className="mt-2 whitespace-pre-wrap break-words leading-6">{typeof lead.targeting_data?.post_excerpt === "string" ? lead.targeting_data.post_excerpt : purchaseIntent.evidence || "原文未保存，请打开原帖核对。"}</p>
+                    <p className="mt-2 text-xs text-muted">{lead.posted_at ? `发布于 ${formatAdminDate(lead.posted_at)} · ` : ""}照片{photoSource?.relationship === "same_account" ? "来自同账号的另一条帖子" : photoSource?.relationship === "same_post" ? "来自这条需求帖" : "来源未记录"}，请人工确认是本人宠物及需求语境。</p>
+                  </section> : null}
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h2 className="font-black">候选摘要</h2>
                     <ConclusionBadge conclusion={conclusion} />

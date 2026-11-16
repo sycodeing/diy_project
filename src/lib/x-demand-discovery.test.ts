@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 // @ts-expect-error Node test runner uses explicit TypeScript extensions.
-import { demandSearchConfigurationSchema, getXLeadPurchaseIntent } from "./x-lead.ts";
+import { demandSearchConfigurationSchema, getXLeadPhotoSource, getXLeadPurchaseIntent } from "./x-lead.ts";
 // @ts-expect-error Node test runner uses explicit TypeScript extensions.
-import { buildXLeadDiscoveryUpsertRow, type XLeadDiscoveryCandidate } from "./x-lead-discovery-upsert.ts";
+import { buildXLeadDiscoveryUpsertRow, hasVerifiedDemandPhotoSource, type XLeadDiscoveryCandidate } from "./x-lead-discovery-upsert.ts";
+// @ts-expect-error Node test runner uses explicit TypeScript extensions.
+import { supportsDemandPhotoJoin } from "./x-lead-worker-version.ts";
+
+test("old workers cannot claim new demand-photo jobs", () => {
+  assert.equal(supportsDemandPhotoJoin("1.8.0"), false);
+  assert.equal(supportsDemandPhotoJoin("1.9.0"), true);
+  assert.equal(supportsDemandPhotoJoin(undefined), false);
+  assert.equal(supportsDemandPhotoJoin("2.0.0"), true);
+});
 
 test("demand configuration is bounded and cannot weaken US gates or mix legacy slices", () => {
   const base = { segments: ["demand_custom"], resultLimit: 60, lookbackDays: 7 };
@@ -25,6 +34,40 @@ test("evidence renderer rejects malformed metadata", () => {
   assert.equal(getXLeadPurchaseIntent({ targeting_data: { purchase_intent: "yes" } }), null);
   assert.equal(getXLeadPurchaseIntent({ targeting_data: { purchase_intent: { tier: "excluded" } } }), null);
   assert.equal(getXLeadPurchaseIntent({ targeting_data: { purchase_intent: { tier: "explicit_request", evidence: ["original text", 42], score: 80 } } })?.evidence, "original text");
+});
+
+test("demand card only treats a verified matching image as a separate photo source", () => {
+  const base = {
+    media_url: "https://pbs.twimg.com/media/dog.jpg",
+    post_url: "https://x.com/owner/status/1",
+    targeting_data: { photo_source: {
+      post_id: "2", post_url: "https://x.com/owner/status/2", relationship: "same_account",
+      selected_media_url: "https://pbs.twimg.com/media/dog.jpg", verification_result: "verified",
+      post_excerpt: "My dog at home",
+    } },
+  };
+  assert.equal(getXLeadPhotoSource(base)?.postUrl, "https://x.com/owner/status/2");
+  assert.equal(getXLeadPhotoSource({ ...base, media_url: "https://pbs.twimg.com/media/other.jpg" }), null);
+  assert.equal(getXLeadPhotoSource({ ...base, targeting_data: { photo_source: { ...base.targeting_data.photo_source, verification_result: "pending" } } }), null);
+  assert.equal(getXLeadPhotoSource({ ...base, targeting_data: { photo_source: { ...base.targeting_data.photo_source, post_url: "javascript:alert(1)" } } }), null);
+});
+
+test("hosted import refuses demand leads without matching verified photo provenance", () => {
+  const base: XLeadDiscoveryCandidate = {
+    postId: "1", authorHash: "a".repeat(64), handle: "owner", postUrl: "https://x.com/owner/status/1",
+    mediaUrl: "https://img.example/dog.jpg", selectionStatus: "targeting_review", segment: "custom", petType: "dog",
+    likeCount: 0, replyCount: 0, repostCount: 0, viewCount: 0, followersCount: 0,
+    targetingData: { discovery_mode: "purchase_intent", demand_author_id: "account-1", image_verification: {
+      result: "verified", media_url: "https://img.example/dog.jpg",
+    }, photo_source: {
+      post_id: "2", post_url: "https://x.com/owner/status/2", author_id: "account-1", author_handle: "owner",
+      relationship: "same_account", selected_media_url: "https://img.example/dog.jpg", verification_result: "verified",
+    } },
+  };
+  assert.equal(hasVerifiedDemandPhotoSource(base), true);
+  assert.equal(hasVerifiedDemandPhotoSource({ ...base, targetingData: { ...base.targetingData, photo_source: undefined } }), false);
+  assert.equal(hasVerifiedDemandPhotoSource({ ...base, targetingData: { ...base.targetingData, demand_author_id: "different" } }), false);
+  assert.equal(hasVerifiedDemandPhotoSource({ ...base, mediaUrl: "https://img.example/other.jpg" }), false);
 });
 
 test("legacy rediscovery retains demand evidence without overriding human decisions", () => {

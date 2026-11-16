@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { isAuthorizedXLeadWorker } from "@/lib/x-lead-worker-auth";
+import { supportsDemandPhotoJoin } from "@/lib/x-lead-worker-version";
 
 export const runtime = "nodejs";
 
@@ -50,11 +51,15 @@ export async function POST(request: Request) {
     .lt("started_at", staleBefore);
   if (recoveryError) return NextResponse.json({ error: recoveryError.message }, { status: 500 });
 
-  const { data: queued, error: readError } = await supabase
+  let queuedQuery = supabase
     .from("x_lead_search_jobs")
     .select("id,configuration,trigger_type,created_at")
     .eq("status", "queued")
-    .order("created_at", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (!supportsDemandPhotoJoin(parsed.data.version)) {
+    queuedQuery = queuedQuery.or("configuration->>discoveryMode.is.null,configuration->>discoveryMode.neq.purchase_intent");
+  }
+  const { data: queued, error: readError } = await queuedQuery
     .limit(1)
     .maybeSingle();
   if (readError) return NextResponse.json({ error: readError.message }, { status: 500 });

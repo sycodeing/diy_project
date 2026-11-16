@@ -10,6 +10,7 @@ import httpx
 from .apify import collect_apify_search
 from .config import CREDENTIAL_PATH, Settings
 from .discovery import collect_search, dedupe_candidates_by_author
+from .demand_photo import attach_same_account_photo, record_verified_photo_source
 from .pet_image_gate import ensure_pet_image_verifier, verify_pet_photo
 from .targeting import SEARCH_SEGMENTS
 from .purchase_intent import DEMAND_SEGMENT_KEYS, DEMAND_SCENES
@@ -36,7 +37,7 @@ async def run_x_lead_worker(settings: Settings) -> None:
                     json={
                         "workerId": worker_id,
                         "cookieConfigured": _provider_is_configured(settings, provider),
-                        "version": "1.8.0",
+                        "version": "1.9.0",
                     },
                 )
                 if response.status_code == 204:
@@ -127,18 +128,36 @@ async def _execute_job(
                     json.loads(c.get("targeting_json") or "{}").get("purchase_intent", {}).get("score", 0),
                     c.get("recency_score") or 0,
                 ), reverse=True)
+                photo_lookup_cap = min(60, scene_target * len(requested_scenes) * 2)
+                metrics["photo_lookup_cap"] = photo_lookup_cap
+                metrics["photo_lookup_deferred"] = max(0, len(found_for_image_review) - photo_lookup_cap)
+                found_for_image_review = found_for_image_review[:photo_lookup_cap]
             checked = 0
             verified = 0
+            photo_matched = 0
             for candidate in found_for_image_review:
                 if candidate.get("status") == "rejected_targeting":
                     continue
+                sources: dict[str, dict[str, Any]] = {}
+                if is_demand:
+                    candidate, sources = await attach_same_account_photo(
+                        candidate, client, settings, archive_id=str(job.get("id") or ""),
+                    )
+                    if not candidate:
+                        continue
+                    photo_matched += 1
                 checked += 1
                 selected = await verify_pet_photo(candidate, client, settings)
+                if selected and is_demand:
+                    selected = record_verified_photo_source(selected, sources)
                 if selected:
                     verified += 1
                     candidates[selected["post_id"]] = _cloud_candidate(selected)
             metrics = {**metrics, "image_checked": checked, "image_verified": verified,
                        "image_rejected": checked - verified}
+            if is_demand:
+                metrics["photo_source_matched"] = photo_matched
+                metrics["photo_source_missing"] = len(found_for_image_review) - photo_matched
     except Exception as error:
         message = str(error)
         blocked_terms = (
@@ -282,6 +301,7 @@ def _cloud_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
         "followersCount": candidate.get("followers_count", 0),
         "targetingData": {
             **targeting_data,
+            **({"demand_author_id": candidate.get("author_id")} if targeting_data.get("discovery_mode") == "purchase_intent" else {}),
             "discovery_segment": discovery_segment,
             "engagement_quality": candidate.get("engagement_quality"),
             "account_quality": candidate.get("account_quality"),

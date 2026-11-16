@@ -149,23 +149,23 @@ DEMAND_SEARCH_SEGMENTS = (
         '(dog OR cat OR puppy OR kitten) '
         '(pillow OR cushion OR portrait OR print) '
         '("looking for" OR "where can I" OR "want to buy" OR "want to order" OR recommend OR recommendations) '
-        'filter:images -filter:replies lang:en'),
+        '-filter:replies lang:en'),
     SearchSegment("demand_recommendation", "Pet product recommendations",
         '("my dog" OR "my cat" OR "our dog" OR "our cat") '
         '(pillow OR cushion OR portrait OR keepsake) '
         '(recommend OR recommendations OR "anyone know" OR "anybody know") '
-        'filter:images -filter:replies lang:en'),
+        '-filter:replies lang:en'),
     SearchSegment("demand_decor", "Pet decor interest (exploration)",
         '(dog OR cat OR puppy OR kitten) '
         '(pillow OR cushion OR "wall art" OR portrait) '
         '(decor OR decorating OR sofa OR couch OR "living room" OR bedroom OR "wall art") '
         '("would love" OR "thinking about" OR "thinking of" OR "would look great" OR "looking for") '
-        'filter:images -filter:replies lang:en'),
+        '-filter:replies lang:en'),
     SearchSegment("demand_gift", "Pet photo gift request",
         '(dog OR cat OR puppy OR kitten) (gift OR present) '
         '(photo OR portrait OR custom OR personalized OR personalised) '
         '("looking for" OR "gift ideas" OR "need a gift" OR recommend OR "what should I" OR "would love") '
-        'filter:images -filter:replies lang:en'),
+        '-filter:replies lang:en'),
 )
 
 US_STATE_NAMES = {

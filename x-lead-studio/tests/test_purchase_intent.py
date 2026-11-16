@@ -60,17 +60,17 @@ def test_new_scene_queries_keep_legacy_path_and_bounded_raw_budget():
                              now=datetime(2026, 11, 16, tzinfo=timezone.utc))
     assert len(plans) == 3
     assert sum(plan.limit for plan in plans) == 90
-    assert all(len(plan.query) < 440 and "filter:images" in plan.query for plan in plans)
+    assert all(len(plan.query) < 440 and "filter:images" not in plan.query for plan in plans)
     gift = make_candidate(text="Looking for a photo gift of my cat for my wife", segment="demand_gift")
     assert gift["status"] == "targeting_review"
     assert json.loads(gift["targeting_json"])["purchase_intent"]["scene"] == "gift"
 
 
-def make_candidate(text="Where can I order a custom pillow of my dog?", location="Austin, TX", segment="demand_custom"):
+def make_candidate(text="Where can I order a custom pillow of my dog?", location="Austin, TX", segment="demand_custom", with_photo=True):
     return candidate_from_tweet({
         "id": "123", "rawContent": text,
-        "media": {"photos": [{"url": "https://example.com/dog.jpg"}]},
-        "user": {"username": "owner", "location": location},
+        "media": {"photos": [{"url": "https://example.com/dog.jpg"}] if with_photo else []},
+        "user": {"id": "owner-id", "username": "owner", "location": location},
     }, segment, us_required=True, us_min_confidence=70)
 
 
@@ -87,6 +87,9 @@ def test_legacy_is_unchanged_and_demand_is_review_only():
     assert make_candidate(location="London, UK")["status"] == "location_review"
     assert make_candidate(location="")["status"] == "location_review"
     assert make_candidate(text="My dog is cute")["status"] == "rejected_targeting"
+    text_only = make_candidate(with_photo=False)
+    assert text_only["media_url"] == ""
+    assert text_only["author_id"] == "owner-id"
 
 
 def test_query_cursors_and_budget_are_separate():
@@ -166,7 +169,9 @@ def test_scene_caps_never_fill_with_other_scenes_or_duplicate_authors(monkeypatc
         return [{}, {}, {}, {}], found, {}
 
     async def verify(candidate, *args):
-        return candidate
+        evidence = json.loads(candidate["targeting_json"])
+        evidence["image_verification"] = {"result": "verified", "media_url": candidate["media_url"]}
+        return {**candidate, "targeting_json": json.dumps(evidence)}
 
     def handler(request):
         assert request.url.path.endswith("/complete")

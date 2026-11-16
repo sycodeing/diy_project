@@ -124,7 +124,7 @@ export default async function XLeadSearchPage({
               <NumberField label="每个场景的候选目标（不足不凑数）" name="qualifiedPerScene" value={20} min={1} max={100} />
               <SelectField label="需求发布时间" name="lookbackDays" value="3" options={[["3", "最近 3 天"], ["7", "最近 7 天"], ["14", "最近 14 天"]]} />
             </div>
-            <p className="text-xs text-muted">按原帖证据分为定制、礼物、家居装饰三组；每位作者仅计一次。每组目标不等于实际新增数，历史去重后可能进一步减少。仅启动一次有上限的任务，不自动补量、不发送。需本机 worker 1.8.0 或更新版本；原筛选模式保持独立。</p>
+            <p className="text-xs text-muted">按需求原帖分为定制、礼物、家居装饰三组；需求帖可以没有图片，但必须补到同账号公开宠物照片并通过图像验证，候选页会并列显示两条证据。每位作者仅计一次；历史去重后实际新增可能少于目标。任务有照片补查上限，不自动补量、不发送。需本机 worker 1.9.0 或更新版本；原筛选模式保持独立。</p>
             <div className="flex flex-wrap gap-3">
               <button className="focus-ring rounded-lg bg-accent px-4 py-3 font-bold text-accent-ink" type="submit">启动需求验证筛选</button>
               <Link className="focus-ring rounded-lg border border-line px-4 py-3 font-bold" href="/admin/x-leads?mode=purchase_intent">查看需求验证候选</Link>

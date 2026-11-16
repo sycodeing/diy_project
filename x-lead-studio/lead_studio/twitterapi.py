@@ -198,10 +198,14 @@ async def collect_twitterapi_search(
                     metrics.duplicate_posts += 1
                     continue
                 raw_by_id[post_id] = item
-                tweet = twitterapi_item_to_tweet(item, search_query=plan.query)
+                tweet = twitterapi_item_to_tweet(
+                    item, search_query=plan.query,
+                    allow_no_photo=plan.segment.key in {segment.key for segment in DEMAND_SEARCH_SEGMENTS},
+                )
                 if not tweet:
                     continue
-                metrics.photo_posts += 1
+                if tweet["media"]["photos"]:
+                    metrics.photo_posts += 1
                 preliminary = candidate_from_tweet(
                     tweet,
                     plan.segment.key,
@@ -565,14 +569,16 @@ async def _request_page(
     raise TwitterApiError("TwitterAPI.io request failed after retries.")
 
 
-def twitterapi_item_to_tweet(item: dict[str, Any], *, search_query: str) -> dict[str, Any] | None:
+def twitterapi_item_to_tweet(
+    item: dict[str, Any], *, search_query: str, allow_no_photo: bool = False,
+) -> dict[str, Any] | None:
     post_id = str(item.get("id") or item.get("id_str") or "").strip()
     author = item.get("author") if isinstance(item.get("author"), dict) else {}
     handle = str(author.get("userName") or author.get("username") or "").strip().lstrip("@")
     if not post_id or not handle or item.get("isRetweet") or item.get("isReply"):
         return None
     photos = _photo_urls(item)
-    if not photos:
+    if not photos and not allow_no_photo:
         return None
     return {
         "id": post_id,
@@ -584,6 +590,7 @@ def twitterapi_item_to_tweet(item: dict[str, Any], *, search_query: str) -> dict
         "viewCount": item.get("viewCount") or item.get("view_count"),
         "media": {"photos": [{"url": url} for url in photos]},
         "author": {
+            "id": str(author.get("id") or author.get("id_str") or "").strip(),
             "username": handle,
             "followersCount": author.get("followers") or author.get("followersCount"),
             "verified": bool(author.get("isBlueVerified") or author.get("verified")),
@@ -595,7 +602,7 @@ def twitterapi_item_to_tweet(item: dict[str, Any], *, search_query: str) -> dict
             "provider": "twitterapi",
             "search_query": search_query[:1500],
             "post_text": str(item.get("text") or "")[:1500],
-            "media_kind": "photo",
+            "media_kind": "photo" if photos else "none",
             "photo_count": len(photos),
         },
     }

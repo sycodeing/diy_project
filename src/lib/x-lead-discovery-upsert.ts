@@ -43,6 +43,25 @@ export function hasRequiredLocationLookup(candidate: XLeadDiscoveryCandidate) {
   return "location_enrichment" in source && source.location_enrichment === "twitterapi_user_about";
 }
 
+export function hasVerifiedDemandPhotoSource(candidate: XLeadDiscoveryCandidate) {
+  if (candidate.targetingData.discovery_mode !== "purchase_intent") return true;
+  const photo = candidate.targetingData.photo_source;
+  const verification = candidate.targetingData.image_verification;
+  if (!photo || typeof photo !== "object" || Array.isArray(photo)
+    || !verification || typeof verification !== "object" || Array.isArray(verification)) return false;
+  const source = photo as Record<string, unknown>;
+  const image = verification as Record<string, unknown>;
+  const authorId = candidate.targetingData.demand_author_id;
+  if (typeof authorId !== "string" || !authorId || source.author_id !== authorId) return false;
+  if (typeof source.author_handle !== "string" || source.author_handle.toLowerCase() !== candidate.handle.toLowerCase()) return false;
+  if (source.verification_result !== "verified" || image.result !== "verified"
+    || source.selected_media_url !== candidate.mediaUrl || image.media_url !== candidate.mediaUrl) return false;
+  if (typeof source.post_id !== "string" || !/^\d+$/.test(source.post_id)) return false;
+  if (source.post_url !== `https://x.com/${source.author_handle}/status/${source.post_id}`) return false;
+  if (source.relationship === "same_post") return source.post_id === candidate.postId && source.post_url === candidate.postUrl;
+  return source.relationship === "same_account" && source.post_id !== candidate.postId;
+}
+
 export type ExistingXLeadDiscoveryRow = {
   post_id: string;
   author_hash?: string;
@@ -106,11 +125,14 @@ export function buildXLeadDiscoveryUpsertRow({
 }) {
   const preserveHumanDecision = Boolean(existing && HUMAN_X_LEAD_STATUSES.has(existing.selection_status));
   const candidateMediaUrls = uniqueMediaUrls(candidate.mediaUrls, candidate.mediaUrl);
-  const mediaUrls = uniqueMediaUrls(existing?.media_urls, ...candidateMediaUrls);
-  // A legacy rediscovery must not erase a demand signal for the same post.
-  // Preserve human-reviewed metadata unchanged; never revive rejected accounts.
   const previousIntent = existing?.targeting_data?.purchase_intent;
   const isDemand = candidate.targetingData.discovery_mode === "purchase_intent";
+  const preserveDemandPhoto = Boolean(previousIntent && !isDemand && existing?.media_url);
+  const mediaUrls = preserveHumanDecision || preserveDemandPhoto
+    ? uniqueMediaUrls(existing?.media_urls, existing?.media_url ?? "")
+    : isDemand ? candidateMediaUrls : uniqueMediaUrls(existing?.media_urls, ...candidateMediaUrls);
+  // A legacy rediscovery must not erase a demand signal for the same post.
+  // Preserve human-reviewed metadata unchanged; never revive rejected accounts.
   const mergedTargeting = {
     ...existing?.targeting_data,
     ...candidate.targetingData,
@@ -124,7 +146,7 @@ export function buildXLeadDiscoveryUpsertRow({
     author_hash: candidate.authorHash,
     x_handle: candidate.handle,
     post_url: candidate.postUrl,
-    media_url: preserveHumanDecision && existing?.media_url ? existing.media_url : candidate.mediaUrl,
+    media_url: (preserveHumanDecision || preserveDemandPhoto) && existing?.media_url ? existing.media_url : candidate.mediaUrl,
     media_urls: mediaUrls,
     posted_at: candidate.postedAt ?? null,
     discovered_at: existing?.discovered_at ?? discoveredAt,
