@@ -391,6 +391,35 @@ def test_limit_reached_does_not_claim_an_unfinished_query_is_caught_up(tmp_path:
     assert "new_adoption:broad" not in json.loads(state_path.read_text(encoding="utf-8"))
 
 
+def test_probe_page_cap_archives_first_page_without_advancing_cursor(tmp_path: Path) -> None:
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json={"tweets": [], "has_next_page": True,
+                                         "next_cursor": "older-page"})
+
+    settings = Settings(twitterapi_api_key="test", twitterapi_base_url="https://api.twitterapi.io",
+                        twitterapi_geo_query_enabled=False, twitterapi_about_enrichment_enabled=False)
+    state_path = tmp_path / "probe-watermarks.json"
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await collect_twitterapi_search(client, settings,
+                {**CONFIG, "segments": ["demand_custom"], "resultLimit": 2,
+                 "maxPagesPerQuery": 1}, state_path=state_path,
+                archive_id="bounded-probe")
+
+    _, _, metrics = asyncio.run(run())
+    assert len(calls) == 2  # two query revisions, exactly one page each
+    assert metrics["page_count"] == 2
+    assert metrics["incomplete_queries"] == 2
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {}
+    archive = json.loads((tmp_path / "runs" / "bounded-probe.json").read_text(encoding="utf-8"))
+    assert archive["configuration"]["maxPagesPerQuery"] == 1
+    assert all(len(query["pages"]) == 1 for query in archive["queries"])
+
+
 def test_collection_enriches_missing_locations_once_per_author_and_reuses_cache(tmp_path: Path) -> None:
     about_calls = 0
     posts = []

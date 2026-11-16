@@ -214,6 +214,8 @@ async def collect_twitterapi_search(
 
             items, pages, source_exhausted = await _search_query(
                 client, settings, effective_plan, page_sink=archive_page,
+                max_pages=max(1, min(10, int(configuration["maxPagesPerQuery"])))
+                if "maxPagesPerQuery" in configuration else None,
             )
             query_archive["source_exhausted"] = source_exhausted
             if not source_exhausted:
@@ -645,6 +647,7 @@ async def _search_query(
     plan: QueryPlan,
     *,
     page_sink: Callable[[str, dict[str, Any]], None] | None = None,
+    max_pages: int | None = None,
 ) -> tuple[list[dict[str, Any]], int, bool]:
     collected: list[dict[str, Any]] = []
     cursor = ""
@@ -663,6 +666,8 @@ async def _search_query(
         next_cursor = str(payload.get("next_cursor") or "")
         if not payload.get("has_next_page"):
             source_exhausted = True
+            break
+        if max_pages is not None and pages >= max_pages:
             break
         if not next_cursor or next_cursor == cursor or next_cursor == previous_cursor:
             break
@@ -840,7 +845,7 @@ def _save_state(path: Path, state: dict[str, int]) -> None:
 
 
 def _archive_configuration(configuration: dict[str, Any]) -> dict[str, Any]:
-    allowed = ("segments", "searchProduct", "resultLimit", "lookbackDays", "usRequired", "usMinConfidence", "untilTime", "discoveryMode")
+    allowed = ("segments", "searchProduct", "resultLimit", "lookbackDays", "usRequired", "usMinConfidence", "untilTime", "discoveryMode", "maxPagesPerQuery")
     return {key: configuration[key] for key in allowed if key in configuration}
 
 
