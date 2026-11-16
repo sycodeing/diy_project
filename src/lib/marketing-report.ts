@@ -1,3 +1,5 @@
+import { marketingOutreachGroupKey, marketingOutreachGroupLabel } from "@/lib/x-outreach-groups";
+
 export const MARKETING_STAGES = [
   "link_generated",
   "link_clicked",
@@ -68,6 +70,27 @@ export type MarketingReportRow = {
     paid_at: string | null;
   }>;
 };
+
+export function filterMarketingRowsByGroup<T extends Pick<MarketingReportRow, "campaign">>(rows: T[], group: string) {
+  if (!group) return rows;
+  return rows.filter((row) => marketingOutreachGroupKey(row.campaign) === group);
+}
+
+export function summarizeMarketingGroups(rows: MarketingReportRow[]) {
+  const grouped = new Map<string, MarketingReportRow[]>();
+  for (const row of rows) {
+    const group = marketingOutreachGroupKey(row.campaign);
+    const groupRows = grouped.get(group) ?? [];
+    groupRows.push(row);
+    grouped.set(group, groupRows);
+  }
+  return [...grouped].map(([key, groupRows]) => ({
+    key,
+    label: marketingOutreachGroupLabel(groupRows[0].campaign),
+    generated: groupRows.length,
+    ...summarizeMarketing(groupRows),
+  }));
+}
 
 export function summarizeMarketing(rows: MarketingReportRow[]) {
   const stageCounts = Object.fromEntries(

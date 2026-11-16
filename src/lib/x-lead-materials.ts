@@ -4,6 +4,7 @@ import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { getXLeadPreviewSourceHash } from "@/lib/x-lead-preview-identity";
 import { createXLeadDrafts, createXLeadFirstContactDraft, getXLeadShortCopyVariant, type XLeadCopyProfile } from "@/lib/x-lead-copy";
 import { getXLeadTargetingChecks, type XLeadRow } from "@/lib/x-lead";
+import { resolveXOutreachGroup, xOutreachCampaign } from "@/lib/x-outreach-groups";
 
 type QueueKind = "manual" | "automatic";
 export const X_LEAD_MARKETING_CHANNEL = "public_reply" as const;
@@ -41,7 +42,8 @@ export async function ensureXLeadMarketingAssets(
   }
 
   const dateKey = new Date().toISOString().slice(0, 10).replaceAll("-", "");
-  const campaign = `x_${lead.segment}_${dateKey}`;
+  const group = resolveXOutreachGroup({ segment: lead.segment, targetingData: lead.targeting_data });
+  const campaign = xOutreachCampaign(group, dateKey);
   const channel = X_LEAD_MARKETING_CHANNEL;
   const variant = getXLeadShortCopyVariant(lead.post_id);
   const sourceHash = getXLeadPreviewSourceHash(secret, lead.post_id, lead.media_url);
@@ -104,7 +106,7 @@ export async function ensureXLeadMarketingAssets(
     occasionConfidence: lead.occasion_confidence,
     petType: lead.pet_type,
     targetingData: lead.targeting_data,
-  }, result.url, copyProfile, variant);
+  }, result.url, copyProfile, variant, group);
   if (drafts.variantKey !== variant) {
     throw new Error("营销文案实验版本与归因版本不一致。");
   }

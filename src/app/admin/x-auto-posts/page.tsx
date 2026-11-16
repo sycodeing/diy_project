@@ -8,6 +8,7 @@ import { SetupWarning } from "@/components/setup-warning";
 import { requireAdmin } from "@/lib/auth";
 import { getMarketingReplyPreviewUrl } from "@/lib/marketing";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { marketingOutreachGroupLabel } from "@/lib/x-outreach-groups";
 import { cn, formatDate, getServerNowMillis } from "@/lib/utils";
 import {
   X_ACTION_LABELS,
@@ -57,7 +58,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
   if (!supabase) return <AppShell admin><main className="mx-auto w-full max-w-3xl px-4 py-10"><SetupWarning /></main></AppShell>;
   const filters = await searchParams;
   const [{ data: jobRows, error: jobsError }, { data: workerRows }, { data: accountRows }, { data: gateRows }, { count: legacySentCount }] = await Promise.all([
-    supabase.from("x_reply_jobs").select("*,x_reply_accounts(account_key,display_name,positioning),x_leads(media_url,pet_type,marketing_links!x_leads_marketing_link_id_fkey(source_hash,expires_at))").order("created_at", { ascending: false }).limit(1000),
+    supabase.from("x_reply_jobs").select("*,x_reply_accounts(account_key,display_name,positioning),x_leads(media_url,pet_type,marketing_links!x_leads_marketing_link_id_fkey(campaign,source_hash,expires_at))").order("created_at", { ascending: false }).limit(1000),
     supabase.from("x_reply_workers").select("*").order("last_seen_at", { ascending: false }),
     supabase.from("x_reply_accounts").select("*").eq("active", true).order("display_name"),
     supabase.from("x_reply_daily_gates").select("account_id,gate_date,status,first_job_id,first_sent_at,authorized_at").eq("gate_date", shanghaiToday()),
@@ -151,7 +152,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
               const xResultUrl = job.result_url ?? job.target_post_url;
               const xResultLabel = job.result_url ? "查看已发送回复" : "查看对应原帖";
               return <article className="rounded-xl border border-line bg-panel/90 p-5" key={job.id}>
-                <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><span className={cn("rounded-md border px-2.5 py-1 text-xs font-black", X_REPLY_STATUS_STYLES[job.status])}>{X_REPLY_STATUS_LABELS[job.status] ?? job.status}</span><span className="rounded-md border border-line bg-white px-2.5 py-1 text-xs font-black">{X_ACTION_LABELS[job.action_type] ?? job.action_type}</span><strong>{job.x_reply_accounts?.display_name ?? job.account_key_snapshot ?? "未知账号"}</strong><span className="font-mono text-xs text-muted">{job.x_reply_accounts?.account_key ?? job.account_key_snapshot}</span></div><span className="text-xs text-muted"><Clock3 className="mr-1 inline" size={13} />创建 {formatDate(job.created_at)}</span></div>
+                <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><span className={cn("rounded-md border px-2.5 py-1 text-xs font-black", X_REPLY_STATUS_STYLES[job.status])}>{X_REPLY_STATUS_LABELS[job.status] ?? job.status}</span><span className="rounded-md border border-line bg-white px-2.5 py-1 text-xs font-black">{X_ACTION_LABELS[job.action_type] ?? job.action_type}</span>{job.x_leads?.marketing_links ? <span className="rounded-md border border-line bg-white px-2.5 py-1 text-xs font-bold">{marketingOutreachGroupLabel(job.x_leads.marketing_links.campaign)}</span> : null}<strong>{job.x_reply_accounts?.display_name ?? job.account_key_snapshot ?? "未知账号"}</strong><span className="font-mono text-xs text-muted">{job.x_reply_accounts?.account_key ?? job.account_key_snapshot}</span></div><span className="text-xs text-muted"><Clock3 className="mr-1 inline" size={13} />创建 {formatDate(job.created_at)}</span></div>
                 {xResultUrl ? <a className="focus-ring mt-4 inline-flex h-10 items-center gap-2 rounded-lg bg-accent px-4 text-sm font-black text-accent-ink" href={xResultUrl} rel="noreferrer" target="_blank"><ExternalLink size={16} />{xResultLabel}</a> : null}
                 {preparing ? <div className="mt-4 flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 p-5 text-sm font-bold text-blue-950"><LoaderCircle className="animate-spin" size={20} /><div><p>{job.content_mode === "first_contact_text" ? "正在生成纯文字接触文案" : "正在生成专属链接与宠物样图"}</p><p className="mt-1 text-xs font-normal text-blue-800">准备完成前不能开始全部发送，页面会自动刷新。</p></div></div> : null}
                 {preparationFailed ? <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-900"><p className="font-bold">{job.preparation_error ?? "营销素材生成失败。"}</p>{job.status === "draft" && !job.approved_at ? <form action={retryXAutoPreparation} className="mt-3"><input name="jobId" type="hidden" value={job.id} /><FormSubmitButton className="focus-ring h-9 rounded-md bg-red-700 px-3 text-xs font-black text-white disabled:opacity-50" idleLabel="重新生成带样图的回复" pendingLabel="正在重新入队…" /></form> : <p className="mt-2 text-xs">非草稿任务不自动改写或重试，请先人工核对。</p>}</div> : null}

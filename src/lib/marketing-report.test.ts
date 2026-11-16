@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { summarizeMarketing, type MarketingReportRow } from "./marketing-report.ts";
+import { filterMarketingRowsByGroup, summarizeMarketing, summarizeMarketingGroups, type MarketingReportRow } from "./marketing-report.ts";
 
 test("keeps redirect requests separate from unflagged requests", () => {
   const row: MarketingReportRow = {
@@ -44,4 +44,14 @@ test("known-bot browser callbacks are not counted as qualified visits", () => {
   assert.equal(summary.serverDesignRequests, 1);
   assert.equal(summary.visitBrowserConfirmations, 0);
   assert.equal(summary.visitInteractions, 0);
+});
+
+test("marketing rows split by extensible campaign group without rewriting history", () => {
+  const base: MarketingReportRow = { id: "a", campaign: "xg_demand_gift_20261116", channel: "public_reply", variant: "guided_preview_a_v2", source_hash: "a".repeat(64), click_count: 2, created_at: "2026-11-16T00:00:00.000Z", expires_at: "2026-11-23T00:00:00.000Z", marketing_events: [], marketing_link_visits: [], orders: [] };
+  const rows = [base, { ...base, id: "b", campaign: "xg_future_scene_20261116", click_count: 1 }, { ...base, id: "c", campaign: "x_custom_20261115", click_count: 3 }, { ...base, id: "d", campaign: "email_sale", click_count: 4 }];
+  assert.deepEqual(filterMarketingRowsByGroup(rows, "demand_gift").map((row) => row.id), ["a"]);
+  assert.deepEqual(filterMarketingRowsByGroup(rows, "__legacy__").map((row) => row.id), ["c"]);
+  assert.deepEqual(filterMarketingRowsByGroup(rows, "__other__").map((row) => row.id), ["d"]);
+  const groups = summarizeMarketingGroups(rows);
+  assert.deepEqual(groups.map(({ key, totalClicks }) => [key, totalClicks]), [["demand_gift", 2], ["future_scene", 1], ["__legacy__", 3], ["__other__", 4]]);
 });

@@ -3,13 +3,16 @@ import { AppShell } from "@/components/app-shell";
 import { SetupWarning } from "@/components/setup-warning";
 import { requireAdmin } from "@/lib/auth";
 import {
+  filterMarketingRowsByGroup,
   marketingChannelLabel,
   marketingStageLabel,
   MARKETING_STAGES,
   reachedMarketingStages,
   type MarketingReportRow,
   summarizeMarketing,
+  summarizeMarketingGroups,
 } from "@/lib/marketing-report";
+import { marketingOutreachGroupLabel } from "@/lib/x-outreach-groups";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatDate, formatMoney } from "@/lib/utils";
 
@@ -36,10 +39,13 @@ export default async function MarketingPage({ searchParams }: { searchParams: Se
   if (get("campaign")) query = query.eq("campaign", get("campaign"));
   if (get("channel")) query = query.eq("channel", get("channel"));
   if (get("variant")) query = query.eq("variant", get("variant"));
+  const group = get("group");
+  if (/^[a-z][a-z0-9_]{0,39}$/.test(group)) query = query.filter("campaign", "match", `^xg_${group}_[0-9]{8}$`);
 
   const { data, error } = await query;
-  const rows = (data ?? []) as unknown as MarketingReportRow[];
+  const rows = filterMarketingRowsByGroup((data ?? []) as unknown as MarketingReportRow[], group);
   const summary = summarizeMarketing(rows);
+  const groupSummary = summarizeMarketingGroups(rows);
   const channelSummary = ["consent_reply", "public_reply", "direct_message"].map((channel) => {
     const channelRows = rows.filter((row) => row.channel === channel);
     return { channel, generated: channelRows.length, ...summarizeMarketing(channelRows) };
@@ -47,7 +53,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Se
   const selected = rows.find((row) => row.id === get("link"));
   const selectedTimeline = selected ? buildTimeline(selected) : [];
   const exportParams = new URLSearchParams();
-  for (const key of ["from", "to", "campaign", "channel", "variant"]) {
+  for (const key of ["from", "to", "campaign", "channel", "variant", "group"]) {
     if (get(key)) exportParams.set(key, get(key));
   }
 
@@ -59,12 +65,13 @@ export default async function MarketingPage({ searchParams }: { searchParams: Se
           <Link className="focus-ring rounded-lg border border-line px-4 py-2 font-bold hover:bg-surface" href={`/api/admin/marketing/export?${exportParams}`}>导出 CSV</Link>
         </div>
 
-        <form className="mt-6 grid gap-3 rounded-lg border border-line bg-panel/80 p-4 sm:grid-cols-2 lg:grid-cols-6">
+        <form className="mt-6 grid gap-3 rounded-lg border border-line bg-panel/80 p-4 sm:grid-cols-2 lg:grid-cols-7">
           <FilterInput label="开始日期" name="from" type="date" value={get("from")} />
           <FilterInput label="结束日期" name="to" type="date" value={get("to")} />
           <FilterInput label="营销活动" name="campaign" value={get("campaign")} />
           <FilterInput label="渠道" name="channel" value={get("channel")} />
           <FilterInput label="版本" name="variant" value={get("variant")} />
+          <FilterInput label="触达组别 ID" name="group" value={group} />
           <button className="focus-ring mt-auto h-11 rounded-lg bg-accent px-4 font-black text-accent-ink" type="submit">筛选</button>
         </form>
 
@@ -105,11 +112,20 @@ export default async function MarketingPage({ searchParams }: { searchParams: Se
           </table>
         </section>
 
+        <section className="mt-6 overflow-x-auto rounded-lg border border-line bg-panel/80 p-4">
+          <h2 className="text-xl font-black">候选场景组对比</h2>
+          <p className="mt-1 text-xs text-muted">按链接创建时写入的组别统计；历史链接单列为未分组。仅统计当前查询范围内的最近 1000 条链接。</p>
+          <table className="mt-4 w-full min-w-[760px] text-left text-sm">
+            <thead className="text-muted"><tr><th className="pb-3">组别</th><th>ID</th><th>生成链接</th><th>跳转请求</th><th>浏览器确认</th><th>首次操作</th><th>支付订单</th><th>营业额</th></tr></thead>
+            <tbody>{groupSummary.map((item) => <tr className="border-t border-line" key={item.key}><th className="py-3">{item.label}</th><td className="font-mono text-xs">{item.key}</td><td>{item.generated}</td><td>{item.totalClicks}</td><td>{item.visitBrowserConfirmations}</td><td>{item.visitInteractions}</td><td>{item.paidOrders}</td><td>{formatMoney(item.revenue, "usd")}</td></tr>)}</tbody>
+          </table>
+        </section>
+
         <section className="mt-6 grid gap-6 lg:grid-cols-[1fr_380px]">
           <div className="overflow-x-auto rounded-lg border border-line bg-panel/80 p-4">
-            <table className="w-full min-w-[760px] text-left text-sm"><thead className="text-muted"><tr><th className="pb-3">创建时间</th><th>营销活动</th><th>渠道 / 版本</th><th>跳转请求</th><th>最后阶段</th><th /></tr></thead><tbody>{rows.map((row) => {
+            <table className="w-full min-w-[900px] text-left text-sm"><thead className="text-muted"><tr><th className="pb-3">创建时间</th><th>候选组别</th><th>营销活动</th><th>渠道 / 版本</th><th>跳转请求</th><th>最后阶段</th><th /></tr></thead><tbody>{rows.map((row) => {
               const reached = reachedMarketingStages(row);
-              return <tr className="border-t border-line" key={row.id}><td className="py-3">{formatDate(row.created_at)}</td><td>{row.campaign}</td><td>{marketingChannelLabel(row.channel)} / {row.variant}</td><td>{row.click_count}</td><td>{reached.at(-1) ? marketingStageLabel(reached.at(-1)!) : "—"}</td><td><Link className="text-accent" href={{ query: { ...Object.fromEntries(exportParams), link: row.id } }}>查看明细</Link></td></tr>;
+              return <tr className="border-t border-line" key={row.id}><td className="py-3">{formatDate(row.created_at)}</td><td>{marketingOutreachGroupLabel(row.campaign)}</td><td>{row.campaign}</td><td>{marketingChannelLabel(row.channel)} / {row.variant}</td><td>{row.click_count}</td><td>{reached.at(-1) ? marketingStageLabel(reached.at(-1)!) : "—"}</td><td><Link className="text-accent" href={{ query: { ...Object.fromEntries(exportParams), link: row.id } }}>查看明细</Link></td></tr>;
             })}</tbody></table>
           </div>
           <aside className="rounded-lg border border-line bg-panel/80 p-4">

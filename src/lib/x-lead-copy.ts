@@ -1,3 +1,5 @@
+import { X_OUTREACH_GROUPS, type XOutreachGroupKey } from "@/lib/x-outreach-groups";
+
 export type XLeadDraftContext = {
   occasion: string | null;
   occasionConfidence: number | null;
@@ -57,13 +59,17 @@ export function createXLeadDrafts(
   link = "{link}",
   profile?: XLeadCopyProfile,
   assignedVariant?: XLeadShortCopyVariant,
+  group: XOutreachGroupKey = "general",
 ) {
   const seed = profile
     ? [profile.accountKey, profile.style, profile.variationSeed, profile.voice, profile.positioning, profile.variationNotes].filter(Boolean).join(":")
     : contextSeed(context);
   const variant = assignedVariant ?? getXLeadShortCopyVariant(seed);
   const pet = context.petType === "cat" ? "cat" : context.petType === "dog" ? "dog" : "pet";
-  const message = interpolate(SHORT_DIRECT_COPY[variant], pet);
+  const template = variant === "short_direct_a_v1"
+    ? SHORT_DIRECT_COPY[variant]
+    : X_OUTREACH_GROUPS[group].copy[variant];
+  const message = interpolate(template, pet);
   const directCopy = appendLinkWithinLimit(message, link, 220);
 
   return {

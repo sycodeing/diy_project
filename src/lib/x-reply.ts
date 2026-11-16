@@ -103,6 +103,7 @@ export type XReplyJob = {
     media_url: string;
     pet_type: "cat" | "dog" | null;
     marketing_links: null | {
+      campaign: string;
       source_hash: string;
       expires_at: string;
     };
