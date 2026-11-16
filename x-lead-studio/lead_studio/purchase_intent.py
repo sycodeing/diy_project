@@ -6,7 +6,7 @@ from typing import Any
 
 DEMAND_SEGMENT_KEYS = ("demand_custom", "demand_recommendation", "demand_gift", "demand_decor")
 DEMAND_SCENES = ("custom", "gift", "decor")
-VERSION = "pet-demand-v2"
+VERSION = "pet-demand-v3"
 PRODUCT = r"\b(?:pillow(?:case|\s+cover)?s?|cushions?|portraits?|prints?|wall\s+art|keepsakes?)\b"
 PET = r"\b(?:dog|cat|puppy|kitten|pet)s?\b"
 CUSTOM_CONTEXT = r"\b(?:portraits?|photos?|pictures?|custom|personalized|personalised)\b"
@@ -40,26 +40,33 @@ def assess_purchase_intent(text: str) -> dict[str, Any]:
             result["evidence"].append(match.group(0))
     if result["exclusion_reasons"]:
         return result
-    # The pet, relevant product and buyer language must occur in one short
-    # sentence, not merely somewhere in the bio or unrelated post paragraphs.
-    for sentence in re.split(r"[.!?\n]+", text):
-        if len(sentence) > 350 or not re.search(PET, sentence, re.I):
+    # Adjacent sentences can describe one request ("custom pillow? My cat on
+    # it"), but unrelated paragraphs must not supply missing buyer evidence.
+    sentences = [part.strip() for part in re.split(r"[.!?\n]+", text) if part.strip()]
+    for index, sentence in enumerate(sentences):
+        context = sentence
+        if index + 1 < len(sentences) and len(sentence) + len(sentences[index + 1]) <= 350:
+            following = sentences[index + 1]
+            if re.search(r"\b(?:on\s+(?:it|one)|of\s+(?:my|our)|with\s+(?:my|our)|"
+                         r"(?:my|our)\s+(?:dog|cat|pet|puppy|kitten)\s+(?:on|photo|picture))\b", following, re.I):
+                context = f"{sentence}. {following}"
+        if len(context) > 350 or not re.search(PET, context, re.I):
             continue
-        product_context = bool(re.search(PRODUCT, sentence, re.I) and re.search(CUSTOM_CONTEXT, sentence, re.I))
-        gift_context = bool(re.search(GIFT, sentence, re.I))
+        product_context = bool(re.search(PRODUCT, context, re.I) and re.search(CUSTOM_CONTEXT, context, re.I))
+        gift_context = bool(re.search(GIFT, context, re.I))
         # A general gift for a dog could mean food or toys. Require a photo /
         # personalized context; birthday/adoption alone is not purchase intent.
-        relevant_gift = bool(gift_context and re.search(CUSTOM_CONTEXT, sentence, re.I)
-                             and not re.search(UNRELATED_GIFT, sentence, re.I))
+        relevant_gift = bool(gift_context and re.search(CUSTOM_CONTEXT, context, re.I)
+                             and not re.search(UNRELATED_GIFT, context, re.I))
         if not product_context and not relevant_gift:
             continue
-        request = re.search(REQUEST, sentence, re.I) or (relevant_gift and re.search(GIFT_REQUEST, sentence, re.I))
+        request = re.search(REQUEST, context, re.I) or (relevant_gift and re.search(GIFT_REQUEST, context, re.I))
         tier, score = ("explicit_request", 80) if request else (
-            ("exploratory", 50) if re.search(WISH, sentence, re.I) else ("excluded", 0)
+            ("exploratory", 50) if re.search(WISH, context, re.I) else ("excluded", 0)
         )
         if score > result["score"]:
-            scene = "gift" if gift_context else "decor" if re.search(DECOR, sentence, re.I) else "custom"
-            result.update(tier=tier, score=score, scene=scene, evidence=[sentence.strip()])
+            scene = "gift" if gift_context else "decor" if re.search(DECOR, context, re.I) else "custom"
+            result.update(tier=tier, score=score, scene=scene, evidence=[context])
     if not result["score"]:
         result["exclusion_reasons"] = ["no_current_product_request"]
     return result

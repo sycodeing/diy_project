@@ -33,6 +33,16 @@ def test_text_evidence(text, tier):
     assert result["human_review_required"] is True
 
 
+def test_adjacent_sentences_keep_one_buyer_request_without_merging_unrelated_pet_chat():
+    intent = assess_purchase_intent("Any recommendations for a custom pillow? I'd like my cat on it.")
+    assert intent["tier"] == "explicit_request"
+    assert intent["scene"] == "custom"
+    assert "my cat on it" in intent["evidence"][0].lower()
+    assert assess_purchase_intent("Where can I buy a pillow? My dog is cute.")["tier"] == "excluded"
+    assert assess_purchase_intent("Looking for a custom pillow? My cat is cute.")["tier"] == "excluded"
+    assert assess_purchase_intent("Looking for a custom pillow? Shop now for my cat!")["tier"] == "excluded"
+
+
 @pytest.mark.parametrize("text,scene", [
     ("Looking for a custom pillow of my dog", "custom"),
     ("Looking for a gift with a photo of my cat for my partner", "gift"),
@@ -92,6 +102,15 @@ def test_legacy_is_unchanged_and_demand_is_review_only():
     assert text_only["author_id"] == "owner-id"
 
 
+def test_ownership_is_pending_only_when_all_other_demand_gates_pass():
+    pending = make_candidate(text="Where can I order a custom pillow of a cat?")
+    assert pending["status"] == "targeting_review"
+    assert json.loads(pending["targeting_json"])["ownership_evidence_pending"] is True
+    assert pending["ownership_confidence"] == 0
+    assert make_candidate(text="Shop now: where can I order a custom pillow of a cat?")["status"] == "rejected_targeting"
+    assert make_candidate(text="Where can I order a custom pillow of a cat?", location="United Kingdom")["status"] == "rejected_targeting"
+
+
 def test_query_cursors_and_budget_are_separate():
     now = datetime(2026, 11, 13, tzinfo=timezone.utc)
     plans = build_query_plan({"segments": ["demand_custom", "demand_recommendation"],
@@ -100,6 +119,10 @@ def test_query_cursors_and_budget_are_separate():
     assert sum(p.limit for p in plans) == 60
     assert all(p.since_time < int(now.timestamp()) for p in plans)
     assert all(p.state_key.startswith("demand_") and len(p.query) < 440 for p in plans)
+    revised = build_query_plan({"segments": ["demand_custom"], "resultLimit": 1, "lookbackDays": 3},
+        state={"demand_custom:broad": int(now.timestamp()) - 100}, include_geo=False, now=now)
+    assert revised[0].state_key == "demand_custom:v3:broad"
+    assert revised[0].since_time == int(now.timestamp()) - 3 * 86400
     tiny = build_query_plan({"segments": ["demand_custom", "demand_decor"], "resultLimit": 1}, now=now)
     assert sum(p.limit for p in tiny) == 1
 
@@ -195,3 +218,51 @@ def test_scene_caps_never_fill_with_other_scenes_or_duplicate_authors(monkeypatc
     assert len({c["authorHash"] for c in result["candidates"]}) == 2
     assert result["metrics"]["scene_submitted"] == {"custom": 1, "gift": 1, "decor": 0}
     assert result["metrics"]["scene_submission_gap"] == {"custom": 0, "gift": 0, "decor": 1}
+
+
+def test_worker_retries_same_account_photo_after_original_image_fails(monkeypatch):
+    original = make_candidate()
+    fallback_url = "https://example.com/owner-dog.jpg"
+    calls = []
+    submitted = []
+
+    async def ensure(*args):
+        pass
+
+    async def collect(*args, **kwargs):
+        return [{}], [original], {}
+
+    async def attach(candidate, *args, force_search=False, **kwargs):
+        calls.append(force_search)
+        url = fallback_url if force_search else candidate["media_url"]
+        source = {"post_id": "456" if force_search else candidate["post_id"],
+                  "post_url": "https://x.com/owner/status/456", "author_id": "owner-id",
+                  "author_handle": "owner", "ownership_confidence": 88, "pet_type": "dog"}
+        return {**candidate, "media_url": url, "media_urls": [url]}, {url: source}
+
+    async def verify(candidate, *args):
+        if candidate["media_url"] != fallback_url:
+            return None
+        evidence = json.loads(candidate["targeting_json"])
+        evidence["image_verification"] = {"result": "verified", "media_url": fallback_url}
+        return {**candidate, "targeting_json": json.dumps(evidence)}
+
+    def handler(request):
+        submitted.append(json.loads(request.content))
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr(worker, "ensure_pet_image_verifier", ensure)
+    monkeypatch.setattr(worker, "collect_twitterapi_search", collect)
+    monkeypatch.setattr(worker, "attach_same_account_photo", attach)
+    monkeypatch.setattr(worker, "verify_pet_photo", verify)
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await worker._execute_job(client, {}, Settings(x_lead_provider="twitterapi", diy_site_url="https://test.invalid"),
+                "test", {"id": "test", "configuration": {"segments": ["demand_custom"]}})
+
+    asyncio.run(run())
+    assert calls == [False, True]
+    assert submitted[0]["metrics"]["image_checked"] == 2
+    assert submitted[0]["candidates"][0]["mediaUrl"] == fallback_url
+    assert submitted[0]["candidates"][0]["targetingData"]["photo_source"]["relationship"] == "same_account"

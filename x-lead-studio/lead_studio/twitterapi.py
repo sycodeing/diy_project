@@ -49,6 +49,9 @@ class CollectionMetrics:
     duplicate_posts: int = 0
     photo_posts: int = 0
     candidate_posts: int = 0
+    intent_prefilter_rejected: int = 0
+    targeting_prefilter_rejected: int = 0
+    query_slices: list[dict[str, Any]] = field(default_factory=list)
     new_status: int = 0
     location_review_status: int = 0
     targeting_review_status: int = 0
@@ -75,6 +78,9 @@ class CollectionMetrics:
             "duplicate_posts": self.duplicate_posts,
             "photo_posts": self.photo_posts,
             "candidate_posts": self.candidate_posts,
+            "intent_prefilter_rejected": self.intent_prefilter_rejected,
+            "targeting_prefilter_rejected": self.targeting_prefilter_rejected,
+            "query_slices": self.query_slices,
             "new_status": self.new_status,
             "location_review_status": self.location_review_status,
             "targeting_review_status": self.targeting_review_status,
@@ -100,7 +106,7 @@ class QueryPlan:
 
     @property
     def state_key(self) -> str:
-        return f"{self.segment.key}:{self.mode}"
+        return _segment_state_key(self.segment, self.mode)
 
     @property
     def query(self) -> str:
@@ -192,11 +198,14 @@ async def collect_twitterapi_search(
                 us_shortfall_by_segment[plan.segment.key] = max(0, plan.limit - len(items))
             metrics.page_count += pages
             metrics.received_posts += len(items)
+            slice_counts = {"received": len(items), "unique": 0, "intent_rejected": 0,
+                            "targeting_rejected": 0, "intent_passed": 0}
             for item in items:
                 post_id = str(item.get("id") or item.get("id_str") or "").strip()
                 if not post_id or post_id in raw_by_id:
                     metrics.duplicate_posts += 1
                     continue
+                slice_counts["unique"] += 1
                 raw_by_id[post_id] = item
                 tweet = twitterapi_item_to_tweet(
                     item, search_query=plan.query,
@@ -214,7 +223,21 @@ async def collect_twitterapi_search(
                 )
                 if not preliminary or preliminary.get("pet_type") not in {"cat", "dog"}:
                     continue
+                if plan.segment.key in {segment.key for segment in DEMAND_SEARCH_SEGMENTS}:
+                    intent = json.loads(preliminary["targeting_json"])["purchase_intent"]
+                    if intent["tier"] == "excluded":
+                        metrics.intent_prefilter_rejected += 1
+                        slice_counts["intent_rejected"] += 1
+                        continue
+                    if preliminary["status"] == "rejected_targeting":
+                        metrics.targeting_prefilter_rejected += 1
+                        slice_counts["targeting_rejected"] += 1
+                        continue
+                    slice_counts["intent_passed"] += 1
                 tweets_by_id[post_id] = (tweet, plan.segment.key)
+            query_archive["counts"] = slice_counts
+            metrics.query_slices.append({"segment": plan.segment.key, "mode": plan.mode, **slice_counts})
+            _save_archive(archive_path, archive)
             # Advance only after every page for this query completed successfully.
             # Keep a five-minute overlap to absorb indexing delay without repeatedly
             # scanning the full lookback window.
@@ -336,7 +359,7 @@ def build_query_plan(
         if segment_limit <= 0:
             continue
         if not include_geo:
-            key = f"{segment.key}:broad"
+            key = _segment_state_key(segment, "broad")
             since_time = max(initial_since, int(watermarks.get(key, initial_since)))
             plans.append(QueryPlan(segment, "broad", segment_limit, since_time, until_time))
             continue
@@ -348,10 +371,15 @@ def build_query_plan(
         if broad_limit > 0:
             modes.append(("broad", broad_limit))
         for mode, limit in modes:
-            key = f"{segment.key}:{mode}"
+            key = _segment_state_key(segment, mode)
             since_time = max(initial_since, int(watermarks.get(key, initial_since)))
             plans.append(QueryPlan(segment, mode, limit, since_time, until_time))
     return plans
+
+
+def _segment_state_key(segment: SearchSegment, mode: str) -> str:
+    revision = f":{segment.revision}" if segment.revision else ""
+    return f"{segment.key}{revision}:{mode}"
 
 
 async def _enrich_tweets_with_user_about(

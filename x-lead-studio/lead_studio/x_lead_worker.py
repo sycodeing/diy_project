@@ -37,7 +37,7 @@ async def run_x_lead_worker(settings: Settings) -> None:
                     json={
                         "workerId": worker_id,
                         "cookieConfigured": _provider_is_configured(settings, provider),
-                        "version": "1.9.0",
+                        "version": "1.10.0",
                     },
                 )
                 if response.status_code == 204:
@@ -109,7 +109,7 @@ async def _execute_job(
         if provider in {"twitterapi", "apify", "x-cookie"}:
             if is_demand:
                 metrics["discovery_mode"] = "purchase_intent"
-                metrics["intent_rejected"] = sum(
+                metrics["intent_rejected"] = metrics.get("intent_prefilter_rejected", 0) + sum(
                     json.loads(c.get("targeting_json") or "{}").get("purchase_intent", {}).get("tier") == "excluded"
                     for c in found_for_image_review
                 )
@@ -140,14 +140,27 @@ async def _execute_job(
                     continue
                 sources: dict[str, dict[str, Any]] = {}
                 if is_demand:
+                    had_original_photo = bool(candidate.get("media_urls"))
+                    ownership_pending = bool(json.loads(candidate.get("targeting_json") or "{}").get("ownership_evidence_pending"))
                     candidate, sources = await attach_same_account_photo(
                         candidate, client, settings, archive_id=str(job.get("id") or ""),
+                        force_search=ownership_pending,
                     )
                     if not candidate:
                         continue
                     photo_matched += 1
                 checked += 1
                 selected = await verify_pet_photo(candidate, client, settings)
+                if is_demand and not selected and had_original_photo and not ownership_pending:
+                    fallback, fallback_sources = await attach_same_account_photo(
+                        candidate, client, settings, archive_id=str(job.get("id") or ""),
+                        force_search=True,
+                    )
+                    if fallback:
+                        checked += 1
+                        selected = await verify_pet_photo(fallback, client, settings)
+                        if selected:
+                            sources = fallback_sources
                 if selected and is_demand:
                     selected = record_verified_photo_source(selected, sources)
                 if selected:

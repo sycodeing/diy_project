@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from .targeting import build_targeting, candidate_status
+from .targeting import build_targeting, candidate_status, demand_candidate_status, MIN_OWNERSHIP_CONFIDENCE
 from .purchase_intent import DEMAND_SEGMENT_KEYS, assess_purchase_intent
 from .xclient import read
 
@@ -51,7 +51,9 @@ def candidate_from_tweet(
         return None
 
     targeting = build_targeting(tweet, source_segment)
-    status = candidate_status(targeting, us_required, us_min_confidence)
+    status = (demand_candidate_status if is_demand else candidate_status)(
+        targeting, us_required, us_min_confidence,
+    )
     stored_targeting = {
         "matched_terms": targeting["matched_terms"],
         "ownership_terms": targeting["ownership_terms"],
@@ -66,6 +68,7 @@ def candidate_from_tweet(
         intent = assess_purchase_intent(text_excerpt(tweet))
         stored_targeting["purchase_intent"] = intent
         stored_targeting["discovery_mode"] = "purchase_intent"
+        stored_targeting["ownership_evidence_pending"] = targeting["ownership_confidence"] < MIN_OWNERSHIP_CONFIDENCE
         if intent["tier"] == "excluded":
             status = "rejected_targeting"
         elif status == "new":

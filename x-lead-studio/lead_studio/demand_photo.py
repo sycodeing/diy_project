@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -12,11 +12,11 @@ import httpx
 
 from .config import Settings, TWITTERAPI_ARCHIVE_DIR
 from .purchase_intent import EXCLUSIONS
-from .targeting import build_targeting
+from .targeting import build_targeting, MIN_OWNERSHIP_CONFIDENCE
 from .twitterapi import _request_page, twitterapi_item_to_tweet
 
 
-def _photo_source(tweet: dict[str, Any]) -> dict[str, Any]:
+def _photo_source(tweet: dict[str, Any], screening: dict[str, Any]) -> dict[str, Any]:
     author = tweet.get("author") or {}
     handle = str(author.get("username") or "")
     post_id = str(tweet.get("id") or "")
@@ -27,6 +27,8 @@ def _photo_source(tweet: dict[str, Any]) -> dict[str, Any]:
         "posted_at": tweet.get("date") or None,
         "author_id": str(author.get("id") or ""),
         "author_handle": handle,
+        "ownership_confidence": screening["ownership_confidence"],
+        "pet_type": screening["pet_type"],
     }
 
 
@@ -40,18 +42,21 @@ def _save_archive(path: Path, archive: dict[str, Any]) -> None:
 async def attach_same_account_photo(
     candidate: dict[str, Any], client: httpx.AsyncClient, settings: Settings,
     *, archive_id: str, archive_dir: Path = TWITTERAPI_ARCHIVE_DIR,
+    force_search: bool = False,
 ) -> tuple[dict[str, Any] | None, dict[str, dict[str, Any]]]:
     """Return up to four photo URLs with per-URL source proof; no match means no lead."""
     post_id = str(candidate.get("post_id") or "")
     handle = str(candidate.get("author_handle") or "")
     author_id = str(candidate.get("author_id") or "")
     existing = [url for url in candidate.get("media_urls") or [] if isinstance(url, str) and url.startswith("https://")]
-    if existing:
+    if existing and not force_search:
         source = {
             "post_id": post_id, "post_url": candidate["post_url"],
             "post_excerpt": json.loads(candidate.get("targeting_json") or "{}").get("post_excerpt", ""),
             "posted_at": candidate.get("posted_at"), "author_id": author_id,
             "author_handle": handle,
+            "ownership_confidence": candidate.get("ownership_confidence", 0),
+            "pet_type": candidate.get("pet_type"),
         }
         return candidate, {url: source for url in existing}
     if not author_id or not re.fullmatch(r"[A-Za-z0-9_]{1,15}", handle):
@@ -66,10 +71,12 @@ async def attach_same_account_photo(
         "query": query, "requested_at": datetime.now(timezone.utc).isoformat(),
         "response": None,
     }
-    _save_archive(path, archive)
-    payload = await _request_page(client, settings, query, "")
-    archive["response"] = payload
-    _save_archive(path, archive)
+    payload = _cached_photo_response(archive_dir, author_id)
+    if payload is None:
+        _save_archive(path, archive)
+        payload = await _request_page(client, settings, query, "")
+        archive["response"] = payload
+        _save_archive(path, archive)
 
     sources: dict[str, dict[str, Any]] = {}
     for item in (payload.get("tweets") or [])[:30]:
@@ -92,7 +99,7 @@ async def attach_same_account_photo(
         for photo in tweet["media"]["photos"]:
             url = photo["url"]
             if url not in sources:
-                sources[url] = _photo_source(tweet)
+                sources[url] = _photo_source(tweet, screening)
             if len(sources) == 4:
                 break
         if len(sources) == 4:
@@ -100,6 +107,25 @@ async def attach_same_account_photo(
     if not sources:
         return None, {}
     return {**candidate, "media_url": next(iter(sources)), "media_urls": list(sources)}, sources
+
+
+def _cached_photo_response(archive_dir: Path, author_id: str) -> dict[str, Any] | None:
+    """Reuse a fresh archived account response, then revalidate every photo."""
+    newest: tuple[datetime, dict[str, Any]] | None = None
+    for path in archive_dir.glob("*-photo-*.json"):
+        try:
+            entry = json.loads(path.read_text(encoding="utf-8"))
+            fetched = datetime.fromisoformat(str(entry.get("requested_at") or "").replace("Z", "+00:00"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if fetched.tzinfo is None or not 0 <= (datetime.now(timezone.utc) - fetched).total_seconds() <= timedelta(days=30).total_seconds():
+            continue
+        response = entry.get("response")
+        if entry.get("author_id") != author_id or not isinstance(response, dict):
+            continue
+        if newest is None or fetched > newest[0]:
+            newest = (fetched, response)
+    return newest[1] if newest else None
 
 
 def record_verified_photo_source(
@@ -112,8 +138,15 @@ def record_verified_photo_source(
     verification = targeting.get("image_verification") or {}
     if verification.get("result") != "verified" or verification.get("media_url") != candidate["media_url"]:
         return None
+    ownership = max(int(candidate.get("ownership_confidence") or 0), int(source.get("ownership_confidence") or 0))
+    if ownership < MIN_OWNERSHIP_CONFIDENCE:
+        return None
+    if source.get("pet_type") and source["pet_type"] != candidate.get("pet_type"):
+        return None
+    targeting["ownership_evidence_pending"] = False
     targeting["photo_source"] = {
         **source, "relationship": "same_post" if source["post_id"] == candidate["post_id"] else "same_account",
         "selected_media_url": candidate["media_url"], "verification_result": "verified",
     }
-    return {**candidate, "targeting_json": json.dumps(targeting, ensure_ascii=False)}
+    return {**candidate, "ownership_confidence": ownership,
+            "targeting_json": json.dumps(targeting, ensure_ascii=False)}
