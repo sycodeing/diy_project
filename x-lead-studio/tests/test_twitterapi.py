@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -57,6 +57,29 @@ def test_query_plan_uses_broad_search_only_when_geo_queries_are_disabled() -> No
         ("pet_birthday", "broad", 20),
     ]
     assert all("place_country:US" not in plan.query for plan in plans)
+
+
+def test_bounded_older_window_ignores_live_watermark_without_regressing_it(tmp_path: Path) -> None:
+    live_now = datetime.now(timezone.utc)
+    older_until_date = live_now - timedelta(days=1)
+    older_until = older_until_date.isoformat()
+    existing = int((live_now - timedelta(hours=1)).timestamp())
+    config = {**CONFIG, "segments": ["pet_daily_dog"], "lookbackDays": 2, "untilTime": older_until}
+    plans = build_query_plan(config, state={"pet_daily_dog:broad": existing}, include_geo=False, now=live_now)
+    assert plans[0].until_time == int(older_until_date.timestamp())
+    assert plans[0].since_time < plans[0].until_time
+    assert plans[0].since_time < existing
+
+    state_path = tmp_path / "watermarks.json"
+    state_path.write_text(json.dumps({"pet_daily_dog:broad": existing}), encoding="utf-8")
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"tweets": [], "has_next_page": False, "next_cursor": ""})
+    settings = Settings(twitterapi_api_key="test-key", twitterapi_geo_query_enabled=False, twitterapi_about_enrichment_enabled=False)
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await collect_twitterapi_search(client, settings, config, state_path=state_path)
+    asyncio.run(run())
+    assert json.loads(state_path.read_text(encoding="utf-8"))["pet_daily_dog:broad"] == existing
 
 
 def test_apify_token_alone_cannot_reactivate_dormant_provider() -> None:

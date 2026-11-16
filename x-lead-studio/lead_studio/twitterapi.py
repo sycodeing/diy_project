@@ -261,7 +261,9 @@ async def collect_twitterapi_search(
             candidates[candidate["post_id"]] = candidate
 
     try:
-        state.update(completed_watermarks)
+        # A bounded older-window search must never move the live incremental cursor backward.
+        for key, watermark in completed_watermarks.items():
+            state[key] = max(state.get(key, 0), watermark)
         _save_state(state_path, state)
     except Exception as error:
         archive["status"] = "partial"
@@ -301,7 +303,21 @@ def build_query_plan(
     if not segments:
         raise ValueError("No supported audience segment was selected.")
 
-    current = now or datetime.now(timezone.utc)
+    live_now = now or datetime.now(timezone.utc)
+    current = live_now
+    older_until = configuration.get("untilTime")
+    if older_until is not None:
+        if not isinstance(older_until, str):
+            raise ValueError("untilTime must be an ISO timestamp")
+        try:
+            current = datetime.fromisoformat(older_until.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ValueError("untilTime must be an ISO timestamp") from error
+        if current.tzinfo is None:
+            raise ValueError("untilTime must include a timezone")
+        current = current.astimezone(timezone.utc)
+        if not (live_now - timedelta(days=30) <= current <= live_now - timedelta(minutes=5)):
+            raise ValueError("untilTime must be between five minutes and 30 days old")
     until_time = int(current.timestamp())
     lookback_days = max(1, min(90, int(configuration.get("lookbackDays", 30))))
     initial_since = int((current - timedelta(days=lookback_days)).timestamp())
@@ -314,7 +330,7 @@ def build_query_plan(
 
     per_segment = _split_limit(total_limit, len(segments))
     plans: list[QueryPlan] = []
-    watermarks = state or {}
+    watermarks = {} if older_until is not None else (state or {})
     share = max(50, min(100, us_share))
     for segment, segment_limit in zip(segments, per_segment, strict=True):
         if segment_limit <= 0:
@@ -677,7 +693,7 @@ def _save_state(path: Path, state: dict[str, int]) -> None:
 
 
 def _archive_configuration(configuration: dict[str, Any]) -> dict[str, Any]:
-    allowed = ("segments", "searchProduct", "resultLimit", "lookbackDays", "usRequired", "usMinConfidence", "discoveryMode")
+    allowed = ("segments", "searchProduct", "resultLimit", "lookbackDays", "usRequired", "usMinConfidence", "untilTime", "discoveryMode")
     return {key: configuration[key] for key in allowed if key in configuration}
 
 
