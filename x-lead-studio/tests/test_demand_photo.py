@@ -74,11 +74,12 @@ def test_collector_filters_seller_before_account_lookup_and_counts_query_slice(t
                 state_path=tmp_path / "state.json", archive_dir=tmp_path / "runs")
 
     _, candidates, metrics = asyncio.run(run())
-    assert len(calls) == 1
+    assert len(calls) == 2  # two independent custom-query variants
     assert [candidate["post_id"] for candidate in candidates] == ["201"]
     assert metrics["intent_prefilter_rejected"] == 1
     assert metrics["query_slices"][0]["intent_passed"] == 1
     assert metrics["query_slices"][0]["intent_rejected"] == 1
+    assert metrics["query_slices"][0]["query_revision"] == "v7-product"
 
 
 def test_account_photo_join_archives_response_and_rejects_other_accounts(tmp_path):

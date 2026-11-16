@@ -146,11 +146,14 @@ SEARCH_SEGMENTS = (
 
 # Separate keys give demand discovery independent incremental cursors.
 DEMAND_SEARCH_SEGMENTS = (
-    SearchSegment("demand_custom", "Pet photo pillow request",
-        '("my dog" OR "my cat" OR "our dog" OR "our cat") '
-        '(pillow OR cushion OR pillowcase) '
-        '("looking for" OR "where can I" OR "I want") '
-        '-filter:replies lang:en', "v6"),
+    SearchSegment("demand_custom", "Pet photo pillow request / product phrase",
+        '("pet photo pillow" OR "custom pet pillow" OR "dog photo pillow" OR "cat photo pillow") '
+        '("where can I" OR "looking for" OR "recommend" OR "want") '
+        '-filter:replies lang:en', "v7-product"),
+    SearchSegment("demand_custom", "Pet photo pillow request / owner phrase",
+        '("pillow with my dog" OR "pillow with my cat" OR "pillow of my dog" OR "pillow of my cat") '
+        '("want" OR "need" OR "where" OR "recommend") '
+        '-filter:replies lang:en', "v7-owner"),
     SearchSegment("demand_recommendation", "Pet product recommendations",
         '("my dog" OR "my cat") ("photo pillow" OR "custom pillow" OR cushion) '
         '(recommend OR "anyone know") -filter:replies lang:en', "v6"),
@@ -158,14 +161,19 @@ DEMAND_SEARCH_SEGMENTS = (
         '(dog OR cat) (pillow OR portrait OR "wall art") '
         '("would love" OR "thinking about" OR "looking for") '
         '-filter:replies lang:en', "v5"),
-    SearchSegment("demand_gift", "Gift for a cat or dog lover",
-        '(dog OR cat) '
-        '("gift ideas for my" OR "need a gift for my" OR "what should I get my" OR "photo gift of my") '
-        '(wife OR husband OR sister OR brother OR friend OR mom OR dad OR partner) '
-        '-filter:replies lang:en', "v7"),
+    SearchSegment("demand_gift", "Gift for a cat or dog lover / gift ideas",
+        '("dog lover" OR "cat lover" OR "pet lover") '
+        '("gift ideas" OR "gift recommendations") my '
+        '-filter:replies lang:en', "v8-lover"),
+    SearchSegment("demand_gift", "Gift for a cat or dog lover / recipient",
+        '("gift for my" OR "what should I get my" OR "gift ideas for my") '
+        '(dog OR cat OR pet) -filter:replies lang:en', "v8-recipient"),
     SearchSegment("demand_reply", "Pet photo pillow reply",
-        '("my dog" OR "my cat" OR "our dog" OR "our cat") '
-        '(pillow OR cushion OR pillowcase) filter:replies lang:en', "v1"),
+        '("pet photo pillow" OR "custom dog pillow" OR "custom cat pillow" OR "photo pillow") '
+        '("where" OR "want" OR "how much" OR "can you") filter:replies lang:en', "v2"),
+    SearchSegment("demand_reply", "Pet photo pillow reply / parent context",
+        '("can you make one for my dog" OR "can you make one for my cat" '
+        'OR "how much for one") filter:replies lang:en', "v2-parent"),
 )
 
 US_STATE_NAMES = {
@@ -452,12 +460,14 @@ def candidate_status(targeting: dict[str, Any], us_required: bool, us_min_confid
 
 
 def demand_candidate_status(targeting: dict[str, Any], us_required: bool, us_min_confidence: int) -> str:
-    """Defer only missing ownership; all other targeting and US gates stay intact."""
+    """Defer missing pet type or ownership; all other targeting and US gates stay intact."""
     status = candidate_status(
-        {**targeting, "ownership_confidence": max(MIN_OWNERSHIP_CONFIDENCE, targeting["ownership_confidence"])},
+        {**targeting, "pet_type": targeting["pet_type"] or "dog",
+         "ownership_confidence": max(MIN_OWNERSHIP_CONFIDENCE, targeting["ownership_confidence"])},
         us_required, us_min_confidence,
     )
-    if status == "new" and targeting["ownership_confidence"] < MIN_OWNERSHIP_CONFIDENCE:
+    if status == "new" and (targeting["ownership_confidence"] < MIN_OWNERSHIP_CONFIDENCE
+                            or targeting["pet_type"] not in {"cat", "dog"}):
         return "targeting_review"
     return status
 

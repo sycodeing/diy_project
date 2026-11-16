@@ -114,6 +114,30 @@ def test_image_gate_rejects_wrong_species():
     assert asyncio.run(run()) is None
 
 
+def test_demand_photo_can_resolve_a_pending_pet_type_but_generic_unknowns_still_fail():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/chat":
+            return httpx.Response(200, json={"message": {"content": json.dumps({
+                "real_pet_photo": True, "pet_type": "dog", "preview_usable": True,
+                "quality_score": 86,
+            })}})
+        return httpx.Response(200, content=_image())
+
+    async def run(candidate):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await verify_pet_photo(candidate, client, Settings())
+
+    candidate = {"pet_type": None, "media_url": "https://img.example/dog.jpg",
+                 "targeting_json": json.dumps({"discovery_mode": "purchase_intent",
+                                               "pet_type_evidence_pending": True})}
+    resolved = asyncio.run(run(candidate))
+    assert resolved["pet_type"] == "dog"
+    evidence = json.loads(resolved["targeting_json"])
+    assert evidence["pet_type_evidence_pending"] is False
+    assert evidence["image_verification"]["pet_type"] == "dog"
+    assert asyncio.run(run({**candidate, "targeting_json": "{}"})) is None
+
+
 def test_image_gate_rejects_illustration_even_with_matching_species():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/chat":

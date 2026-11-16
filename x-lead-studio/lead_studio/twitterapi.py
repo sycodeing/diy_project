@@ -24,6 +24,7 @@ from .targeting import SEARCH_SEGMENTS, DEMAND_SEARCH_SEGMENTS, SearchSegment
 
 
 ADVANCED_SEARCH_PATH = "/twitter/tweet/advanced_search"
+TWEETS_BY_ID_PATH = "/twitter/tweets"
 USER_ABOUT_PATH = "/twitter/user_about"
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503}
 
@@ -52,6 +53,9 @@ class CollectionMetrics:
     candidate_posts: int = 0
     unusable_posts: int = 0
     pet_type_unknown: int = 0
+    pet_type_pending: int = 0
+    reply_parent_lookups: int = 0
+    reply_parent_resolved: int = 0
     intent_prefilter_rejected: int = 0
     intent_rejection_reasons: dict[str, int] = field(default_factory=dict)
     targeting_prefilter_rejected: int = 0
@@ -85,6 +89,9 @@ class CollectionMetrics:
             "candidate_posts": self.candidate_posts,
             "unusable_posts": self.unusable_posts,
             "pet_type_unknown": self.pet_type_unknown,
+            "pet_type_pending": self.pet_type_pending,
+            "reply_parent_lookups": self.reply_parent_lookups,
+            "reply_parent_resolved": self.reply_parent_resolved,
             "intent_prefilter_rejected": self.intent_prefilter_rejected,
             "intent_rejection_reasons": self.intent_rejection_reasons,
             "targeting_prefilter_rejected": self.targeting_prefilter_rejected,
@@ -167,6 +174,7 @@ async def collect_twitterapi_search(
     candidates: dict[str, dict[str, Any]] = {}
     completed_watermarks: dict[str, int] = {}
     us_shortfall_by_segment: dict[str, int] = {}
+    parent_lookup_limit = 5
 
     try:
         for plan in plans:
@@ -180,10 +188,12 @@ async def collect_twitterapi_search(
             metrics.query_modes[plan.mode] += 1
             query_archive: dict[str, Any] = {
                 "segment": plan.segment.key,
+                "query_revision": plan.segment.revision,
                 "mode": plan.mode,
                 "limit": effective_plan.limit,
                 "query": effective_plan.query,
                 "pages": [],
+                "parent_contexts": [],
                 "decisions": [],
             }
             archive["queries"].append(query_archive)
@@ -213,7 +223,7 @@ async def collect_twitterapi_search(
             metrics.page_count += pages
             metrics.received_posts += len(items)
             slice_counts = {"received": len(items), "unique": 0, "unusable": 0,
-                            "pet_type_unknown": 0, "intent_rejected": 0,
+                            "pet_type_unknown": 0, "pet_type_pending": 0, "intent_rejected": 0,
                             "targeting_rejected": 0, "intent_passed": 0}
             for item in items:
                 post_id = str(item.get("id") or item.get("id_str") or "").strip()
@@ -251,13 +261,32 @@ async def collect_twitterapi_search(
                     slice_counts["unusable"] += 1
                     query_archive["decisions"].append({"post_id": post_id, "reason": "candidate_unavailable"})
                     continue
-                if preliminary.get("pet_type") not in {"cat", "dog"}:
-                    metrics.pet_type_unknown += 1
-                    slice_counts["pet_type_unknown"] += 1
-                    query_archive["decisions"].append({"post_id": post_id, "reason": "pet_type_unknown"})
-                    continue
                 if plan.segment.key in {segment.key for segment in DEMAND_SEARCH_SEGMENTS}:
                     intent = json.loads(preliminary["targeting_json"])["purchase_intent"]
+                    parent_id = str(tweet.get("_source_metadata", {}).get("in_reply_to_id") or "")
+                    if (plan.segment.key == "demand_reply"
+                            and intent["exclusion_reasons"] == ["reply_parent_context_required"]
+                            and parent_id and metrics.reply_parent_lookups < parent_lookup_limit):
+                        metrics.reply_parent_lookups += 1
+                        parent_payload = await _request_tweets_by_id(client, settings, parent_id)
+                        query_archive["parent_contexts"].append({
+                            "post_id": parent_id, "received_at": _utc_now(), "response": parent_payload,
+                        })
+                        _save_archive(archive_path, archive)
+                        parent = next((entry for entry in parent_payload.get("tweets", [])
+                                       if isinstance(entry, dict) and str(entry.get("id") or "") == parent_id), None)
+                        if parent:
+                            tweet["_source_metadata"]["reply_parent_context"] = {
+                                "post_id": parent_id, "text": str(parent.get("text") or "")[:1500],
+                            }
+                            preliminary = candidate_from_tweet(
+                                tweet, plan.segment.key,
+                                us_required=bool(configuration.get("usRequired", True)),
+                                us_min_confidence=max(0, min(100, int(configuration.get("usMinConfidence", 70)))),
+                            )
+                            intent = json.loads(preliminary["targeting_json"])["purchase_intent"]
+                            if intent["tier"] != "excluded":
+                                metrics.reply_parent_resolved += 1
                     if intent["tier"] == "excluded":
                         metrics.intent_prefilter_rejected += 1
                         slice_counts["intent_rejected"] += 1
@@ -272,12 +301,21 @@ async def collect_twitterapi_search(
                         query_archive["decisions"].append({"post_id": post_id, "reason": "targeting_rejected"})
                         continue
                     slice_counts["intent_passed"] += 1
+                    if preliminary.get("pet_type") not in {"cat", "dog"}:
+                        metrics.pet_type_pending += 1
+                        slice_counts["pet_type_pending"] += 1
+                elif preliminary.get("pet_type") not in {"cat", "dog"}:
+                    metrics.pet_type_unknown += 1
+                    slice_counts["pet_type_unknown"] += 1
+                    query_archive["decisions"].append({"post_id": post_id, "reason": "pet_type_unknown"})
+                    continue
                 query_archive["decisions"].append({"post_id": post_id, "reason":
                                                    "intent_passed" if plan.segment.key in {segment.key for segment in DEMAND_SEARCH_SEGMENTS}
                                                    else "prefilter_passed"})
                 tweets_by_id[post_id] = (tweet, plan.segment.key)
             query_archive["counts"] = slice_counts
-            metrics.query_slices.append({"segment": plan.segment.key, "mode": plan.mode,
+            metrics.query_slices.append({"segment": plan.segment.key, "query_revision": plan.segment.revision,
+                                         "mode": plan.mode,
                                          "source_exhausted": source_exhausted, **slice_counts})
             _save_archive(archive_path, archive)
             # Advance only after every page for this query completed successfully.
@@ -323,7 +361,8 @@ async def collect_twitterapi_search(
             us_required=bool(configuration.get("usRequired", True)),
             us_min_confidence=max(0, min(100, int(configuration.get("usMinConfidence", 70)))),
         )
-        if candidate and candidate.get("pet_type") in {"cat", "dog"}:
+        if candidate and (candidate.get("pet_type") in {"cat", "dog"}
+                          or segment_key in {segment.key for segment in DEMAND_SEARCH_SEGMENTS}):
             candidates[candidate["post_id"]] = candidate
 
     try:
@@ -660,6 +699,34 @@ async def _request_page(
             raise TwitterApiError(str(payload.get("message") or "TwitterAPI.io returned an error."))
         return payload
     raise TwitterApiError("TwitterAPI.io request failed after retries.")
+
+
+async def _request_tweets_by_id(
+    client: httpx.AsyncClient, settings: Settings, post_id: str,
+) -> dict[str, Any]:
+    for attempt in range(4):
+        response = await client.get(
+            f"{settings.twitterapi_base_url}{TWEETS_BY_ID_PATH}",
+            headers={"X-API-Key": settings.twitterapi_api_key},
+            params={"tweet_ids": post_id},
+        )
+        if response.status_code == 402:
+            raise TwitterApiCreditsExhausted("TwitterAPI.io credits are exhausted during parent lookup.")
+        if response.status_code in {401, 403}:
+            raise TwitterApiError("TwitterAPI.io authorization failed during parent lookup.")
+        if response.status_code == 404:
+            return {"tweets": []}
+        if response.status_code in RETRYABLE_STATUS_CODES and attempt < 3:
+            await asyncio.sleep(2**attempt)
+            continue
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("tweets"), list):
+            raise TwitterApiError("TwitterAPI.io returned an invalid parent response.")
+        if str(payload.get("status") or "").lower() == "error":
+            raise TwitterApiError(str(payload.get("message") or "TwitterAPI.io parent lookup failed."))
+        return payload
+    raise TwitterApiError("TwitterAPI.io parent lookup failed after retries.")
 
 
 def twitterapi_item_to_tweet(

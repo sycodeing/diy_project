@@ -53,7 +53,9 @@ async def verify_pet_photo(
 ) -> dict[str, Any] | None:
     """Inspect up to four photos and select the best usable match. Fail closed on errors."""
     expected = candidate.get("pet_type")
-    if expected not in {"cat", "dog"}:
+    target = json.loads(candidate.get("targeting_json") or "{}")
+    type_pending = target.get("discovery_mode") == "purchase_intent" and target.get("pet_type_evidence_pending") is True
+    if expected not in {"cat", "dog"} and not type_pending:
         return None
     urls = candidate.get("media_urls") or [candidate.get("media_url")]
     assessments: list[dict[str, Any]] = []
@@ -118,9 +120,12 @@ async def verify_pet_photo(
         if not isinstance(verdict, dict):
             raise ValueError("Invalid pet image verdict")
         score = verdict.get("quality_score")
-        usable = (verdict.get("real_pet_photo") is True and verdict.get("pet_type") == expected
+        detected_type = verdict.get("pet_type")
+        usable = (verdict.get("real_pet_photo") is True and detected_type in {"cat", "dog"}
+                  and (expected is None or detected_type == expected)
                   and verdict.get("preview_usable") is True and type(score) is int and 70 <= score <= 100)
         assessment = {"media_url": url, "usable": usable,
+                      "pet_type": detected_type if detected_type in {"cat", "dog"} else None,
                       "quality_score": score if type(score) is int and 0 <= score <= 100 else None,
                       "reason": str(verdict.get("reason") or "")[:240]}
         assessments.append(assessment)
@@ -129,10 +134,13 @@ async def verify_pet_photo(
     if best is None:
         return None
     url = best["media_url"]
-    verified = {**candidate, "media_url": url, "media_urls": [url]}
+    resolved_type = best["pet_type"]
+    verified = {**candidate, "media_url": url, "media_urls": [url], "pet_type": resolved_type}
     target = json.loads(verified.get("targeting_json") or "{}")
+    target["pet_type"] = resolved_type
+    target["pet_type_evidence_pending"] = False
     target["image_verification"] = {
-        "result": "verified", "pet_type": expected, "media_url": url,
+        "result": "verified", "pet_type": resolved_type, "media_url": url,
         "selection_policy": "best-preview-photo-v2", "preview_usable": True,
         "quality_score": best["quality_score"], "assessments": assessments,
         "verifier": settings.pet_image_verifier,

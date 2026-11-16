@@ -197,6 +197,11 @@ def test_reply_search_is_separate_and_keeps_reply_provenance(tmp_path: Path) -> 
     posts.append(retweet)
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/twitter/tweets":
+            assert request.url.params["tweet_ids"] == "9000"
+            return httpx.Response(200, json={"tweets": [{
+                "id": "9000", "text": "I make custom pet photo pillow covers from your dog or cat picture.",
+            }]})
         assert "filter:replies" in request.url.params["query"]
         assert "-filter:replies" not in request.url.params["query"]
         return httpx.Response(200, json={"tweets": posts, "has_next_page": False})
@@ -211,20 +216,46 @@ def test_reply_search_is_separate_and_keeps_reply_provenance(tmp_path: Path) -> 
                 state_path=tmp_path / "state.json")
 
     _, candidates, metrics = asyncio.run(run())
-    assert len(candidates) == 1
-    assert candidates[0]["post_id"] == "9100"
-    assert json.loads(candidates[0]["targeting_json"])["source"]["in_reply_to_id"] == "9000"
-    assert (metrics["unusable_posts"], metrics["pet_type_unknown"], metrics["intent_prefilter_rejected"]) == (1, 1, 2)
+    assert {candidate["post_id"] for candidate in candidates} == {"9100", "9103"}
+    assert all(json.loads(candidate["targeting_json"])["source"]["in_reply_to_id"] == "9000"
+               for candidate in candidates)
+    assert (metrics["unusable_posts"], metrics["pet_type_unknown"], metrics["intent_prefilter_rejected"]) == (1, 0, 2)
+    assert (metrics["reply_parent_lookups"], metrics["reply_parent_resolved"]) == (1, 1)
     assert metrics["intent_rejection_reasons"]["seller_or_giveaway"] == 1
-    assert metrics["intent_rejection_reasons"]["reply_parent_context_required"] == 1
     archive = next((tmp_path / "runs").glob("*.json"))
     saved_query = json.loads(archive.read_text(encoding="utf-8"))["queries"][0]
-    assert saved_query["counts"]["pet_type_unknown"] == 1
+    assert saved_query["parent_contexts"][0]["response"]["tweets"][0]["id"] == "9000"
     assert {entry["post_id"]: entry["reason"] for entry in saved_query["decisions"]} == {
-        "9100": "intent_passed", "9101": "intent_rejected", "9102": "pet_type_unknown",
-        "9103": "intent_rejected", "9104": "unusable_post",
+        "9100": "intent_passed", "9101": "intent_rejected", "9102": "intent_rejected",
+        "9103": "intent_passed", "9104": "unusable_post",
     }
-    assert saved_query["decisions"][3]["details"] == ["reply_parent_context_required"]
+    parent_intent = json.loads(next(c for c in candidates if c["post_id"] == "9103")["targeting_json"])["purchase_intent"]
+    assert parent_intent["parent_post_id"] == "9000"
+
+
+def test_valid_demand_with_ambiguous_pet_type_survives_until_photo_check(tmp_path: Path) -> None:
+    item = _tweet()
+    item.update(id="9200", text="Where can I order a custom pet photo pillow for my dog and cat?")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("advanced_search")
+        return httpx.Response(200, json={"tweets": [item], "has_next_page": False})
+
+    async def run():
+        settings = Settings(twitterapi_api_key="test", twitterapi_geo_query_enabled=False,
+                            twitterapi_about_enrichment_enabled=False)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await collect_twitterapi_search(client, settings,
+                {"segments": ["demand_custom"], "resultLimit": 2, "lookbackDays": 3,
+                 "usRequired": True, "usMinConfidence": 70},
+                state_path=tmp_path / "state.json")
+
+    _, candidates, metrics = asyncio.run(run())
+    assert len(candidates) == 1
+    assert candidates[0]["pet_type"] is None
+    assert candidates[0]["status"] == "targeting_review"
+    assert metrics["pet_type_pending"] == 1
+    assert metrics["query_slices"][0]["pet_type_pending"] == 1
 
 
 def test_collection_paginates_deduplicates_and_persists_watermarks(tmp_path: Path) -> None:

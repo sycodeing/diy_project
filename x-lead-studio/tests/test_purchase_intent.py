@@ -7,7 +7,7 @@ import pytest
 
 from lead_studio.config import Settings
 from lead_studio.discovery import candidate_from_tweet
-from lead_studio.purchase_intent import assess_purchase_intent
+from lead_studio.purchase_intent import assess_purchase_intent, assess_reply_with_parent
 from lead_studio.twitterapi import build_query_plan
 from lead_studio import x_lead_worker as worker
 
@@ -70,6 +70,7 @@ def test_gift_for_pet_owner_is_exploration_with_original_evidence():
 def test_gift_questions_across_sentences_and_negative_supply_list():
     for text in (
         "Any gift ideas for my wife? She loves our dog.",
+        "Any gift recommendations for my dog-loving friend?",
         "What should I get my cat-loving sister for Christmas?",
         "I need a gift for my dog-loving wife, no toys or treats.",
     ):
@@ -92,6 +93,18 @@ def test_pillow_fit_is_ranked_above_related_art_and_explicit_rejection_is_respec
     assert pillow["score"] > art["score"]
     assert mismatch["tier"] == "excluded"
     assert "product_mismatch" in mismatch["exclusion_reasons"]
+
+
+def test_reply_parent_can_confirm_the_product_but_not_invent_a_buyer_request():
+    parent = "I make custom pet photo pillow covers from your dog or cat picture."
+    buyer = assess_reply_with_parent("Can you make one for my dog?", parent, "9000")
+    assert (buyer["tier"], buyer["product_fit"], buyer["parent_post_id"]) == (
+        "explicit_request", "pillow", "9000",
+    )
+    assert buyer["evidence"] == ["Can you make one for my dog?"]
+    assert assess_reply_with_parent("My dog likes this one", parent, "9000")["tier"] == "excluded"
+    assert assess_reply_with_parent("Can you make one for my dog?", "My dog naps on a pillow", "9000")["tier"] == "excluded"
+    assert assess_reply_with_parent("Shop now, can you make one for my dog?", parent, "9000")["tier"] == "excluded"
 
 
 @pytest.mark.parametrize("text,scene", [
@@ -119,24 +132,22 @@ def test_new_scene_queries_keep_legacy_path_and_bounded_raw_budget():
     plans = build_query_plan({"segments": ["demand_custom", "demand_gift", "demand_decor"],
                               "resultLimit": 90, "lookbackDays": 3}, include_geo=False,
                              now=datetime(2026, 11, 16, tzinfo=timezone.utc))
-    assert len(plans) == 3
+    assert len(plans) == 5
     assert sum(plan.limit for plan in plans) == 90
     assert all(len(plan.query) < 440 and "filter:images" not in plan.query for plan in plans)
-    assert {plan.segment.key: plan.state_key for plan in plans} == {
-        "demand_custom": "demand_custom:v6:broad",
-        "demand_gift": "demand_gift:v7:broad",
-        "demand_decor": "demand_decor:v5:broad",
+    assert {plan.state_key for plan in plans} == {
+        "demand_custom:v7-product:broad", "demand_custom:v7-owner:broad",
+        "demand_gift:v8-lover:broad", "demand_gift:v8-recipient:broad",
+        "demand_decor:v5:broad",
     }
-    assert '"my dog"' in next(p.query for p in plans if p.segment.key == "demand_custom")
-    by_segment = {plan.segment.key: plan.query for plan in plans}
-    assert '"looking for"' in by_segment['demand_custom']
-    assert '"gift ideas for my"' in by_segment['demand_gift']
-    assert '"what should I get my"' in by_segment['demand_gift']
-    assert '"would love"' in by_segment['demand_decor']
-    reply_plan = build_query_plan({"segments": ["demand_reply"], "resultLimit": 5},
-                                  include_geo=False, now=datetime(2026, 11, 16, tzinfo=timezone.utc))[0]
-    assert reply_plan.state_key == "demand_reply:v1:broad"
-    assert "filter:replies" in reply_plan.query and "-filter:replies" not in reply_plan.query
+    assert any('"pet photo pillow"' in plan.query for plan in plans)
+    assert any('"pillow with my dog"' in plan.query for plan in plans)
+    assert any('"gift ideas"' in plan.query for plan in plans)
+    assert any('"gift for my"' in plan.query for plan in plans)
+    reply_plans = build_query_plan({"segments": ["demand_reply"], "resultLimit": 5},
+                                   include_geo=False, now=datetime(2026, 11, 16, tzinfo=timezone.utc))
+    assert {plan.state_key for plan in reply_plans} == {"demand_reply:v2:broad", "demand_reply:v2-parent:broad"}
+    assert all("filter:replies" in plan.query and "-filter:replies" not in plan.query for plan in reply_plans)
     gift = make_candidate(text="Looking for a photo gift of my cat for my wife", segment="demand_gift")
     assert gift["status"] == "targeting_review"
     assert json.loads(gift["targeting_json"])["purchase_intent"]["scene"] == "gift"
@@ -177,6 +188,16 @@ def test_ownership_is_pending_only_when_all_other_demand_gates_pass():
     assert make_candidate(text="Where can I order a custom pillow of a cat?", location="United Kingdom")["status"] == "rejected_targeting"
 
 
+def test_ambiguous_pet_type_is_pending_only_for_a_valid_demand():
+    candidate = make_candidate(text="Where can I order a custom pet photo pillow for my dog and cat?")
+    assert candidate["pet_type"] is None
+    assert candidate["status"] == "targeting_review"
+    assert json.loads(candidate["targeting_json"])["pet_type_evidence_pending"] is True
+    assert make_candidate(text="My dog and cat share a pillow")["status"] == "rejected_targeting"
+    assert make_candidate(text="Where can I order a custom pet photo pillow for my dog and cat?",
+                          location="United Kingdom")["status"] == "rejected_targeting"
+
+
 def test_query_cursors_and_budget_are_separate():
     now = datetime(2026, 11, 13, tzinfo=timezone.utc)
     plans = build_query_plan({"segments": ["demand_custom", "demand_recommendation"],
@@ -187,7 +208,7 @@ def test_query_cursors_and_budget_are_separate():
     assert all(p.state_key.startswith("demand_") and len(p.query) < 440 for p in plans)
     revised = build_query_plan({"segments": ["demand_custom"], "resultLimit": 1, "lookbackDays": 3},
         state={"demand_custom:broad": int(now.timestamp()) - 100}, include_geo=False, now=now)
-    assert revised[0].state_key == "demand_custom:v6:broad"
+    assert revised[0].state_key == "demand_custom:v7-product:broad"
     assert revised[0].since_time == int(now.timestamp()) - 3 * 86400
     tiny = build_query_plan({"segments": ["demand_custom", "demand_decor"], "resultLimit": 1}, now=now)
     assert sum(p.limit for p in tiny) == 1
