@@ -15,6 +15,8 @@ Use the single shared candidate pool in `D:\Coding\DiyProject`. Discovery never 
 
 ## Batch workflow
 
+If the user asks only to modify screening logic or defers execution, make local code/documentation changes and mocked tests only. Do not collect/replay candidates, enqueue a discovery job, restart workers, or spend provider/vision credits. Record live yield validation as pending; wait for explicit execution authorization.
+
 For a requested new or refreshed batch, read [references/strict-batch.md](references/strict-batch.md) in full. It contains the evidence gates, historical-address reuse, query/archive sequence, quality iteration, and final-count audit. Preserve successful raw pages before filtering, and count only unique qualifying posts and accounts—not raw hits or inserted rows. Keep ambiguous addresses and unverified images out of a deliverable batch; retain their records for audit.
 
 On every screening run, automatically apply the bounded measurement-and-adjustment loop in [references/optimization-loop.md](references/optimization-loop.md): compare completed jobs and human-review outcomes, reuse fresh evidence, choose the next query mix, and document what changed. This runs when the skill is invoked; it is not a background scheduler and never authorizes unlimited API calls, code deployment, or outreach.

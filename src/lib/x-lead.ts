@@ -8,16 +8,19 @@ export const X_LEAD_SEGMENTS = [
   "pet_portrait",
 ] as const;
 export const X_LEAD_DISCOVERY_SEGMENTS = [...X_LEAD_SEGMENTS, "custom"] as const;
-export const X_DEMAND_SEGMENTS = ["demand_custom", "demand_recommendation", "demand_decor"] as const;
+export const X_DEMAND_SEGMENTS = ["demand_custom", "demand_gift", "demand_decor", "demand_recommendation"] as const;
 export const X_DEMAND_SEGMENT_LABELS: Record<string, string> = {
   demand_custom: "主动寻找宠物定制商品",
-  demand_recommendation: "询问宠物装饰 / 定制推荐",
+  demand_gift: "寻找宠物照片 / 定制礼物",
+  demand_recommendation: "定制推荐（兼容旧查询）",
   demand_decor: "表达宠物装饰兴趣（探索组）",
 };
 export const demandSearchConfigurationSchema = z.object({
   discoveryMode: z.literal("purchase_intent").default("purchase_intent"),
-  segments: z.array(z.enum(X_DEMAND_SEGMENTS)).min(1).max(3),
+  segments: z.array(z.enum(X_DEMAND_SEGMENTS)).min(1).max(4)
+    .refine((segments) => new Set(segments).size === segments.length, "查询组不可重复"),
   resultLimit: z.number().int().min(1).max(100),
+  qualifiedPerScene: z.number().int().min(1).max(100).default(20),
   lookbackDays: z.number().int().min(1).max(14),
   searchProduct: z.literal("Latest").default("Latest"),
   usRequired: z.literal(true).default(true),
@@ -29,8 +32,11 @@ export function getXLeadPurchaseIntent(lead: Pick<XLeadRow, "targeting_data">) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const data = value as Record<string, unknown>;
   if (data.tier !== "explicit_request" && data.tier !== "exploratory") return null;
+  const sceneLabels: Record<string, string> = { custom: "定制需求", gift: "礼物需求", decor: "家居装饰" };
+  const scene = typeof data.scene === "string" && data.scene in sceneLabels ? data.scene : null;
   return {
-    label: data.tier === "explicit_request" ? "明确寻求商品 / 推荐（待验证）" : "相关兴趣（探索组）",
+    scene,
+    label: `${scene ? `${sceneLabels[scene]} · ` : ""}${data.tier === "explicit_request" ? "明确寻求商品 / 推荐（待验证）" : "相关兴趣（探索组）"}`,
     score: typeof data.score === "number" && Number.isFinite(data.score) ? data.score : 0,
     evidence: Array.isArray(data.evidence) ? data.evidence.filter((item): item is string => typeof item === "string").join("；") : "",
   };

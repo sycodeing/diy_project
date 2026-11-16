@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { getAppUrl, getMarketingIngestSecret } from "@/lib/env";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getXLeadPreviewSourceHash } from "@/lib/x-lead-preview-identity";
 import { createXLeadDrafts, createXLeadFirstContactDraft, getXLeadShortCopyVariant, type XLeadCopyProfile } from "@/lib/x-lead-copy";
 import { getXLeadTargetingChecks, type XLeadRow } from "@/lib/x-lead";
 
@@ -43,9 +44,9 @@ export async function ensureXLeadMarketingAssets(
   const campaign = `x_${lead.segment}_${dateKey}`;
   const channel = X_LEAD_MARKETING_CHANNEL;
   const variant = getXLeadShortCopyVariant(lead.post_id);
-  const sourceHash = createHmac("sha256", secret).update(`x-post:${lead.post_id}`).digest("hex");
+  const sourceHash = getXLeadPreviewSourceHash(secret, lead.post_id, lead.media_url);
   const linkCycle = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));
-  const material = `${lead.post_id}\n${campaign}\n${channel}\n${variant}\n${linkCycle}`;
+  const material = `${lead.post_id}\n${sourceHash}\n${campaign}\n${channel}\n${variant}\n${linkCycle}`;
   const idempotencyKey = `x-link:${createHash("sha256").update(material).digest("hex")}`;
   const payload = {
     campaign,
@@ -144,7 +145,7 @@ export async function prepareXLeadQueueTask({
     preparation_error: null,
   }).eq("id", taskId).eq("status", "draft").in("preparation_status", ["pending", "failed"]);
   if (queue === "automatic") claim = claim.eq("attempt_count", 0).is("approved_at", null);
-  const { data: claimed, error: claimError } = await claim.select("id").maybeSingle();
+  const { data: claimed, error: claimError } = await claim.eq("x_lead_id", leadId).select("id,content_mode").maybeSingle();
   if (claimError) throw new Error(claimError.message);
   if (!claimed) return;
 
@@ -158,17 +159,30 @@ export async function prepareXLeadQueueTask({
       if (["rejected", "suppressed", "contacted"].includes(lead.selection_status)) throw new Error("该候选不可生成新的接触文案。");
       const failures = getXLeadTargetingChecks(lead as XLeadRow, Math.max(70, searchConfig?.us_min_confidence ?? 70)).filter((check) => !check.passed);
       if (failures.length) throw new Error(`候选未达到硬性条件：${failures.map((check) => check.label).join("、")}`);
-      const draft = createXLeadFirstContactDraft({
-        occasion: lead.occasion, occasionConfidence: lead.occasion_confidence,
-        petType: lead.pet_type, targetingData: lead.targeting_data,
-      });
+      if (claimed.content_mode === "first_contact_text") {
+        const draft = createXLeadFirstContactDraft({
+          occasion: lead.occasion, occasionConfidence: lead.occasion_confidence,
+          petType: lead.pet_type, targetingData: lead.targeting_data,
+        });
+        const { error } = await supabase.from("x_reply_jobs").update({
+          reply_text: draft.text, copy_variant: draft.variantKey, content_mode: draft.contentMode,
+          preparation_status: "ready", preparation_error: null, prepared_at: new Date().toISOString(),
+        }).eq("id", taskId).eq("status", "draft").eq("attempt_count", 0)
+          .is("approved_at", null).eq("preparation_status", "processing").eq("content_mode", "first_contact_text");
+        if (error) throw new Error(error.message);
+        return;
+      }
+      if (claimed.content_mode !== "legacy_preview") throw new Error("未知的自动回复素材模式。");
+      const assets = await ensureXLeadMarketingAssets(leadId, "reply");
+      if (!assets.previewCacheReady) throw new Error("宠物样图尚未生成成功，请稍后重新生成。");
       const { error } = await supabase.from("x_reply_jobs").update({
-        reply_text: draft.text, copy_variant: draft.variantKey, content_mode: draft.contentMode,
+        reply_text: assets.drafts.publicCopy,
+        copy_variant: assets.drafts.variantKey,
         preparation_status: "ready", preparation_error: null, prepared_at: new Date().toISOString(),
       }).eq("id", taskId).eq("status", "draft").eq("attempt_count", 0)
-        .is("approved_at", null).eq("preparation_status", "processing");
+        .is("approved_at", null).eq("preparation_status", "processing").eq("content_mode", "legacy_preview");
       if (error) throw new Error(error.message);
-      return; // No marketing link, image generation, or photo download for first contact.
+      return;
     }
     const copyProfile: XLeadCopyProfile = {
       accountKey: "manual-review",

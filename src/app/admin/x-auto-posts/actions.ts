@@ -93,7 +93,7 @@ async function approveXAutoJobs(requestedJobIds: string[] | null, userId: string
   const jobIds = requestedJobIds ? [...new Set(requestedJobIds)] : null;
   let jobsQuery = supabase
     .from("x_reply_jobs")
-    .select("id,status,account_id,content_mode,scheduled_for,preparation_status,x_reply_accounts!inner(account_key,positioning,daily_limit,active,executor_id,network_mode,expected_egress_ip,verification_status,x_reply_account_proxies(account_id,status))");
+    .select("id,status,account_id,content_mode,scheduled_for,preparation_status,x_leads(marketing_links!x_leads_marketing_link_id_fkey(expires_at)),x_reply_accounts!inner(account_key,positioning,daily_limit,active,executor_id,network_mode,expected_egress_ip,verification_status,x_reply_account_proxies(account_id,status))");
   jobsQuery = jobIds
     ? jobsQuery.in("id", jobIds)
     : jobsQuery.eq("status", "draft").eq("preparation_status", "ready").order("created_at", { ascending: true });
@@ -125,6 +125,13 @@ async function approveXAutoJobs(requestedJobIds: string[] | null, userId: string
   }>();
 
   for (const job of jobs) {
+    if (job.content_mode === "legacy_preview") {
+      const lead = Array.isArray(job.x_leads) ? job.x_leads[0] : job.x_leads;
+      const link = Array.isArray(lead?.marketing_links) ? lead.marketing_links[0] : lead?.marketing_links;
+      if (!link?.expires_at || Date.parse(link.expires_at) <= approvedAt.getTime() + 24 * 60 * 60_000) {
+        throw new XAutoApprovalError("有带样图的草稿链接即将过期，请先在任务卡片重新生成素材。");
+      }
+    }
     const account = Array.isArray(job.x_reply_accounts) ? job.x_reply_accounts[0] : job.x_reply_accounts;
     const proxyRelation = account?.x_reply_account_proxies;
     const proxy = Array.isArray(proxyRelation) ? proxyRelation[0] : proxyRelation;
@@ -213,7 +220,7 @@ export async function retryXAutoPreparation(formData: FormData) {
     .maybeSingle();
   if (error || !task?.x_lead_id) throw new Error(error?.message ?? "该任务不能重新生成素材。");
   const { data: reset, error: resetError } = await supabase.from("x_reply_jobs").update({
-    preparation_status: "pending", preparation_error: null, content_mode: "first_contact_text",
+    preparation_status: "pending", preparation_error: null, content_mode: "legacy_preview",
   }).eq("id", taskId).eq("status", "draft").eq("attempt_count", 0).is("approved_at", null)
     .eq("preparation_status", task.preparation_status).select("id").maybeSingle();
   if (resetError || !reset) throw new Error(resetError?.message ?? "任务状态已经变化，未修改文案。");

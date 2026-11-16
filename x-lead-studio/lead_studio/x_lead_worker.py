@@ -12,7 +12,7 @@ from .config import CREDENTIAL_PATH, Settings
 from .discovery import collect_search, dedupe_candidates_by_author
 from .pet_image_gate import ensure_pet_image_verifier, verify_pet_photo
 from .targeting import SEARCH_SEGMENTS
-from .purchase_intent import DEMAND_SEGMENT_KEYS
+from .purchase_intent import DEMAND_SEGMENT_KEYS, DEMAND_SCENES
 from .twitterapi import collect_twitterapi_search
 
 
@@ -36,7 +36,7 @@ async def run_x_lead_worker(settings: Settings) -> None:
                     json={
                         "workerId": worker_id,
                         "cookieConfigured": _provider_is_configured(settings, provider),
-                        "version": "1.7.0",
+                        "version": "1.8.0",
                     },
                 )
                 if response.status_code == 204:
@@ -66,6 +66,9 @@ async def _execute_job(
     error_message = None
     metrics: dict[str, Any] = {"provider": _selected_provider(settings)}
     found_for_image_review: list[dict[str, Any]] = []
+    is_demand = False
+    requested_scenes: set[str] = set()
+    scene_target = 20
     try:
         configuration = job.get("configuration") or {}
         provider = _selected_provider(settings)
@@ -74,6 +77,9 @@ async def _execute_job(
             if provider != "twitterapi" or not set(configuration.get("segments", [])).issubset(DEMAND_SEGMENT_KEYS):
                 raise ValueError("Demand discovery requires TwitterAPI and separate demand-only segments")
             configuration = {**configuration, "usRequired": True, "usMinConfidence": max(70, int(configuration.get("usMinConfidence", 70)))}
+            scene_target = max(1, min(100, int(configuration.get("qualifiedPerScene", 20))))
+            requested_scenes = {"custom" if key == "demand_recommendation" else key.removeprefix("demand_")
+                                for key in configuration["segments"]}
         await ensure_pet_image_verifier(client, settings)
         if provider == "twitterapi":
             items, found, metrics = await collect_twitterapi_search(
@@ -107,11 +113,20 @@ async def _execute_job(
                     for c in found_for_image_review
                 )
                 metrics["intent_location_pending"] = sum(c.get("status") == "location_review" for c in found_for_image_review)
+                metrics["intent_outside_requested_scenes"] = sum(
+                    json.loads(c.get("targeting_json") or "{}").get("purchase_intent", {}).get("scene") not in requested_scenes
+                    for c in found_for_image_review
+                    if json.loads(c.get("targeting_json") or "{}").get("purchase_intent", {}).get("tier") != "excluded"
+                )
                 found_for_image_review = [c for c in found_for_image_review
                     if c.get("status") in {"new", "targeting_review"}
                     and int(c.get("us_confidence", 0)) >= 70
+                    and json.loads(c.get("targeting_json") or "{}").get("purchase_intent", {}).get("scene") in requested_scenes
                     and c.get("us_evidence") != "profile_location_state"]
-                found_for_image_review.sort(key=lambda c: json.loads(c.get("targeting_json") or "{}").get("purchase_intent", {}).get("score", 0), reverse=True)
+                found_for_image_review.sort(key=lambda c: (
+                    json.loads(c.get("targeting_json") or "{}").get("purchase_intent", {}).get("score", 0),
+                    c.get("recency_score") or 0,
+                ), reverse=True)
             checked = 0
             verified = 0
             for candidate in found_for_image_review:
@@ -155,6 +170,19 @@ async def _execute_job(
         **metrics,
         "duplicate_account_candidates": len(submitted_candidates) - len(deduped_candidates),
     }
+    if is_demand and status == "completed":
+        # These are submission counts BEFORE the hosted historical/contact
+        # dedupe. They must never be reported as final new qualified leads.
+        counts = {scene: 0 for scene in DEMAND_SCENES if scene in requested_scenes}
+        selected = []
+        for candidate in deduped_candidates:
+            scene = candidate["targetingData"].get("purchase_intent", {}).get("scene")
+            if scene in counts and counts[scene] < scene_target:
+                selected.append(candidate)
+                counts[scene] += 1
+        deduped_candidates = selected
+        metrics.update(scene_target=scene_target, scene_submitted=counts,
+                       scene_submission_gap={scene: scene_target - count for scene, count in counts.items()})
     response = await client.post(
         f"{settings.diy_site_url}/api/x-leads/worker/jobs/{job['id']}/complete",
         headers=headers,

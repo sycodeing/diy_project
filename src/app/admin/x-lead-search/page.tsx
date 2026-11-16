@@ -116,14 +116,15 @@ export default async function XLeadSearchPage({
           <form action={runDemandLeadSearch} className="mt-4 space-y-4">
             <fieldset className="space-y-2"><legend className="text-sm font-bold">独立查询组</legend>
               {X_DEMAND_SEGMENTS.map((segment) => <label className="flex items-center gap-2 text-sm" key={segment}>
-                <input name="segments" type="checkbox" value={segment} defaultChecked={segment !== "demand_decor"} />{X_DEMAND_SEGMENT_LABELS[segment]}
+                <input name="segments" type="checkbox" value={segment} defaultChecked={segment !== "demand_recommendation"} />{X_DEMAND_SEGMENT_LABELS[segment]}
               </label>)}
             </fieldset>
             <div className="grid gap-4 sm:grid-cols-2">
               <NumberField label="最多获取帖子（不是保证合格人数）" name="resultLimit" value={60} min={1} max={100} />
-              <SelectField label="需求发布时间" name="lookbackDays" value="7" options={[["3", "最近 3 天"], ["7", "最近 7 天"], ["14", "最近 14 天"]]} />
+              <NumberField label="每个场景的候选目标（不足不凑数）" name="qualifiedPerScene" value={20} min={1} max={100} />
+              <SelectField label="需求发布时间" name="lookbackDays" value="3" options={[["3", "最近 3 天"], ["7", "最近 7 天"], ["14", "最近 14 天"]]} />
             </div>
-            <p className="text-xs text-muted">仅启动一次有上限的任务，参数随任务保存；不自动定时、不补量凑数。需本机 worker 1.7.0 或更新版本。两套模式共存，由同一执行器依次处理。</p>
+            <p className="text-xs text-muted">按原帖证据分为定制、礼物、家居装饰三组；每位作者仅计一次。每组目标不等于实际新增数，历史去重后可能进一步减少。仅启动一次有上限的任务，不自动补量、不发送。需本机 worker 1.8.0 或更新版本；原筛选模式保持独立。</p>
             <div className="flex flex-wrap gap-3">
               <button className="focus-ring rounded-lg bg-accent px-4 py-3 font-bold text-accent-ink" type="submit">启动需求验证筛选</button>
               <Link className="focus-ring rounded-lg border border-line px-4 py-3 font-bold" href="/admin/x-leads?mode=purchase_intent">查看需求验证候选</Link>

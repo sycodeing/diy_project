@@ -146,9 +146,9 @@ SEARCH_SEGMENTS = (
 # Separate keys give demand discovery independent incremental cursors.
 DEMAND_SEARCH_SEGMENTS = (
     SearchSegment("demand_custom", "Pet custom product request",
-        '("my dog" OR "my cat" OR "our dog" OR "our cat") '
+        '(dog OR cat OR puppy OR kitten) '
         '(pillow OR cushion OR portrait OR print) '
-        '("looking for" OR "where can I" OR "want to buy" OR "want to order") '
+        '("looking for" OR "where can I" OR "want to buy" OR "want to order" OR recommend OR recommendations) '
         'filter:images -filter:replies lang:en'),
     SearchSegment("demand_recommendation", "Pet product recommendations",
         '("my dog" OR "my cat" OR "our dog" OR "our cat") '
@@ -156,9 +156,15 @@ DEMAND_SEARCH_SEGMENTS = (
         '(recommend OR recommendations OR "anyone know" OR "anybody know") '
         'filter:images -filter:replies lang:en'),
     SearchSegment("demand_decor", "Pet decor interest (exploration)",
-        '("my dog" OR "my cat" OR "our dog" OR "our cat") '
+        '(dog OR cat OR puppy OR kitten) '
         '(pillow OR cushion OR "wall art" OR portrait) '
-        '("would love" OR "thinking about" OR "thinking of" OR "would look great") '
+        '(decor OR decorating OR sofa OR couch OR "living room" OR bedroom OR "wall art") '
+        '("would love" OR "thinking about" OR "thinking of" OR "would look great" OR "looking for") '
+        'filter:images -filter:replies lang:en'),
+    SearchSegment("demand_gift", "Pet photo gift request",
+        '(dog OR cat OR puppy OR kitten) (gift OR present) '
+        '(photo OR portrait OR custom OR personalized OR personalised) '
+        '("looking for" OR "gift ideas" OR "need a gift" OR recommend OR "what should I" OR "would love") '
         'filter:images -filter:replies lang:en'),
 )
 

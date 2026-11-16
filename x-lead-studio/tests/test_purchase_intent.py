@@ -33,6 +33,39 @@ def test_text_evidence(text, tier):
     assert result["human_review_required"] is True
 
 
+@pytest.mark.parametrize("text,scene", [
+    ("Looking for a custom pillow of my dog", "custom"),
+    ("Looking for a gift with a photo of my cat for my partner", "gift"),
+    ("Any gift ideas with a photo of my dog for my wife?", "gift"),
+    ("I would love a portrait of my cat for my living room", "decor"),
+    ("Looking for a portrait of my dog as a gift for our living room", "gift"),
+    ("My dog has a birthday next month", None),
+    ("Looking for a gift for my dog", None),
+    ("Looking for custom dog treats as a gift for my dog", None),
+    ("I already bought a portrait of my cat as a gift", None),
+    ("Looking for a custom gift of my dog in 12 days", None),
+    ("Looking for a custom gift of my dog by Monday", None),
+    ("I sell custom photo gifts of my dog", None),
+    ("My cat died, looking for a custom photo gift", None),
+])
+def test_scene_evidence_is_not_the_search_segment(text, scene):
+    result = assess_purchase_intent(text)
+    assert result["scene"] == scene
+    assert (result["tier"] == "excluded") == (scene is None)
+
+
+def test_new_scene_queries_keep_legacy_path_and_bounded_raw_budget():
+    plans = build_query_plan({"segments": ["demand_custom", "demand_gift", "demand_decor"],
+                              "resultLimit": 90, "lookbackDays": 3}, include_geo=False,
+                             now=datetime(2026, 11, 16, tzinfo=timezone.utc))
+    assert len(plans) == 3
+    assert sum(plan.limit for plan in plans) == 90
+    assert all(len(plan.query) < 440 and "filter:images" in plan.query for plan in plans)
+    gift = make_candidate(text="Looking for a photo gift of my cat for my wife", segment="demand_gift")
+    assert gift["status"] == "targeting_review"
+    assert json.loads(gift["targeting_json"])["purchase_intent"]["scene"] == "gift"
+
+
 def make_candidate(text="Where can I order a custom pillow of my dog?", location="Austin, TX", segment="demand_custom"):
     return candidate_from_tweet({
         "id": "123", "rawContent": text,
@@ -109,3 +142,51 @@ def test_completed_demand_job_filters_before_vision_and_preserves_evidence(monke
     assert result["metrics"]["intent_location_pending"] == 1
     assert len(result["candidates"]) == 1
     assert result["candidates"][0]["targetingData"]["purchase_intent"]["score"] == 80
+    assert result["metrics"]["scene_submitted"] == {"custom": 1}
+    assert result["metrics"]["scene_submission_gap"] == {"custom": 19}
+
+
+def test_scene_caps_never_fill_with_other_scenes_or_duplicate_authors(monkeypatch):
+    found = []
+    for index, (text, author) in enumerate([
+        ("Looking for a portrait of my dog", "same-owner"),
+        ("Looking for a photo gift of my dog for my wife", "same-owner"),
+        ("Looking for a portrait of my cat", "other-owner"),
+        ("Looking for a photo gift of my cat for my wife", "gift-owner"),
+    ]):
+        candidate = make_candidate(text=text)
+        candidate.update(post_id=str(index), author_hash=author)
+        found.append(candidate)
+    submitted = []
+
+    async def ensure(*args):
+        pass
+
+    async def collect(*args, **kwargs):
+        return [{}, {}, {}, {}], found, {}
+
+    async def verify(candidate, *args):
+        return candidate
+
+    def handler(request):
+        assert request.url.path.endswith("/complete")
+        submitted.append(json.loads(request.content))
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr(worker, "ensure_pet_image_verifier", ensure)
+    monkeypatch.setattr(worker, "collect_twitterapi_search", collect)
+    monkeypatch.setattr(worker, "verify_pet_photo", verify)
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await worker._execute_job(client, {}, Settings(x_lead_provider="twitterapi", diy_site_url="https://test.invalid"),
+                "test", {"id": "test", "configuration": {
+                    "segments": ["demand_custom", "demand_gift", "demand_decor"], "qualifiedPerScene": 1}})
+
+    asyncio.run(run())
+    result = submitted[0]
+    assert result["status"] == "completed"
+    assert len(result["candidates"]) == 2
+    assert len({c["authorHash"] for c in result["candidates"]}) == 2
+    assert result["metrics"]["scene_submitted"] == {"custom": 1, "gift": 1, "decor": 0}
+    assert result["metrics"]["scene_submission_gap"] == {"custom": 0, "gift": 0, "decor": 1}

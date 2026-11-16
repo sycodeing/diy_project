@@ -131,6 +131,7 @@ export async function getMarketingReplyPreviewUrl(
 ): Promise<MarketingPreview | null> {
   const supabase = getSupabaseServiceClient();
   if (!supabase || !/^[a-f0-9]{64}$/i.test(sourceHash)) return null;
+  if (!Number.isFinite(Date.parse(expiresAt)) || Date.parse(expiresAt) <= Date.now()) return null;
   const expiresIn = Math.max(
     60,
     Math.min(7 * 24 * 60 * 60, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000)),

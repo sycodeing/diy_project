@@ -8,9 +8,17 @@ import { buildXLeadDiscoveryUpsertRow, type XLeadDiscoveryCandidate } from "./x-
 test("demand configuration is bounded and cannot weaken US gates or mix legacy slices", () => {
   const base = { segments: ["demand_custom"], resultLimit: 60, lookbackDays: 7 };
   assert.equal(demandSearchConfigurationSchema.parse(base).usRequired, true);
-  for (const patch of [{ segments: ["new_adoption"] }, { usRequired: false }, { usMinConfidence: 69 }, { resultLimit: 101 }, { lookbackDays: 30 }]) {
+  assert.equal(demandSearchConfigurationSchema.parse(base).qualifiedPerScene, 20);
+  for (const patch of [{ segments: ["new_adoption"] }, { usRequired: false }, { usMinConfidence: 69 }, { resultLimit: 101 }, { lookbackDays: 30 }, { qualifiedPerScene: 0 }, { qualifiedPerScene: 101 }]) {
     assert.equal(demandSearchConfigurationSchema.safeParse({ ...base, ...patch }).success, false);
   }
+});
+
+test("three scenes have independent targets without changing the raw retrieval budget", () => {
+  const config = demandSearchConfigurationSchema.parse({ segments: ["demand_custom", "demand_gift", "demand_decor"], resultLimit: 90, lookbackDays: 3, qualifiedPerScene: 10 });
+  assert.equal(config.resultLimit, 90);
+  assert.equal(config.qualifiedPerScene, 10);
+  assert.equal(getXLeadPurchaseIntent({ targeting_data: { purchase_intent: { tier: "explicit_request", scene: "gift" } } })?.scene, "gift");
 });
 
 test("evidence renderer rejects malformed metadata", () => {

@@ -16,6 +16,7 @@ export async function runDemandLeadSearch(formData: FormData) {
   const configuration = demandSearchConfigurationSchema.parse({
     segments: formData.getAll("segments").map(String),
     resultLimit: Number(formData.get("resultLimit") ?? 60),
+    qualifiedPerScene: Number(formData.get("qualifiedPerScene") ?? 20),
     lookbackDays: Number(formData.get("lookbackDays") ?? 7),
   });
   const supabase = getSupabaseServiceClient();
