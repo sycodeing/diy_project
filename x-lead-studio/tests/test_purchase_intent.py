@@ -43,6 +43,30 @@ def test_adjacent_sentences_keep_one_buyer_request_without_merging_unrelated_pet
     assert assess_purchase_intent("Looking for a custom pillow? Shop now for my cat!")["tier"] == "excluded"
 
 
+def test_request_scope_keeps_buyers_without_admitting_pet_beds_or_sellers():
+    direct = assess_purchase_intent("I want a pillow with my dog on it.")
+    assert (direct["tier"], direct["audience"]) == ("explicit_request", "direct_demand")
+    assert assess_purchase_intent(
+        "Looking for a custom pillow of my dog. I make coffee every morning."
+    )["tier"] == "explicit_request"
+    assert assess_purchase_intent(
+        "Looking for a custom pillow of my dog. Tomorrow I'm going hiking."
+    )["tier"] == "explicit_request"
+    assert assess_purchase_intent("I make custom portraits of my dog, shop now")["tier"] == "excluded"
+    assert assess_purchase_intent("I need a pillow for my dog to sleep on")["tier"] == "excluded"
+
+
+def test_gift_for_pet_owner_is_exploration_with_original_evidence():
+    result = assess_purchase_intent("Need a gift for my wife who loves her dog.")
+    assert (result["scene"], result["tier"], result["audience"]) == (
+        "gift", "exploratory", "gift_exploration",
+    )
+    assert result["evidence"] == ["Need a gift for my wife who loves her dog"]
+    assert assess_purchase_intent("Looking for a gift for my dog")["tier"] == "excluded"
+    assert assess_purchase_intent("Looking for dog gift ideas, shop now")["tier"] == "excluded"
+    assert assess_purchase_intent("Looking for the ultimate Dog Mom Christmas gift? Order here")["tier"] == "excluded"
+
+
 @pytest.mark.parametrize("text,scene", [
     ("Looking for a custom pillow of my dog", "custom"),
     ("Looking for a gift with a photo of my cat for my partner", "gift"),
@@ -71,7 +95,11 @@ def test_new_scene_queries_keep_legacy_path_and_bounded_raw_budget():
     assert len(plans) == 3
     assert sum(plan.limit for plan in plans) == 90
     assert all(len(plan.query) < 440 and "filter:images" not in plan.query for plan in plans)
-    assert all(plan.state_key.endswith(":v5:broad") for plan in plans)
+    assert {plan.segment.key: plan.state_key for plan in plans} == {
+        "demand_custom": "demand_custom:v5:broad",
+        "demand_gift": "demand_gift:v6:broad",
+        "demand_decor": "demand_decor:v5:broad",
+    }
     assert all('"my dog"' not in plan.query and '"my cat"' not in plan.query for plan in plans)
     by_segment = {plan.segment.key: plan.query for plan in plans}
     assert '"looking for"' in by_segment['demand_custom']

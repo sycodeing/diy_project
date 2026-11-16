@@ -112,19 +112,19 @@ export default async function XLeadSearchPage({
 
         <section className="mt-6 rounded-xl border border-line bg-panel/90 p-5">
           <h2 className="text-xl font-black">新模式：购买需求验证</h2>
-          <p className="mt-2 text-sm text-muted">寻找正在询问定制商品或表达宠物装饰兴趣的人。保留美国位置、本人猫狗实拍、非广告和历史去重门槛。意向信号不代表购买承诺或联系许可。</p>
+          <p className="mt-2 text-sm text-muted">优先寻找宠物定制需求与给宠物主人送礼的需求。保留美国位置、猫狗实拍、非广告和历史去重门槛。意向信号不代表购买承诺或联系许可。</p>
           <form action={runDemandLeadSearch} className="mt-4 space-y-4">
             <fieldset className="space-y-2"><legend className="text-sm font-bold">独立查询组</legend>
               {X_DEMAND_SEGMENTS.map((segment) => <label className="flex items-center gap-2 text-sm" key={segment}>
-                <input name="segments" type="checkbox" value={segment} defaultChecked={segment !== "demand_recommendation"} />{X_DEMAND_SEGMENT_LABELS[segment]}
+                <input name="segments" type="checkbox" value={segment} defaultChecked={segment === "demand_custom" || segment === "demand_gift"} />{X_DEMAND_SEGMENT_LABELS[segment]}
               </label>)}
             </fieldset>
             <div className="grid gap-4 sm:grid-cols-2">
-              <NumberField label="最多获取帖子（不是保证合格人数）" name="resultLimit" value={60} min={1} max={100} />
+              <NumberField label="查询预算（按整页获取，可能略超出）" name="resultLimit" value={40} min={1} max={100} />
               <NumberField label="每个场景的候选目标（不足不凑数）" name="qualifiedPerScene" value={20} min={1} max={100} />
               <SelectField label="需求发布时间" name="lookbackDays" value="3" options={[["3", "最近 3 天"], ["7", "最近 7 天"], ["14", "最近 14 天"]]} />
             </div>
-            <p className="text-xs text-muted">按需求原帖分为定制、礼物、家居装饰三组；需求帖可以没有图片，但必须补到同账号公开宠物照片并通过图像验证，候选页会并列显示两条证据。每位作者仅计一次；历史去重后实际新增可能少于目标。任务有照片补查上限，不自动补量、不发送。需本机 worker 1.9.0 或更新版本；原筛选模式保持独立。</p>
+            <p className="text-xs text-muted">定制与礼物默认查询，家居装饰可单独勾选。明确商品需求与送礼探索分别标记；需求帖可以没有图片，但必须补到同账号公开宠物照片并通过图像验证，候选页会并列显示两条证据。每位作者仅计一次；历史去重后实际新增可能少于目标。需本机 worker 1.10.0 或更新版本。</p>
             <div className="flex flex-wrap gap-3">
               <button className="focus-ring rounded-lg bg-accent px-4 py-3 font-bold text-accent-ink" type="submit">启动需求验证筛选</button>
               <Link className="focus-ring rounded-lg border border-line px-4 py-3 font-bold" href="/admin/x-leads?mode=purchase_intent">查看需求验证候选</Link>

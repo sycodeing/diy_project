@@ -44,6 +44,7 @@ class CollectionMetrics:
     page_count: int = 0
     received_posts: int = 0
     archived_posts: int = 0
+    incomplete_queries: int = 0
     archive_id: str = ""
     unique_posts: int = 0
     duplicate_posts: int = 0
@@ -73,6 +74,7 @@ class CollectionMetrics:
             "page_count": self.page_count,
             "received_posts": self.received_posts,
             "archived_posts": self.archived_posts,
+            "incomplete_queries": self.incomplete_queries,
             "archive_id": self.archive_id,
             "unique_posts": self.unique_posts,
             "duplicate_posts": self.duplicate_posts,
@@ -193,7 +195,12 @@ async def collect_twitterapi_search(
                 metrics.archived_posts += raw_count
                 _save_archive(archive_path, archive)
 
-            items, pages = await _search_query(client, settings, effective_plan, page_sink=archive_page)
+            items, pages, source_exhausted = await _search_query(
+                client, settings, effective_plan, page_sink=archive_page,
+            )
+            query_archive["source_exhausted"] = source_exhausted
+            if not source_exhausted:
+                metrics.incomplete_queries += 1
             if plan.mode == "us":
                 us_shortfall_by_segment[plan.segment.key] = max(0, plan.limit - len(items))
             metrics.page_count += pages
@@ -236,12 +243,14 @@ async def collect_twitterapi_search(
                     slice_counts["intent_passed"] += 1
                 tweets_by_id[post_id] = (tweet, plan.segment.key)
             query_archive["counts"] = slice_counts
-            metrics.query_slices.append({"segment": plan.segment.key, "mode": plan.mode, **slice_counts})
+            metrics.query_slices.append({"segment": plan.segment.key, "mode": plan.mode,
+                                         "source_exhausted": source_exhausted, **slice_counts})
             _save_archive(archive_path, archive)
             # Advance only after every page for this query completed successfully.
             # Keep a five-minute overlap to absorb indexing delay without repeatedly
             # scanning the full lookback window.
-            completed_watermarks[plan.state_key] = max(plan.since_time, plan.until_time - 300)
+            if source_exhausted:
+                completed_watermarks[plan.state_key] = max(plan.since_time, plan.until_time - 300)
     except Exception as error:
         archive["status"] = "partial"
         archive["failed_at"] = _utc_now()
@@ -563,11 +572,12 @@ async def _search_query(
     plan: QueryPlan,
     *,
     page_sink: Callable[[str, dict[str, Any]], None] | None = None,
-) -> tuple[list[dict[str, Any]], int]:
+) -> tuple[list[dict[str, Any]], int, bool]:
     collected: list[dict[str, Any]] = []
     cursor = ""
     previous_cursor = None
     pages = 0
+    source_exhausted = False
     while len(collected) < plan.limit:
         payload = await _request_page(client, settings, plan.query, cursor)
         pages += 1
@@ -578,10 +588,15 @@ async def _search_query(
             raise TwitterApiError("TwitterAPI.io returned an invalid tweets payload.")
         collected.extend(item for item in tweets if isinstance(item, dict))
         next_cursor = str(payload.get("next_cursor") or "")
-        if not payload.get("has_next_page") or not next_cursor or next_cursor == cursor or next_cursor == previous_cursor:
+        if not payload.get("has_next_page"):
+            source_exhausted = True
+            break
+        if not next_cursor or next_cursor == cursor or next_cursor == previous_cursor:
             break
         previous_cursor, cursor = cursor, next_cursor
-    return collected[: plan.limit], pages
+    # The provider bills and archives the whole final page. Evaluate every
+    # item in it; a result limit bounds page requests, not paid rows.
+    return collected, pages, source_exhausted
 
 
 async def _request_page(

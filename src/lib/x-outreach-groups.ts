@@ -22,6 +22,13 @@ export const X_OUTREACH_GROUPS = {
       guided_preview_a_v2: "I put this {pet} photo on a pillow-cover preview so you can see how it might look as a gift:",
     },
   },
+  demand_gift_explore: {
+    label: "宠物主人送礼探索",
+    copy: {
+      short_direct_b_v1: "If you're considering a gift for a pet lover, a photo pillow cover could be one option. Here's a sample:",
+      guided_preview_a_v2: "I made a pet-photo pillow-cover preview as one gift option. You can see the design here:",
+    },
+  },
   demand_decor: {
     label: "宠物家居装饰兴趣",
     copy: {
@@ -78,6 +85,7 @@ export function resolveXOutreachGroup(lead: { segment?: string | null; targeting
   if (intent && typeof intent === "object" && !Array.isArray(intent)) {
     const evidence = intent as Record<string, unknown>;
     if (evidence.tier === "explicit_request" || evidence.tier === "exploratory") {
+      if (evidence.tier === "exploratory" && evidence.scene === "gift" && evidence.audience === "gift_exploration") return "demand_gift_explore";
       const sceneGroup = typeof evidence.scene === "string" ? `demand_${evidence.scene}` : null;
       if (isXOutreachGroupKey(sceneGroup)) return sceneGroup;
     }

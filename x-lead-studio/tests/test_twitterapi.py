@@ -131,8 +131,8 @@ def test_broad_query_absorbs_unused_us_capacity(tmp_path: Path) -> None:
 
     items, candidates, metrics = asyncio.run(run())
 
-    assert len(items) == 10
-    assert len(candidates) == 10
+    assert len(items) == 20  # process the entire paid final page
+    assert len(candidates) == 20
     assert metrics["reallocated_broad_limit"] == 8
 
 
@@ -224,7 +224,7 @@ def test_collection_paginates_deduplicates_and_persists_watermarks(tmp_path: Pat
     assert "new_adoption:us" in persisted
 
 
-def test_collection_archives_full_response_before_truncation_and_filtering(tmp_path: Path) -> None:
+def test_collection_evaluates_full_paid_page_and_archives_before_filtering(tmp_path: Path) -> None:
     returned = []
     for index in range(3):
         item = _tweet()
@@ -273,15 +273,45 @@ def test_collection_archives_full_response_before_truncation_and_filtering(tmp_p
     archive_text = (archive_dir / "retention-test.json").read_text(encoding="utf-8")
     archive = json.loads(archive_text)
     archived_response = archive["queries"][0]["pages"][0]["response"]
-    assert len(items) == 2
+    assert len(items) == 3
     assert len(candidates) == 1
-    assert metrics["received_posts"] == 2
+    assert metrics["received_posts"] == 3
     assert metrics["archived_posts"] == 3
     assert metrics["archive_id"] == "retention-test"
     assert archive["status"] == "completed"
     assert len(archived_response["tweets"]) == 3
     assert archived_response["provider_metadata"] == {"result_count": 3}
     assert "must-not-be-archived" not in archive_text
+
+
+def test_limit_reached_does_not_claim_an_unfinished_query_is_caught_up(tmp_path: Path) -> None:
+    posts = []
+    for index in range(3):
+        item = _tweet()
+        item["id"] = str(8000 + index)
+        item["extendedEntities"] = {
+            "media": [{"type": "photo", "media_url_https": f"https://img.example/{index}.jpg"}],
+        }
+        posts.append(item)
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"tweets": posts, "has_next_page": True,
+                                         "next_cursor": "older-page"})
+
+    settings = Settings(twitterapi_api_key="test", twitterapi_base_url="https://api.twitterapi.io",
+                        twitterapi_geo_query_enabled=False, twitterapi_about_enrichment_enabled=False)
+    state_path = tmp_path / "watermarks.json"
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await collect_twitterapi_search(client, settings,
+                {**CONFIG, "segments": ["new_adoption"], "resultLimit": 1}, state_path=state_path)
+
+    items, candidates, metrics = asyncio.run(run())
+    assert len(items) == len(candidates) == 3
+    assert metrics["incomplete_queries"] == 1
+    assert metrics["query_slices"][0]["source_exhausted"] is False
+    assert "new_adoption:broad" not in json.loads(state_path.read_text(encoding="utf-8"))
 
 
 def test_collection_enriches_missing_locations_once_per_author_and_reuses_cache(tmp_path: Path) -> None:

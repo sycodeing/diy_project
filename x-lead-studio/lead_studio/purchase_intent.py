@@ -6,19 +6,21 @@ from typing import Any
 
 DEMAND_SEGMENT_KEYS = ("demand_custom", "demand_recommendation", "demand_gift", "demand_decor")
 DEMAND_SCENES = ("custom", "gift", "decor")
-VERSION = "pet-demand-v3"
+VERSION = "pet-demand-v4"
 PRODUCT = r"\b(?:pillow(?:case|\s+cover)?s?|cushions?|portraits?|prints?|wall\s+art|keepsakes?)\b"
 PET = r"\b(?:dog|cat|puppy|kitten|pet)s?\b"
 CUSTOM_CONTEXT = r"\b(?:portraits?|photos?|pictures?|custom|personalized|personalised)\b"
-REQUEST = r"\b(?:where\s+can\s+i|where\s+to\s+(?:buy|order)|any(?:one|body)\s+(?:know|recommend)|looking\s+for|i(?:'m|\s+am)\s+looking|recommendations?\s+for|i\s+(?:want|need|would\s+like)\s+to\s+(?:buy|order|commission)|want\s+to\s+get)\b"
+PET_PLACEMENT = r"\b(?:of|with)\s+(?:(?:my|our|their)\s+)?(?:dog|cat|puppy|kitten|pet)\b|\b(?:my|our|their)\s+(?:dog|cat|puppy|kitten|pet)\s+on\s+it\b"
+REQUEST = r"\b(?:where\s+can\s+i|where\s+to\s+(?:buy|order)|any(?:one|body)\s+(?:know|recommend)|looking\s+for|i(?:'m|\s+am)\s+looking|recommendations?\s+for|i\s+(?:want|need|would\s+like)\s+to\s+(?:buy|order|commission)|i\s+(?:want|need)\s+(?:a|an|the)|want\s+to\s+get)\b"
 GIFT = r"\b(?:gifts?|presents?)\b"
 DECOR = r"\b(?:decor(?:ating)?|sofa|couch|living\s+room|bedroom|wall\s+art)\b"
 GIFT_REQUEST = r"\b(?:gift\s+ideas?|what\s+(?:can|should)\s+i\s+(?:buy|get)|need\s+(?:a\s+)?(?:gift|present))\b"
+HUMAN_RECIPIENT = r"\b(?:wife|husband|partner|girlfriend|boyfriend|mom|mother|dad|father|sister|brother|friend|dog\s+(?:mom|dad|owner|lover)|cat\s+(?:mom|dad|owner|lover)|pet\s+(?:parent|owner|lover))s?\b"
 UNRELATED_GIFT = r"\b(?:toys?|treats?|food|leash(?:es)?|collars?|beds?)\b"
 WISH = r"\b(?:i\s+(?:want|wish|would\s+love)|would\s+look\s+(?:great|good)|thinking\s+(?:of|about)|decorating)\b"
 EXCLUSIONS = {
     "sensitive_context": r"\b(?:passed\s+away|died|rainbow\s+bridge|cancer|tumou?r|surgery|gofundme|fundrais\w*|missing\s+(?:dog|cat)|lost\s+my\s+(?:dog|cat))\b",
-    "seller_or_giveaway": r"\b(?:shop\s+now|for\s+sale|use\s+(?:my\s+)?code|commissions?\s+open|giveaway|affiliate|dm\s+(?:me\s+)?to\s+order|i\s+(?:sell|make)|my\s+shop)\b",
+    "seller_or_giveaway": r"\b(?:shop\s+now|for\s+sale|use\s+(?:my\s+)?code|commissions?\s+open|giveaway|affiliate|dm\s+(?:me\s+)?to\s+order|my\s+shop|our\s+shop|buy\s+now)\b",
     "already_purchased": r"\b(?:already\s+(?:bought|ordered)|just\s+(?:bought|ordered|received)|i\s+(?:bought|ordered)|arrived\s+today)\b",
     "urgent_delivery": r"\b(?:tomorrow|tonight|this\s+weekend|next\s+week|overnight|urgent|asap|by\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|in\s+(?:[1-9]|1[0-4])\s+days?)\b",
     "negative_or_hypothetical": r"\b(?:don'?t\s+(?:want|need)|do\s+not\s+(?:want|need)|not\s+(?:looking|interested)|can'?t\s+afford|cannot\s+afford|if\s+i|joking|just\s+kidding)\b",
@@ -29,11 +31,14 @@ def assess_purchase_intent(text: str) -> dict[str, Any]:
     text = text.replace("’", "'")
     result: dict[str, Any] = {
         "version": VERSION, "tier": "excluded", "score": 0,
-        "scene": None,
+        "scene": None, "audience": None,
         "evidence": [], "exclusion_reasons": [],
         "human_review_required": True, "contact_permission": False,
     }
-    for reason, pattern in EXCLUSIONS.items():
+    # Sensitive situations and unambiguous selling language apply to the post.
+    # Other negatives belong to the buyer request, not an unrelated sentence.
+    for reason in ("sensitive_context", "seller_or_giveaway"):
+        pattern = EXCLUSIONS[reason]
         match = re.search(pattern, text, re.I)
         if match:
             result["exclusion_reasons"].append(reason)
@@ -52,21 +57,39 @@ def assess_purchase_intent(text: str) -> dict[str, Any]:
                 context = f"{sentence}. {following}"
         if len(context) > 350 or not re.search(PET, context, re.I):
             continue
-        product_context = bool(re.search(PRODUCT, context, re.I) and re.search(CUSTOM_CONTEXT, context, re.I))
+        product_context = bool(re.search(PRODUCT, context, re.I) and
+                               (re.search(CUSTOM_CONTEXT, context, re.I) or re.search(PET_PLACEMENT, context, re.I)))
         gift_context = bool(re.search(GIFT, context, re.I))
         # A general gift for a dog could mean food or toys. Require a photo /
         # personalized context; birthday/adoption alone is not purchase intent.
         relevant_gift = bool(gift_context and re.search(CUSTOM_CONTEXT, context, re.I)
                              and not re.search(UNRELATED_GIFT, context, re.I))
-        if not product_context and not relevant_gift:
+        gift_exploration = bool(gift_context and not product_context and not relevant_gift
+                                and re.search(HUMAN_RECIPIENT, context, re.I)
+                                and re.search(r"\b(?:i|my|we|our|anyone|anybody)\b", context, re.I)
+                                and (re.search(GIFT_REQUEST, context, re.I) or re.search(REQUEST, context, re.I))
+                                and not re.search(UNRELATED_GIFT, context, re.I))
+        if not product_context and not relevant_gift and not gift_exploration:
             continue
-        request = re.search(REQUEST, context, re.I) or (relevant_gift and re.search(GIFT_REQUEST, context, re.I))
-        tier, score = ("explicit_request", 80) if request else (
+        excluded = next((reason for reason in ("already_purchased", "urgent_delivery", "negative_or_hypothetical")
+                         if re.search(EXCLUSIONS[reason], context, re.I)), None)
+        if excluded or re.search(r"\bi\s+(?:sell|make|create|offer)\b.{0,80}" + PRODUCT, context, re.I):
+            result["exclusion_reasons"].append(excluded or "seller_or_giveaway")
+            continue
+        buyer_voice = bool(re.search(r"\b(?:i|my|we|our|anyone|anybody)\b", context, re.I))
+        request = re.search(REQUEST, context, re.I) or ((relevant_gift or gift_exploration)
+                                                       and buyer_voice and re.search(GIFT_REQUEST, context, re.I))
+        tier, score = ("explicit_request", 80) if request and not gift_exploration else (
             ("exploratory", 50) if re.search(WISH, context, re.I) else ("excluded", 0)
         )
+        if gift_exploration and request:
+            tier, score = "exploratory", 45
         if score > result["score"]:
             scene = "gift" if gift_context else "decor" if re.search(DECOR, context, re.I) else "custom"
-            result.update(tier=tier, score=score, scene=scene, evidence=[context])
+            result.update(tier=tier, score=score, scene=scene,
+                          audience="gift_exploration" if gift_exploration else "direct_demand",
+                          evidence=[context], exclusion_reasons=[])
     if not result["score"]:
-        result["exclusion_reasons"] = ["no_current_product_request"]
+        if not result["exclusion_reasons"]:
+            result["exclusion_reasons"] = ["no_current_product_request"]
     return result

@@ -159,9 +159,10 @@ DEMAND_SEARCH_SEGMENTS = (
         '("would love" OR "thinking about" OR "looking for") '
         '-filter:replies lang:en', "v5"),
     SearchSegment("demand_gift", "Pet photo gift request",
-        '(dog OR cat) (gift OR present) (photo OR portrait OR custom) '
+        '(dog OR cat) (gift OR present) '
+        '(wife OR husband OR mom OR dad OR partner OR friend OR owner OR lover) '
         '("gift ideas" OR "need a gift" OR "looking for") '
-        '-filter:replies lang:en', "v5"),
+        '-filter:replies lang:en', "v6"),
 )
 
 US_STATE_NAMES = {

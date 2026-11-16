@@ -34,6 +34,9 @@ test("evidence renderer rejects malformed metadata", () => {
   assert.equal(getXLeadPurchaseIntent({ targeting_data: { purchase_intent: "yes" } }), null);
   assert.equal(getXLeadPurchaseIntent({ targeting_data: { purchase_intent: { tier: "excluded" } } }), null);
   assert.equal(getXLeadPurchaseIntent({ targeting_data: { purchase_intent: { tier: "explicit_request", evidence: ["original text", 42], score: 80 } } })?.evidence, "original text");
+  assert.equal(getXLeadPurchaseIntent({ targeting_data: { purchase_intent: {
+    tier: "exploratory", scene: "gift", audience: "gift_exploration",
+  } } })?.label, "宠物主人送礼需求 · 探索组（待验证）");
 });
 
 test("demand card only treats a verified matching image as a separate photo source", () => {

@@ -11,7 +11,7 @@ export const X_LEAD_DISCOVERY_SEGMENTS = [...X_LEAD_SEGMENTS, "custom"] as const
 export const X_DEMAND_SEGMENTS = ["demand_custom", "demand_gift", "demand_decor", "demand_recommendation"] as const;
 export const X_DEMAND_SEGMENT_LABELS: Record<string, string> = {
   demand_custom: "主动寻找宠物定制商品",
-  demand_gift: "寻找宠物照片 / 定制礼物",
+  demand_gift: "给宠物主人送礼（含照片 / 定制需求）",
   demand_recommendation: "定制推荐（兼容旧查询）",
   demand_decor: "表达宠物装饰兴趣（探索组）",
 };
@@ -36,7 +36,9 @@ export function getXLeadPurchaseIntent(lead: Pick<XLeadRow, "targeting_data">) {
   const scene = typeof data.scene === "string" && data.scene in sceneLabels ? data.scene : null;
   return {
     scene,
-    label: `${scene ? `${sceneLabels[scene]} · ` : ""}${data.tier === "explicit_request" ? "明确寻求商品 / 推荐（待验证）" : "相关兴趣（探索组）"}`,
+    label: data.tier === "exploratory" && data.audience === "gift_exploration" && scene === "gift"
+      ? "宠物主人送礼需求 · 探索组（待验证）"
+      : `${scene ? `${sceneLabels[scene]} · ` : ""}${data.tier === "explicit_request" ? "明确寻求商品 / 推荐（待验证）" : "相关兴趣（探索组）"}`,
     score: typeof data.score === "number" && Number.isFinite(data.score) ? data.score : 0,
     evidence: Array.isArray(data.evidence) ? data.evidence.filter((item): item is string => typeof item === "string").join("；") : "",
   };

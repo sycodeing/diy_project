@@ -16,6 +16,9 @@ test("resolves purchase-intent evidence before the reused cloud segment", () => 
     purchase_intent: { scene: "gift", tier: "explicit_request" },
   } });
   assert.equal(gift, "demand_gift");
+  assert.equal(resolveXOutreachGroup({ segment: "custom", targetingData: {
+    purchase_intent: { scene: "gift", tier: "exploratory", audience: "gift_exploration" },
+  } }), "demand_gift_explore");
   assert.equal(resolveXOutreachGroup({ segment: "pet_birthday" }), "pet_birthday");
   assert.equal(resolveXOutreachGroup({ segment: "unknown" }), "general");
 });
