@@ -349,7 +349,8 @@ async def _execute_recall_job(
             "workerId": worker_id, "status": status,
             "receivedCount": min(1000, int(metrics.get("shopping_query_new_posts_vs_baseline", 0))),
             "errorCode": error_code, "errorMessage": error_message,
-            "metrics": {**metrics, "raw_review_rows": len(rows), "strict_qualified": 0},
+            "metrics": {**metrics, "provider": "twitterapi", "scope": "raw_review_only",
+                        "raw_review_rows": len(rows), "strict_qualified": 0},
             "candidates": [], "rawCandidates": rows[:200],
         },
     )

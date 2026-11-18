@@ -161,3 +161,5 @@ def test_failed_later_page_retains_own_archive_raw_rows_for_worker(tmp_path, mon
     assert submissions[0]["candidates"] == []
     assert len(submissions[0]["rawCandidates"]) == 1
     assert submissions[0]["metrics"]["archive_path"] == str(archive_path)
+    assert submissions[0]["metrics"]["provider"] == "twitterapi"
+    assert submissions[0]["metrics"]["scope"] == "raw_review_only"

@@ -183,12 +183,12 @@ export default async function XLeadSearchPage({
         <section className="mt-6 overflow-x-auto rounded-xl border border-line bg-panel/90 p-5">
           <h2 className="text-xl font-black">最近任务</h2>
           <table className="mt-4 w-full min-w-[860px] text-left text-sm">
-            <thead className="text-muted"><tr><th className="pb-3">创建时间</th><th>触发方式</th><th>状态</th><th>获取帖子</th><th>发现漏斗</th><th>新增用户</th><th>执行器</th><th>结果</th></tr></thead>
+            <thead className="text-muted"><tr><th className="pb-3">创建时间</th><th>触发方式</th><th>状态</th><th>帖子数</th><th>发现漏斗</th><th>严格候选入库</th><th>执行器</th><th>结果</th></tr></thead>
             <tbody>{jobs.map((job) => <tr className="border-t border-line" key={job.id}>
               <td className="py-3">{formatAdminDate(job.created_at)}</td>
               <td>{job.configuration?.discoveryMode === "purchase_recall" ? "宽召回待筛 · " : job.configuration?.discoveryMode === "purchase_intent" ? "需求验证 · " : "原模式 · "}{job.trigger_type === "manual" ? "手动" : "定时"}</td>
               <td className="font-bold">{X_JOB_STATUS_LABELS[job.status] ?? job.status}</td>
-              <td>{job.received_count}</td><td className="min-w-52 text-xs leading-5 text-muted">{formatDiscoveryMetrics(job.metrics)}</td><td>{job.inserted_count}</td><td>{job.worker_id ?? "—"}</td>
+              <td>{job.configuration?.discoveryMode === "purchase_recall" ? `${job.received_count} 新帖` : job.received_count}</td><td className="min-w-52 text-xs leading-5 text-muted">{formatDiscoveryMetrics(job.metrics, job.configuration?.discoveryMode === "purchase_recall")}{job.configuration?.discoveryMode === "purchase_recall" ? <Link className="mt-1 block font-bold text-accent underline" href={rawReviewHref(job.metrics)}>{hasRawReviewArchive(job.metrics) ? "查看本任务原始帖" : "查看全部原始帖"}</Link> : null}</td><td>{job.inserted_count}</td><td>{job.worker_id ?? "—"}</td>
               <td className="max-w-80 text-muted">{job.error_message ?? (job.finished_at ? `完成于 ${formatAdminDate(job.finished_at)}` : "—")}</td>
             </tr>)}</tbody>
           </table>
@@ -199,7 +199,23 @@ export default async function XLeadSearchPage({
   );
 }
 
-function formatDiscoveryMetrics(metrics: Record<string, unknown> | null) {
+function rawReviewHref(metrics: Record<string, unknown> | null) {
+  const archiveId = typeof metrics?.archive_id === "string" ? metrics.archive_id : "";
+  if (!hasRawReviewArchive(metrics)) return "/admin/x-leads?mode=raw_review";
+  return `/admin/x-leads?mode=raw_review&field=archive&query=${encodeURIComponent(`${archiveId}.json`)}`;
+}
+
+function hasRawReviewArchive(metrics: Record<string, unknown> | null) {
+  return typeof metrics?.archive_id === "string" && /^[A-Za-z0-9._-]{1,190}$/.test(metrics.archive_id);
+}
+
+function formatDiscoveryMetrics(metrics: Record<string, unknown> | null, recall = false) {
+  if (recall) {
+    const rawRows = metrics ? metricNumber(metrics, "raw_review_rows") : null;
+    const newPosts = metrics ? metricNumber(metrics, "shopping_query_new_posts_vs_baseline") : null;
+    const pages = metrics ? metricNumber(metrics, "search_pages") : null;
+    return [`原始待筛 ${rawRows ?? "—"}`, `新帖 ${newPosts ?? "—"}`, `搜索 ${pages ?? "—"} 页`, "严格资格 0"].join(" · ");
+  }
   if (!metrics || typeof metrics.provider !== "string") return "—";
   const parts = [metrics.provider];
   const uniquePosts = metricNumber(metrics, "unique_posts");
