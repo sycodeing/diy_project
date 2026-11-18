@@ -13,6 +13,7 @@ import httpx
 
 from lead_studio.config import DATA_DIR, Settings, TWITTERAPI_ARCHIVE_DIR
 from lead_studio.twitterapi import collect_twitterapi_search
+from probe_purchase_recall import run_recall_probe
 
 
 async def _credits(client: httpx.AsyncClient, settings: Settings) -> dict[str, int]:
@@ -102,15 +103,34 @@ if __name__ == "__main__":
     parser.add_argument("--execute-paid", action="store_true", help="Actually call the paid search API")
     parser.add_argument("--segment", choices=["demand_custom", "demand_gift", "demand_reply", "demand_discussion"], help="Probe one query segment")
     parser.add_argument("--revision", default="", help="Probe only this query revision")
-    parser.add_argument("--lookback-days", type=int, default=14)
+    parser.add_argument("--lookback-days", type=int, default=None)
     parser.add_argument("--result-limit", type=int, default=5)
     parser.add_argument("--min-balance-credits", type=int, default=3000)
+    parser.add_argument("--recall", action="store_true", help="Bounded raw-data recall with local text review")
+    parser.add_argument("--max-pages", type=int, default=8, help="Recall mode only; hard cap eight search pages")
+    parser.add_argument("--target-new-posts", type=int, default=20, help="Recall mode only")
+    parser.add_argument("--diagnose-control", action="store_true", help="Recall mode: add one generic source-health page")
     args = parser.parse_args()
     if not args.execute_paid:
         parser.error("No API calls made. Pass --execute-paid to run the paid probe.")
     if args.revision and not args.segment:
         parser.error("--revision requires --segment")
-    if not 1 <= args.lookback_days <= 90 or not 1 <= args.result_limit <= 100 or args.min_balance_credits < 1:
+    if args.recall:
+        if args.segment or args.revision:
+            parser.error("--recall uses its own isolated query tiers; omit --segment and --revision")
+        async def recall_main() -> None:
+            async with httpx.AsyncClient(timeout=120) as client:
+                summary = await run_recall_probe(
+                    client, Settings(), lookback_days=args.lookback_days if args.lookback_days is not None else 3,
+                    max_pages=args.max_pages, target_new_posts=args.target_new_posts,
+                    min_balance_credits=args.min_balance_credits,
+                    diagnose_control=args.diagnose_control,
+                )
+            print(json.dumps(summary, ensure_ascii=False, indent=2))
+        asyncio.run(recall_main())
+        raise SystemExit(0)
+    if not 1 <= (args.lookback_days if args.lookback_days is not None else 14) <= 90 or not 1 <= args.result_limit <= 100 or args.min_balance_credits < 1:
         parser.error("Invalid probe bounds")
-    asyncio.run(_probe(args.segment or "", args.revision, args.lookback_days,
+    asyncio.run(_probe(args.segment or "", args.revision,
+                       args.lookback_days if args.lookback_days is not None else 14,
                        args.result_limit, args.min_balance_credits))
