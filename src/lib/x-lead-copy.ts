@@ -17,6 +17,31 @@ export const X_FIRST_CONTACT_VARIANT = "first_contact_v1" as const;
 
 export function createXLeadFirstContactDraft(context: XLeadDraftContext) {
   const pet = context.petType === "cat" ? "cat" : context.petType === "dog" ? "dog" : "pet";
+  const intent = context.targetingData?.purchase_intent;
+  if (intent && typeof intent === "object" && !Array.isArray(intent)) {
+    const signal = intent as Record<string, unknown>;
+    if (signal.tier === "exploratory" && signal.audience === "gift_exploration") {
+      return {
+        variantKey: "first_contact_gift_v2" as const,
+        contentMode: "first_contact_text" as const,
+        text: "If you're choosing a gift for a pet lover, a pillow cover made from their pet's photo could be one option. I make those. Would you like to see an example?",
+      };
+    }
+    if (signal.tier === "explicit_request" && typeof signal.parent_post_id === "string") {
+      return {
+        variantKey: "first_contact_discussion_v2" as const,
+        contentMode: "first_contact_text" as const,
+        text: "I'm another maker, not the seller in this thread. I make custom pet-photo pillow covers. If that could fit what you're looking for, would you like an example?",
+      };
+    }
+    if (signal.tier === "exploratory" && signal.scene === "decor") {
+      return {
+        variantKey: "first_contact_decor_v2" as const,
+        contentMode: "first_contact_text" as const,
+        text: `If you'd like to display a ${pet} photo at home, I make custom photo pillow covers. Would you like to see an example?`,
+      };
+    }
+  }
   return {
     variantKey: X_FIRST_CONTACT_VARIANT,
     contentMode: "first_contact_text" as const,

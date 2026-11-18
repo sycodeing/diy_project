@@ -25,6 +25,7 @@ from .targeting import SEARCH_SEGMENTS, DEMAND_SEARCH_SEGMENTS, SearchSegment
 
 ADVANCED_SEARCH_PATH = "/twitter/tweet/advanced_search"
 TWEETS_BY_ID_PATH = "/twitter/tweets"
+TWEET_REPLIES_PATH = "/twitter/tweet/replies"
 USER_ABOUT_PATH = "/twitter/user_about"
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503}
 
@@ -56,6 +57,8 @@ class CollectionMetrics:
     pet_type_pending: int = 0
     reply_parent_lookups: int = 0
     reply_parent_resolved: int = 0
+    discussion_parents_checked: int = 0
+    discussion_replies_received: int = 0
     intent_prefilter_rejected: int = 0
     intent_rejection_reasons: dict[str, int] = field(default_factory=dict)
     targeting_prefilter_rejected: int = 0
@@ -92,6 +95,8 @@ class CollectionMetrics:
             "pet_type_pending": self.pet_type_pending,
             "reply_parent_lookups": self.reply_parent_lookups,
             "reply_parent_resolved": self.reply_parent_resolved,
+            "discussion_parents_checked": self.discussion_parents_checked,
+            "discussion_replies_received": self.discussion_replies_received,
             "intent_prefilter_rejected": self.intent_prefilter_rejected,
             "intent_rejection_reasons": self.intent_rejection_reasons,
             "targeting_prefilter_rejected": self.targeting_prefilter_rejected,
@@ -194,6 +199,7 @@ async def collect_twitterapi_search(
                 "query": effective_plan.query,
                 "pages": [],
                 "parent_contexts": [],
+                "discussion_replies": [],
                 "decisions": [],
             }
             archive["queries"].append(query_archive)
@@ -217,6 +223,45 @@ async def collect_twitterapi_search(
                 max_pages=max(1, min(10, int(configuration["maxPagesPerQuery"])))
                 if "maxPagesPerQuery" in configuration else None,
             )
+            parent_count = 0
+            if plan.segment.key == "demand_discussion":
+                parent_count = len(items)
+                discussion_items: list[dict[str, Any]] = []
+                max_parents = max(1, min(5, int(configuration.get("maxDiscussionParents", 3))))
+                for parent in items:
+                    if metrics.discussion_parents_checked >= max_parents:
+                        break
+                    parent_id = str(parent.get("id") or "")
+                    parent_text = str(parent.get("text") or "")
+                    if (not parent_id or parent.get("replyCount") == 0
+                            or not _is_pet_photo_pillow_parent(parent_text)):
+                        continue
+                    metrics.discussion_parents_checked += 1
+                    payload = await _request_replies_page(client, settings, parent_id)
+                    query_archive["discussion_replies"].append({
+                        "parent_id": parent_id, "received_at": _utc_now(), "response": payload,
+                    })
+                    _save_archive(archive_path, archive)
+                    pages += 1
+                    replies = payload.get("tweets") or []
+                    if not isinstance(replies, list):
+                        raise TwitterApiError("TwitterAPI.io returned an invalid replies payload.")
+                    if payload.get("has_next_page"):
+                        source_exhausted = False
+                    metrics.archived_posts += len(replies)
+                    parent_author = parent.get("author") if isinstance(parent.get("author"), dict) else {}
+                    parent_handle = str(parent_author.get("userName") or "").lower()
+                    for reply in replies:
+                        if not isinstance(reply, dict) or str(reply.get("inReplyToId") or "") != parent_id:
+                            continue
+                        reply_author = reply.get("author") if isinstance(reply.get("author"), dict) else {}
+                        if str(reply_author.get("userName") or "").lower() == parent_handle:
+                            continue
+                        discussion_items.append({**reply, "_discussion_parent": {
+                            "post_id": parent_id, "text": parent_text[:1500],
+                        }})
+                items = discussion_items
+                metrics.discussion_replies_received += len(items)
             query_archive["source_exhausted"] = source_exhausted
             if not source_exhausted:
                 metrics.incomplete_queries += 1
@@ -224,7 +269,8 @@ async def collect_twitterapi_search(
                 us_shortfall_by_segment[plan.segment.key] = max(0, plan.limit - len(items))
             metrics.page_count += pages
             metrics.received_posts += len(items)
-            slice_counts = {"received": len(items), "unique": 0, "unusable": 0,
+            slice_counts = {"received": len(items), "parents_received": parent_count,
+                            "unique": 0, "unusable": 0,
                             "pet_type_unknown": 0, "pet_type_pending": 0, "intent_rejected": 0,
                             "targeting_rejected": 0, "intent_passed": 0}
             # Parent lookups are capped per job. Review explicit owner requests before
@@ -247,7 +293,7 @@ async def collect_twitterapi_search(
                 tweet = twitterapi_item_to_tweet(
                     item, search_query=plan.query,
                     allow_no_photo=plan.segment.key in {segment.key for segment in DEMAND_SEARCH_SEGMENTS},
-                    allow_reply=plan.segment.key == "demand_reply",
+                    allow_reply=plan.segment.key in {"demand_reply", "demand_discussion"},
                 )
                 if not tweet:
                     metrics.unusable_posts += 1
@@ -697,6 +743,8 @@ async def _request_page(
             raise TwitterApiCreditsExhausted("TwitterAPI.io credits are exhausted.")
         if response.status_code in {401, 403}:
             raise TwitterApiError("TwitterAPI.io authorization failed.")
+        if response.status_code == 429:
+            raise TwitterApiError("TwitterAPI.io rate limit reached.")
         if response.status_code in RETRYABLE_STATUS_CODES and attempt < 3:
             await asyncio.sleep(2**attempt)
             continue
@@ -708,6 +756,38 @@ async def _request_page(
             raise TwitterApiError(str(payload.get("message") or "TwitterAPI.io returned an error."))
         return payload
     raise TwitterApiError("TwitterAPI.io request failed after retries.")
+
+
+def _is_pet_photo_pillow_parent(text: str) -> bool:
+    return bool(re.search(r"\b(?:dog|cat|pet|puppy|kitten)\b", text, re.I)
+                and re.search(r"\b(?:pillow(?:\s+cover)?|pillowcase|cushion)s?\b", text, re.I)
+                and re.search(r"\b(?:photo|picture|portrait|custom|personali[sz]ed)\b", text, re.I))
+
+
+async def _request_replies_page(
+    client: httpx.AsyncClient, settings: Settings, parent_id: str,
+) -> dict[str, Any]:
+    for attempt in range(4):
+        response = await client.get(
+            f"{settings.twitterapi_base_url}{TWEET_REPLIES_PATH}",
+            headers={"X-API-Key": settings.twitterapi_api_key},
+            params={"tweetId": parent_id},
+        )
+        if response.status_code == 402:
+            raise TwitterApiCreditsExhausted("TwitterAPI.io credits are exhausted.")
+        if response.status_code in {401, 403}:
+            raise TwitterApiError("TwitterAPI.io authorization failed.")
+        if response.status_code == 429:
+            raise TwitterApiError("TwitterAPI.io rate limit reached.")
+        if response.status_code in RETRYABLE_STATUS_CODES and attempt < 3:
+            await asyncio.sleep(2**attempt)
+            continue
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict) or str(payload.get("status") or "").lower() == "error":
+            raise TwitterApiError("TwitterAPI.io returned an invalid replies response.")
+        return payload
+    raise TwitterApiError("TwitterAPI.io replies request failed after retries.")
 
 
 async def _request_tweets_by_id(
@@ -788,6 +868,8 @@ def twitterapi_item_to_tweet(
             "photo_count": len(photos),
             "is_reply": bool(item.get("isReply")),
             "in_reply_to_id": str(item.get("inReplyToId") or "") or None,
+            **({"reply_parent_context": item["_discussion_parent"]}
+               if isinstance(item.get("_discussion_parent"), dict) else {}),
         },
     }
 

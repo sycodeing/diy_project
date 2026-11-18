@@ -652,3 +652,47 @@ def _tweet() -> dict[str, object]:
             "followers": 300,
         },
     }
+def test_parent_first_discussion_archives_replies_and_keeps_direct_buyers_only(tmp_path: Path) -> None:
+    parent = {"id": "9000", "text": "I make custom pet photo pillow covers from your dog or cat picture.",
+              "author": {"userName": "maker"}, "replyCount": 4}
+    replies = [
+        {"id": "9001", "text": "How much?", "isReply": True, "inReplyToId": "9000",
+         "author": {"id": "buyer-1", "userName": "buyer", "location": "Austin, TX"}},
+        {"id": "9002", "text": "Thanks!", "isReply": True, "inReplyToId": "9000",
+         "author": {"id": "buyer-2", "userName": "polite", "location": "Austin, TX"}},
+        {"id": "9003", "text": "How much?", "isReply": True, "inReplyToId": "9001",
+         "author": {"id": "buyer-3", "userName": "nested", "location": "Austin, TX"}},
+        {"id": "9004", "text": "How much?", "isReply": True, "inReplyToId": "9000",
+         "author": {"id": "maker", "userName": "maker", "location": "Austin, TX"}},
+    ]
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if request.url.path.endswith("advanced_search"):
+            return httpx.Response(200, json={"tweets": [parent], "has_next_page": False})
+        assert request.url.path.endswith("/tweet/replies")
+        assert request.url.params["tweetId"] == "9000"
+        return httpx.Response(200, json={"tweets": replies, "has_next_page": False})
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await collect_twitterapi_search(
+                client, Settings(twitterapi_api_key="test-key", twitterapi_about_enrichment_enabled=False),
+                {"segments": ["demand_discussion"], "resultLimit": 1, "lookbackDays": 3,
+                 "usRequired": True, "maxDiscussionParents": 1},
+                state_path=tmp_path / "state.json", archive_id="discussion-test",
+                archive_dir=tmp_path / "runs",
+            )
+
+    _, candidates, metrics = asyncio.run(run())
+    assert len(requests) == 2
+    assert metrics["discussion_parents_checked"] == 1
+    assert metrics["discussion_replies_received"] == 2
+    assert metrics["query_slices"][0]["parents_received"] == 1
+    assert [candidate["post_id"] for candidate in candidates] == ["9001"]
+    evidence = json.loads(candidates[0]["targeting_json"])["purchase_intent"]
+    assert evidence["parent_post_id"] == "9000"
+    archive = json.loads((tmp_path / "runs" / "discussion-test.json").read_text(encoding="utf-8"))
+    assert archive["queries"][0]["pages"][0]["response"]["tweets"][0]["id"] == "9000"
+    assert len(archive["queries"][0]["discussion_replies"][0]["response"]["tweets"]) == 4

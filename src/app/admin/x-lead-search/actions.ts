@@ -9,6 +9,7 @@ import {
   demandSearchConfigurationSchema,
   type XSearchConfiguration,
 } from "@/lib/x-lead";
+import { supportsDiscussionSearch } from "@/lib/x-lead-worker-version";
 
 // Independent, bounded manual jobs. Never saves or enables the legacy schedule.
 export async function runDemandLeadSearch(formData: FormData) {
@@ -21,6 +22,16 @@ export async function runDemandLeadSearch(formData: FormData) {
   });
   const supabase = getSupabaseServiceClient();
   if (!supabase) throw new Error("Supabase 服务端配置缺失。");
+  if (configuration.segments.includes("demand_discussion")) {
+    const { data: worker, error: workerError } = await supabase.from("x_lead_workers")
+      .select("worker_version,last_seen_at").eq("status", "online")
+      .order("last_seen_at", { ascending: false }).limit(1).maybeSingle();
+    if (workerError) throw new Error(workerError.message);
+    if (!worker || Date.now() - new Date(worker.last_seen_at).getTime() > 120_000
+        || !supportsDiscussionSearch(worker.worker_version ?? undefined)) {
+      throw new Error("商品讨论筛选需要在线的 1.12.0 或更高版本发现执行器。");
+    }
+  }
   const { data: active, error: activeError } = await supabase.from("x_lead_search_jobs")
     .select("id").in("status", ["queued", "running"]).limit(1).maybeSingle();
   if (activeError) throw new Error(activeError.message);

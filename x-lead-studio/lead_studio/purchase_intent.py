@@ -4,9 +4,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
-DEMAND_SEGMENT_KEYS = ("demand_custom", "demand_recommendation", "demand_gift", "demand_decor", "demand_reply")
+DEMAND_SEGMENT_KEYS = ("demand_custom", "demand_recommendation", "demand_gift", "demand_decor", "demand_reply", "demand_discussion")
 DEMAND_SCENES = ("custom", "gift", "decor")
-VERSION = "pet-demand-v5"
+VERSION = "pet-demand-v6"
 PRODUCT = r"\b(?:pillow(?:case|\s+cover)?s?|cushions?|portraits?|prints?|wall\s+art|keepsakes?)\b"
 PILLOW = r"\b(?:pillow(?:case|\s+cover)?s?|cushions?)\b"
 PET = r"\b(?:dog|cat|puppy|kitten|pet)s?\b"
@@ -23,7 +23,7 @@ UNRELATED_GIFT = rf"\b{UNRELATED_GIFT_ITEM}\b"
 WISH = r"\b(?:i\s+(?:want|wish|would\s+love)|would\s+look\s+(?:great|good)|thinking\s+(?:of|about)|decorating)\b"
 EXCLUSIONS = {
     "sensitive_context": r"\b(?:passed\s+away|died|rainbow\s+bridge|cancer|tumou?r|surgery|gofundme|fundrais\w*|missing\s+(?:dog|cat)|lost\s+my\s+(?:dog|cat))\b",
-    "seller_or_giveaway": r"\b(?:shop\s+now|for\s+sale|use\s+(?:my\s+)?code|commissions?\s+open|giveaway|affiliate|dm\s+(?:me\s+)?to\s+order|my\s+shop|our\s+shop|buy\s+now)\b",
+    "seller_or_giveaway": r"\b(?:shop\s+now|for\s+sale|use\s+(?:my\s+)?code|commissions?\s+open|giveaway|affiliate|dm\s+(?:me\s+)?to\s+order|my\s+(?:#\w+\s+)?shop|our\s+shop|shop\s+at|buy\s+now|you\s+can\s+customiz[es]|customiz[es]\s+with\s+your)\b",
     "already_purchased": r"\b(?:already\s+(?:bought|ordered)|just\s+(?:bought|ordered|received)|i\s+(?:bought|ordered)|arrived\s+today)\b",
     "urgent_delivery": r"\b(?:tomorrow|tonight|this\s+weekend|next\s+week|overnight|urgent|asap|by\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|in\s+(?:[1-9]|1[0-4])\s+days?)\b",
     "negative_or_hypothetical": r"\b(?:don'?t\s+(?:want|need)|do\s+not\s+(?:want|need)|not\s+(?:looking|interested)|can'?t\s+afford|cannot\s+afford|if\s+i|joking|just\s+kidding)\b",
@@ -129,10 +129,13 @@ def assess_reply_with_parent(reply_text: str, parent_text: str, parent_post_id: 
         return result
     buyer_request = re.search(
         r"\b(?:can|could)\s+you\s+make\b|\bhow\s+much\b|\bwhere\s+can\s+i\s+(?:buy|get|order)\b|"
-        r"\bi\s+(?:want|need|would\s+love)\b|\bi'd\s+love\b", reply_text, re.I,
+        r"\bcan\s+i\s+(?:buy|order|get)\b|\bi\s+(?:want|need|would\s+love)\b|\bi'd\s+love\b", reply_text, re.I,
     )
     reference = re.search(r"\b(?:one|this|it|same)\b", reply_text, re.I)
-    if not buyer_request or not reference:
+    # A direct reply to the verified product post supplies the referent for
+    # short questions such as "How much?".
+    short_price_question = re.fullmatch(r"\s*how\s+much(?:\s+(?:is|does)\s+(?:it|this)(?:\s+cost)?)?\s*[?.!]*\s*", reply_text, re.I)
+    if not buyer_request or (not reference and not short_price_question):
         return result
     if any(re.search(EXCLUSIONS[reason], parent_text, re.I)
            for reason in ("sensitive_context", "negative_or_hypothetical")):

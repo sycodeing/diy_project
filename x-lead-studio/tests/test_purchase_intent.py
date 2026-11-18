@@ -72,6 +72,7 @@ def test_gift_questions_across_sentences_and_negative_supply_list():
         "Any gift ideas for my wife? She loves our dog.",
         "Any gift recommendations for my dog-loving friend?",
         "What should I get my cat-loving sister for Christmas?",
+        "What should I get my sister who loves cats?",
         "I need a gift for my dog-loving wife, no toys or treats.",
     ):
         intent = assess_purchase_intent(text)
@@ -82,6 +83,9 @@ def test_gift_questions_across_sentences_and_negative_supply_list():
     assert assess_purchase_intent("Looking for a gift for my dog to chew")["tier"] == "excluded"
     assert assess_purchase_intent("I need a gift for my dog-loving wife, no toys but food please")["tier"] == "excluded"
     assert assess_purchase_intent("Looking for a Dog Mom gift? Buy my keychains")["tier"] == "excluded"
+    assert assess_purchase_intent(
+        "Keychain you can customize with your photo of your cats. See more gift ideas for cat lovers in my #zazzle shop at https://example.com"
+    )["tier"] == "excluded"
 
 
 def test_pillow_fit_is_ranked_above_related_art_and_explicit_rejection_is_respected():
@@ -105,6 +109,16 @@ def test_reply_parent_can_confirm_the_product_but_not_invent_a_buyer_request():
     assert assess_reply_with_parent("My dog likes this one", parent, "9000")["tier"] == "excluded"
     assert assess_reply_with_parent("Can you make one for my dog?", "My dog naps on a pillow", "9000")["tier"] == "excluded"
     assert assess_reply_with_parent("Shop now, can you make one for my dog?", parent, "9000")["tier"] == "excluded"
+
+
+def test_short_price_question_requires_verified_pet_product_parent():
+    parent = "I make custom pet photo pillow covers from your dog or cat picture."
+    result = assess_reply_with_parent("How much?", parent, "9000")
+    assert (result["tier"], result["parent_post_id"], result["evidence"]) == (
+        "explicit_request", "9000", ["How much?"],
+    )
+    assert assess_reply_with_parent("How much?", "Look what I made!", "9000")["tier"] == "excluded"
+    assert assess_reply_with_parent("Thanks!", parent, "9000")["tier"] == "excluded"
 
 
 @pytest.mark.parametrize("text,scene", [
@@ -132,12 +146,13 @@ def test_new_scene_queries_keep_legacy_path_and_bounded_raw_budget():
     plans = build_query_plan({"segments": ["demand_custom", "demand_gift", "demand_decor"],
                               "resultLimit": 90, "lookbackDays": 3}, include_geo=False,
                              now=datetime(2026, 11, 16, tzinfo=timezone.utc))
-    assert len(plans) == 5
+    assert len(plans) == 6
     assert sum(plan.limit for plan in plans) == 90
     assert all(len(plan.query) < 440 and "filter:images" not in plan.query for plan in plans)
     assert {plan.state_key for plan in plans} == {
         "demand_custom:v7-product:broad", "demand_custom:v7-owner:broad",
         "demand_gift:v8-lover:broad", "demand_gift:v8-recipient:broad",
+        "demand_gift:v9-question:broad",
         "demand_decor:v5:broad",
     }
     assert any('"pet photo pillow"' in plan.query for plan in plans)

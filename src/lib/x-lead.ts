@@ -8,11 +8,12 @@ export const X_LEAD_SEGMENTS = [
   "pet_portrait",
 ] as const;
 export const X_LEAD_DISCOVERY_SEGMENTS = [...X_LEAD_SEGMENTS, "custom"] as const;
-export const X_DEMAND_SEGMENTS = ["demand_custom", "demand_gift", "demand_reply", "demand_decor", "demand_recommendation"] as const;
+export const X_DEMAND_SEGMENTS = ["demand_custom", "demand_gift", "demand_reply", "demand_discussion", "demand_decor", "demand_recommendation"] as const;
 export const X_DEMAND_SEGMENT_LABELS: Record<string, string> = {
   demand_custom: "主动寻找宠物定制商品",
   demand_gift: "给宠物主人送礼（含照片 / 定制需求）",
   demand_reply: "商品讨论中的购买需求回复",
+  demand_discussion: "先找宠物照片枕套商品帖，再检查近期评论（实验）",
   demand_recommendation: "定制推荐（兼容旧查询）",
   demand_decor: "表达宠物装饰兴趣（探索组）",
 };

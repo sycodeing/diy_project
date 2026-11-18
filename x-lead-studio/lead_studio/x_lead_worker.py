@@ -37,7 +37,7 @@ async def run_x_lead_worker(settings: Settings) -> None:
                     json={
                         "workerId": worker_id,
                         "cookieConfigured": _provider_is_configured(settings, provider),
-                        "version": "1.11.2",
+                        "version": "1.12.0",
                     },
                 )
                 if response.status_code == 204:
@@ -81,7 +81,7 @@ async def _execute_job(
             scene_target = max(1, min(100, int(configuration.get("qualifiedPerScene", 20))))
             requested_scenes = set()
             for key in configuration["segments"]:
-                if key == "demand_reply":
+                if key in {"demand_reply", "demand_discussion"}:
                     requested_scenes.update(("custom", "gift"))
                 else:
                     requested_scenes.add("custom" if key == "demand_recommendation" else key.removeprefix("demand_"))

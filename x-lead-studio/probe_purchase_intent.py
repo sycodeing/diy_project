@@ -28,20 +28,21 @@ async def _credits(client: httpx.AsyncClient, settings: Settings) -> dict[str, i
     }
 
 
-async def _probe() -> None:
+async def _probe(segment: str) -> None:
     settings = replace(Settings(), twitterapi_about_enrichment_enabled=False,
                        twitterapi_geo_query_enabled=False)
     if not settings.twitterapi_api_key:
         raise RuntimeError("TWITTERAPI_API_KEY is missing")
-    archive_id = f"purchase-intent-v1111-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
+    archive_id = f"purchase-intent-{segment}-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
     configuration = {
-        "segments": ["demand_custom", "demand_gift", "demand_reply"],
+        "segments": [segment] if segment else ["demand_custom", "demand_gift", "demand_reply"],
         "searchProduct": "Latest",
-        "resultLimit": 6,
+        "resultLimit": 5 if segment else 6,
         "lookbackDays": 14,
         "usRequired": True,
         "usMinConfidence": 70,
         "maxPagesPerQuery": 1,
+        "maxDiscussionParents": 2,
         "discoveryMode": "query_only_probe",
     }
     # Isolated probe cursor; never alter the worker's production watermark.
@@ -78,6 +79,8 @@ async def _probe() -> None:
         "pet_type_pending": metrics["pet_type_pending"],
         "reply_parent_lookups": metrics["reply_parent_lookups"],
         "reply_parent_resolved": metrics["reply_parent_resolved"],
+        "discussion_parents_checked": metrics["discussion_parents_checked"],
+        "discussion_replies_received": metrics["discussion_replies_received"],
         "query_slices": metrics["query_slices"],
         "candidate_statuses": {status: sum(c.get("status") == status for c in candidates)
                                for status in sorted({str(c.get("status")) for c in candidates})},
@@ -88,7 +91,8 @@ async def _probe() -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute-paid", action="store_true", help="Actually call the paid search API")
+    parser.add_argument("--segment", choices=["demand_discussion", "demand_gift"], help="Probe one query segment")
     args = parser.parse_args()
     if not args.execute_paid:
         parser.error("No API calls made. Pass --execute-paid to run the paid probe.")
-    asyncio.run(_probe())
+    asyncio.run(_probe(args.segment or ""))
