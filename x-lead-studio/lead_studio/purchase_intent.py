@@ -6,7 +6,7 @@ from typing import Any
 
 DEMAND_SEGMENT_KEYS = ("demand_custom", "demand_recommendation", "demand_gift", "demand_decor", "demand_reply", "demand_discussion")
 DEMAND_SCENES = ("custom", "gift", "decor")
-VERSION = "pet-demand-v6"
+VERSION = "pet-demand-v7"
 PRODUCT = r"\b(?:pillow(?:case|\s+cover)?s?|cushions?|portraits?|prints?|wall\s+art|keepsakes?)\b"
 PILLOW = r"\b(?:pillow(?:case|\s+cover)?s?|cushions?)\b"
 PET = r"\b(?:dog|cat|puppy|kitten|pet)s?\b"
@@ -17,6 +17,9 @@ GIFT = r"\b(?:gifts?|presents?)\b"
 DECOR = r"\b(?:decor(?:ating)?|sofa|couch|living\s+room|bedroom|wall\s+art)\b"
 GIFT_REQUEST = r"\b(?:gift\s+(?:ideas?|recommendations?)|what\s+(?:can|should)\s+i\s+(?:buy|get)|need\s+(?:a\s+)?(?:gift|present))\b"
 HUMAN_RECIPIENT = r"\b(?:wife|husband|partner|girlfriend|boyfriend|mom|mother|dad|father|sister|brother|friend|dog\s+(?:mom|dad|owner|lover)|cat\s+(?:mom|dad|owner|lover)|pet\s+(?:parent|owner|lover))s?\b"
+SITTER_RECIPIENT = r"\b(?:my|our|the)\s+(?:cat|dog|pet)\s+sitter\b"
+OWN_CAT_DOG = r"\b(?:my|our)\s+(?:cat|dog|kitten|puppy)s?\b"
+SITTER_GIFT_ADVICE = r"\b(?:any\s+(?:gift\s+)?ideas?|(?:need|want|seeking)\s+(?:gift\s+)?(?:ideas?|recommendations?)|(?:can|could)\s+(?:anyone|anybody|someone)\s+recommend|looking\s+for|what\s+(?:should|can)\s+i\s+(?:get|buy))\b"
 PET_LOVER = r"\b(?:dog|cat|pet)[-\s]+lov(?:er|ing)s?\b|\b(?:loves?|adores?)\s+(?:(?:my|our|her|his|their)\s+)?(?:dog|cat|pet)s?\b|\b(?:dog|cat|pet)\s+(?:mom|dad|owner|parent|lover)s?\b"
 UNRELATED_GIFT_ITEM = r"(?:toys?|treats?|food|leash(?:es)?|collars?|beds?)"
 UNRELATED_GIFT = rf"\b{UNRELATED_GIFT_ITEM}\b"
@@ -28,6 +31,22 @@ EXCLUSIONS = {
     "urgent_delivery": r"\b(?:tomorrow|tonight|this\s+weekend|next\s+week|overnight|urgent|asap|by\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|in\s+(?:[1-9]|1[0-4])\s+days?)\b",
     "negative_or_hypothetical": r"\b(?:don'?t\s+(?:want|need)|do\s+not\s+(?:want|need)|not\s+(?:looking|interested)|can'?t\s+afford|cannot\s+afford|if\s+i|joking|just\s+kidding)\b",
 }
+
+
+def _sitter_gift_consultation(context: str) -> bool:
+    """Require a buyer's own cat/dog, a sitter recipient, and a request for advice."""
+    if (re.search(r"\bsitter's\s+(?:cat|dog|pet|kitten|puppy)\b", context, re.I)
+            or re.search(r"\b(?:gift|present)\s+(?:for|to)\s+(?:my|our)\s+"
+                         r"(?:cat|dog|pet)(?!\s+sitter)\b", context, re.I)):
+        return False
+    if not (re.search(SITTER_RECIPIENT, context, re.I)
+            and re.search(OWN_CAT_DOG, context, re.I)
+            and re.search(GIFT, context, re.I)
+            and re.search(SITTER_GIFT_ADVICE, context, re.I)):
+        return False
+    sitter = r"(?:my|our|the)\s+(?:cat|dog|pet)\s+sitter"
+    return bool(re.search(rf"\b(?:gift|present)\b.{{0,70}}\b(?:for|to)\s+{sitter}\b", context, re.I)
+                or re.search(rf"\b(?:get|buy|give)\s+{sitter}\b.{{0,70}}\b(?:gift|present)\b", context, re.I))
 
 
 def assess_purchase_intent(text: str) -> dict[str, Any]:
@@ -61,7 +80,10 @@ def assess_purchase_intent(text: str) -> dict[str, Any]:
                             and re.search(HUMAN_RECIPIENT, sentence, re.I)
                             and re.search(r"\b(?:she|he|they)\s+(?:loves?|adores?)\b", following, re.I)
                             and re.search(PET, following, re.I))
-            if related_photo or related_gift:
+            related_sitter = (re.search(SITTER_RECIPIENT, sentence, re.I)
+                              and re.search(r"\b(?:she|he|they)\b", following, re.I)
+                              and re.search(OWN_CAT_DOG, following, re.I))
+            if related_photo or related_gift or related_sitter:
                 context = f"{sentence}. {following}"
         if len(context) > 350 or not re.search(PET, context, re.I):
             continue
@@ -77,14 +99,15 @@ def assess_purchase_intent(text: str) -> dict[str, Any]:
             "", context, flags=re.I,
         )
         unrelated_positive = re.search(UNRELATED_GIFT, positive_text, re.I)
+        sitter_gift = _sitter_gift_consultation(context) and not product_context
         relevant_gift = bool(gift_context and re.search(CUSTOM_CONTEXT, context, re.I)
-                             and not unrelated_positive)
-        gift_exploration = bool(gift_context and not product_context and not relevant_gift
-                                and re.search(HUMAN_RECIPIENT, context, re.I)
-                                and re.search(PET_LOVER, context, re.I)
-                                and re.search(r"\b(?:i|my|we|our)\b", context, re.I)
-                                and (re.search(GIFT_REQUEST, context, re.I) or re.search(REQUEST, context, re.I))
-                                and not unrelated_positive)
+                             and not unrelated_positive and not sitter_gift)
+        gift_exploration = bool(not unrelated_positive and (
+            sitter_gift or (gift_context and not product_context and not relevant_gift
+                            and re.search(HUMAN_RECIPIENT, context, re.I)
+                            and re.search(PET_LOVER, context, re.I)
+                            and re.search(r"\b(?:i|my|we|our)\b", context, re.I)
+                            and (re.search(GIFT_REQUEST, context, re.I) or re.search(REQUEST, context, re.I)))))
         if not product_context and not relevant_gift and not gift_exploration:
             continue
         excluded = next((reason for reason in ("already_purchased", "urgent_delivery", "negative_or_hypothetical")
@@ -96,8 +119,8 @@ def assess_purchase_intent(text: str) -> dict[str, Any]:
             result["exclusion_reasons"].append("product_mismatch")
             continue
         buyer_voice = bool(re.search(r"\b(?:i|my|we|our|anyone|anybody)\b", context, re.I))
-        request = re.search(REQUEST, context, re.I) or ((relevant_gift or gift_exploration)
-                                                       and buyer_voice and re.search(GIFT_REQUEST, context, re.I))
+        request = re.search(REQUEST, context, re.I) or (sitter_gift and buyer_voice) or (
+            (relevant_gift or gift_exploration) and buyer_voice and re.search(GIFT_REQUEST, context, re.I))
         tier, score = ("explicit_request", 80) if request and not gift_exploration else (
             ("exploratory", 50) if re.search(WISH, context, re.I) else ("excluded", 0)
         )
@@ -123,6 +146,8 @@ def assess_reply_with_parent(reply_text: str, parent_text: str, parent_post_id: 
     result = assess_purchase_intent(reply_text)
     if result["tier"] != "excluded" or not parent_post_id:
         return result
+    if re.search(r"\b(?:not|no|instead\s+of)\s+(?:a\s+)?" + PILLOW, reply_text, re.I):
+        return {**result, "exclusion_reasons": ["product_mismatch"]}
     if any(re.search(EXCLUSIONS[reason], reply_text, re.I)
            for reason in ("sensitive_context", "seller_or_giveaway", "already_purchased",
                           "urgent_delivery", "negative_or_hypothetical")):

@@ -28,6 +28,7 @@ TWEETS_BY_ID_PATH = "/twitter/tweets"
 TWEET_REPLIES_PATH = "/twitter/tweet/replies"
 USER_ABOUT_PATH = "/twitter/user_about"
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503}
+EXPERIMENTAL_QUERY_REVISIONS = {"v10-sitter"}
 
 
 class TwitterApiError(RuntimeError):
@@ -457,6 +458,11 @@ def build_query_plan(
 ) -> list[QueryPlan]:
     selected = {str(value) for value in configuration.get("segments", [])}
     segments = [segment for segment in (*SEARCH_SEGMENTS, *DEMAND_SEARCH_SEGMENTS) if segment.key in selected]
+    if "queryRevisions" in configuration:
+        revisions = {str(value) for value in configuration["queryRevisions"]}
+        segments = [segment for segment in segments if segment.revision in revisions]
+    else:
+        segments = [segment for segment in segments if segment.revision not in EXPERIMENTAL_QUERY_REVISIONS]
     if not segments:
         raise ValueError("No supported audience segment was selected.")
 

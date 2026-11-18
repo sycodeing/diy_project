@@ -28,7 +28,8 @@ async def _credits(client: httpx.AsyncClient, settings: Settings) -> dict[str, i
     }
 
 
-async def _probe(segment: str) -> None:
+async def _probe(segment: str, revision: str, lookback_days: int, result_limit: int,
+                 min_balance_credits: int) -> None:
     settings = replace(Settings(), twitterapi_about_enrichment_enabled=False,
                        twitterapi_geo_query_enabled=False)
     if not settings.twitterapi_api_key:
@@ -37,20 +38,22 @@ async def _probe(segment: str) -> None:
     configuration = {
         "segments": [segment] if segment else ["demand_custom", "demand_gift", "demand_reply"],
         "searchProduct": "Latest",
-        "resultLimit": 5 if segment else 6,
-        "lookbackDays": 14,
+        "resultLimit": result_limit,
+        "lookbackDays": lookback_days,
         "usRequired": True,
         "usMinConfidence": 70,
         "maxPagesPerQuery": 1,
         "maxDiscussionParents": 2,
         "discoveryMode": "query_only_probe",
     }
+    if revision:
+        configuration["queryRevisions"] = [revision]
     # Isolated probe cursor; never alter the worker's production watermark.
     state_path = DATA_DIR / "twitterapi" / f"probe-watermarks-{archive_id}.json"
     async with httpx.AsyncClient(timeout=120) as client:
         before = await _credits(client, settings)
-        if before["total_bonus_credits"] + before["recharge_credits"] < 3000:
-            raise RuntimeError("Fewer than 3000 credits remain; paid probe not started")
+        if before["total_bonus_credits"] + before["recharge_credits"] < min_balance_credits:
+            raise RuntimeError(f"Fewer than {min_balance_credits} credits remain; paid probe not started")
         print(json.dumps({"archive_id": archive_id, "credits_before": before,
                           "archive_path": str(TWITTERAPI_ARCHIVE_DIR / f"{archive_id}.json")}, ensure_ascii=False))
         try:
@@ -92,7 +95,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute-paid", action="store_true", help="Actually call the paid search API")
     parser.add_argument("--segment", choices=["demand_discussion", "demand_gift"], help="Probe one query segment")
+    parser.add_argument("--revision", default="", help="Probe only this query revision")
+    parser.add_argument("--lookback-days", type=int, default=14)
+    parser.add_argument("--result-limit", type=int, default=5)
+    parser.add_argument("--min-balance-credits", type=int, default=3000)
     args = parser.parse_args()
     if not args.execute_paid:
         parser.error("No API calls made. Pass --execute-paid to run the paid probe.")
-    asyncio.run(_probe(args.segment or ""))
+    if args.revision and not args.segment:
+        parser.error("--revision requires --segment")
+    if not 1 <= args.lookback_days <= 90 or not 1 <= args.result_limit <= 100 or args.min_balance_credits < 1:
+        parser.error("Invalid probe bounds")
+    asyncio.run(_probe(args.segment or "", args.revision, args.lookback_days,
+                       args.result_limit, args.min_balance_credits))

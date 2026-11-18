@@ -174,6 +174,10 @@ DEMAND_SEARCH_SEGMENTS = (
     SearchSegment("demand_gift", "Gift question mentioning a cat or dog",
         '("gift ideas" OR "what should I get") (dog OR cat) '
         '-filter:replies lang:en', "v9-question"),
+    SearchSegment("demand_gift", "Gift advice for own cat or dog sitter",
+        '("cat sitter" OR "dog sitter" OR "pet sitter") (gift OR present) '
+        '(ideas OR recommend OR "what should I get" OR "what can I get") '
+        '-filter:replies -filter:retweets lang:en', "v10-sitter"),
     SearchSegment("demand_reply", "Pet photo pillow reply",
         '("pet photo pillow" OR "custom dog pillow" OR "custom cat pillow" OR "photo pillow") '
         '("where" OR "want" OR "how much" OR "can you") filter:replies lang:en', "v2"),

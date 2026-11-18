@@ -59,6 +59,17 @@ def test_query_plan_uses_broad_search_only_when_geo_queries_are_disabled() -> No
     assert all("place_country:US" not in plan.query for plan in plans)
 
 
+def test_query_plan_can_isolate_a_single_revision_for_probe() -> None:
+    config = {**CONFIG, "segments": ["demand_gift"], "queryRevisions": ["v9-question"],
+              "resultLimit": 20, "lookbackDays": 3}
+    plans = build_query_plan(config, state={}, include_geo=False)
+    assert len(plans) == 1
+    assert plans[0].segment.revision == "v9-question"
+    assert plans[0].limit == 20
+    with pytest.raises(ValueError, match="No supported audience segment"):
+        build_query_plan({**config, "queryRevisions": ["missing"]}, include_geo=False)
+
+
 def test_bounded_older_window_ignores_live_watermark_without_regressing_it(tmp_path: Path) -> None:
     live_now = datetime.now(timezone.utc)
     older_until_date = live_now - timedelta(days=1)

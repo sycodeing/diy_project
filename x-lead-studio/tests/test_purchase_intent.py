@@ -88,6 +88,38 @@ def test_gift_questions_across_sentences_and_negative_supply_list():
     )["tier"] == "excluded"
 
 
+@pytest.mark.parametrize("text", [
+    "Any gift ideas for my cat sitter? She takes care of my cats every holiday.",
+    "What should I get my dog sitter as a gift for watching my dog?",
+    "Any ideas for a present for my pet sitter who watches our cat?",
+    "Can anyone recommend a gift for my cat sitter who looks after my cat?",
+])
+def test_gift_advice_for_own_cat_or_dog_sitter_is_exploration(text):
+    intent = assess_purchase_intent(text)
+    assert (intent["scene"], intent["audience"], intent["tier"], intent["product_fit"]) == (
+        "gift", "gift_exploration", "exploratory", "adjacent",
+    )
+    assert intent["contact_permission"] is False
+
+
+@pytest.mark.parametrize("text", [
+    "Any gift ideas for my dog?",
+    "Any gift ideas for a dog sitter?",
+    "Any gift ideas for my pet sitter?",
+    "I already bought a gift for my dog sitter. Any other ideas?",
+    "My dog sitter loves gifts.",
+    "I have gift ideas for my dog sitter.",
+    "Here are some ideas for a gift for my dog sitter.",
+    "I can recommend a gift for my cat sitter.",
+    "Any gift ideas for my cat sitter's dog?",
+    "What should I get my dog sitter as a gift for my dog?",
+    "Any gift ideas for my dog sitter? Shop now at our store.",
+    "Any gift ideas? My dog sitter is great.",
+])
+def test_sitter_gift_search_does_not_infer_buyer_advice_from_noise(text):
+    assert assess_purchase_intent(text)["tier"] == "excluded"
+
+
 def test_pillow_fit_is_ranked_above_related_art_and_explicit_rejection_is_respected():
     pillow = assess_purchase_intent("Does anyone know where I can get a cushion with my dog on it?")
     art = assess_purchase_intent("Can someone recommend a custom portrait of my cat?")
@@ -119,6 +151,15 @@ def test_short_price_question_requires_verified_pet_product_parent():
     )
     assert assess_reply_with_parent("How much?", "Look what I made!", "9000")["tier"] == "excluded"
     assert assess_reply_with_parent("Thanks!", parent, "9000")["tier"] == "excluded"
+
+
+def test_reply_parent_cannot_override_explicit_pillow_mismatch():
+    parent = "Custom photo pillow of your dog"
+    mismatch = assess_reply_with_parent("I want this but not a pillow", parent, "123")
+    assert mismatch["tier"] == "excluded"
+    assert mismatch["exclusion_reasons"] == ["product_mismatch"]
+    assert assess_reply_with_parent("I want this pillow", parent, "123")["tier"] == "explicit_request"
+    assert assess_reply_with_parent("How much?", parent, "123")["tier"] == "explicit_request"
 
 
 @pytest.mark.parametrize("text,scene", [
@@ -159,6 +200,12 @@ def test_new_scene_queries_keep_legacy_path_and_bounded_raw_budget():
     assert any('"pillow with my dog"' in plan.query for plan in plans)
     assert any('"gift ideas"' in plan.query for plan in plans)
     assert any('"gift for my"' in plan.query for plan in plans)
+    sitter_plans = build_query_plan({"segments": ["demand_gift"],
+                                    "queryRevisions": ["v10-sitter"],
+                                    "resultLimit": 20}, include_geo=False)
+    assert len(sitter_plans) == 1
+    assert '"cat sitter"' in sitter_plans[0].query and '"dog sitter"' in sitter_plans[0].query
+    assert "-filter:retweets" in sitter_plans[0].query
     reply_plans = build_query_plan({"segments": ["demand_reply"], "resultLimit": 5},
                                    include_geo=False, now=datetime(2026, 11, 16, tzinfo=timezone.utc))
     assert {plan.state_key for plan in reply_plans} == {"demand_reply:v2:broad", "demand_reply:v2-parent:broad"}
