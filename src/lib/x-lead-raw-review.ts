@@ -1,11 +1,23 @@
 import { z } from "zod";
 
+export function isTrustedRawPhotoUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "pbs.twimg.com"
+      && !url.username && !url.password && !url.port
+      && url.pathname.startsWith("/media/") && url.pathname !== "/media/";
+  } catch {
+    return false;
+  }
+}
+
 export const xLeadRawReviewSchema = z.object({
   postId: z.string().regex(/^\d{1,30}$/),
   authorId: z.string().max(100),
   handle: z.string().regex(/^[A-Za-z0-9_]{1,50}$/),
   postUrl: z.url().refine((value) => /^https:\/\/x\.com\/[A-Za-z0-9_]+\/status\/\d+$/.test(value)),
   postText: z.string().max(3000),
+  photoUrls: z.array(z.url().max(2048).refine(isTrustedRawPhotoUrl)).max(4).optional(),
   postedAt: z.string().datetime({ offset: true }).nullable(),
   sourceArchive: z.string().max(200),
   sourceStage: z.string().max(80),
@@ -30,6 +42,7 @@ export function toRawReviewRow(input: XLeadRawReviewInput, sourceJobId?: string)
     x_handle: input.handle,
     post_url: input.postUrl,
     post_text: input.postText,
+    ...(input.photoUrls !== undefined ? { photo_urls: input.photoUrls } : {}),
     posted_at: input.postedAt,
     source_archive: input.sourceArchive,
     source_stage: input.sourceStage,
@@ -46,6 +59,13 @@ export function toRawReviewRow(input: XLeadRawReviewInput, sourceJobId?: string)
     parent_source_archive: input.parentSourceArchive,
     last_seen_at: new Date().toISOString(),
   };
+}
+
+export function preserveOmittedRawPhotos<T extends { post_id: string; photo_urls?: string[] }>(
+  rows: T[], existing: Array<{ post_id: string; photo_urls: string[] }>,
+): Array<T & { photo_urls: string[] }> {
+  const byId = new Map(existing.map((row) => [row.post_id, row.photo_urls]));
+  return rows.map((row) => ({ ...row, photo_urls: row.photo_urls ?? byId.get(row.post_id) ?? [] }));
 }
 
 export function keepResolvedParentEvidence<T extends {

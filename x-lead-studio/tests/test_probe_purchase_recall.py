@@ -5,7 +5,8 @@ import json
 import httpx
 
 from lead_studio.config import Settings
-from probe_purchase_recall import RecallProbeError, _truncate_utf16, extract_raw_reviews, historical_ids, run_recall_probe
+from probe_purchase_recall import (RecallProbeError, _truncate_utf16, extract_post_photo_urls,
+                                   extract_raw_reviews, historical_ids, run_recall_probe)
 
 
 NOW = datetime(2026, 11, 18, 8, tzinfo=timezone.utc)
@@ -126,6 +127,31 @@ def test_raw_review_text_respects_javascript_utf16_zod_limit(tmp_path):
     rows = extract_raw_reviews([path])
     assert len(rows) == 1
     assert len(rows[0]["postText"].encode("utf-16-le")) // 2 <= 3000
+
+
+def test_raw_photos_only_use_original_post_explicit_photo_metadata():
+    good = "https://pbs.twimg.com/media/one.jpg"
+    second = "https://pbs.twimg.com/media/two.jpg?name=large"
+    post = {
+        "extendedEntities": {"media": [
+            {"type": "video", "media_url_https": "https://pbs.twimg.com/media/video.jpg"},
+            {"type": "photo", "media_url_https": good},
+            {"type": "photo", "media_url_https": "https://pbs.twimg.com.evil.test/media/bad.jpg"},
+            {"type": "photo", "media_url_https": "https://pbs.twimg.com:444/media/bad.jpg"},
+            {"type": "photo", "media_url_https": "http://pbs.twimg.com/media/bad.jpg"},
+        ]},
+        "entities": {"media": [{"type": "photo", "media_url_https": good}]},
+        "media": {"photos": [{"url": second}, {"type": "animated_gif", "url": "https://pbs.twimg.com/media/gif.jpg"}]},
+        "quoted_tweet": {"extendedEntities": {"media": [
+            {"type": "photo", "media_url_https": "https://pbs.twimg.com/media/quoted.jpg"}]}},
+        "author": {"profilePicture": "https://pbs.twimg.com/media/avatar.jpg"},
+    }
+    assert extract_post_photo_urls(post) == [good, second]
+    post["extendedEntities"]["media"] = [
+        {"type": "photo", "media_url_https": f"https://pbs.twimg.com/media/{index}.jpg"}
+        for index in range(6)]
+    post["entities"] = {}
+    assert len(extract_post_photo_urls(post)) == 4
 
 
 def test_failed_later_page_retains_own_archive_raw_rows_for_worker(tmp_path, monkeypatch):

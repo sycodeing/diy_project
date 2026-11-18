@@ -2,13 +2,16 @@ import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { formatAdminDate } from "@/lib/utils";
+import { isTrustedRawPhotoUrl } from "@/lib/x-lead-raw-review";
 import { setRawReviewStatus } from "./raw-review-actions";
+import { RawPostPhotos } from "./raw-post-photos";
 
 type RawFilters = { tier?: string; topic?: string; reply?: string; status?: string;
-  stage?: string; parent?: string; field?: string; query?: string; page?: string };
+  stage?: string; parent?: string; photo?: string; field?: string; query?: string; page?: string };
 type RawRow = {
   post_id: string; author_id: string; x_handle: string; post_url: string;
   post_text: string; posted_at: string | null; source_archive: string;
+  photo_urls: string[]; photo_count: number;
   source_stage: string; classifier_version: string; classifier_tier: string;
   exclusion_reasons: string[]; intent: Record<string, unknown>;
   body_topic_match: boolean; is_reply: boolean; parent_post_id: string | null;
@@ -23,11 +26,13 @@ export async function RawReviewPage({ filters }: { filters: RawFilters }) {
   const page = Number.isFinite(requestedPage) && requestedPage > 0 ? Math.min(requestedPage, 1000) : 1;
   const pageSize = 40;
   let query = supabase.from("x_lead_raw_reviews")
-    .select("post_id,author_id,x_handle,post_url,post_text,posted_at,source_archive,source_stage,classifier_version,classifier_tier,exclusion_reasons,intent,body_topic_match,is_reply,parent_post_id,parent_status,parent_evidence,parent_source_archive,review_status,first_seen_at", { count: "exact" })
+    .select("post_id,author_id,x_handle,post_url,post_text,posted_at,photo_urls,photo_count,source_archive,source_stage,classifier_version,classifier_tier,exclusion_reasons,intent,body_topic_match,is_reply,parent_post_id,parent_status,parent_evidence,parent_source_archive,review_status,first_seen_at", { count: "exact" })
     .order("first_seen_at", { ascending: false }).order("post_id", { ascending: false });
   if (["excluded", "exploratory", "explicit_request"].includes(filters.tier ?? "")) query = query.eq("classifier_tier", filters.tier!);
   if (["true", "false"].includes(filters.topic ?? "")) query = query.eq("body_topic_match", filters.topic === "true");
   if (["true", "false"].includes(filters.reply ?? "")) query = query.eq("is_reply", filters.reply === "true");
+  if (filters.photo === "yes") query = query.gt("photo_count", 0);
+  if (filters.photo === "no") query = query.eq("photo_count", 0);
   if (["unreviewed", "dismissed"].includes(filters.status ?? "")) query = query.eq("review_status", filters.status!);
   if (["shopping_broad", "buyer_recommend_pillow", "shopping_pet_product", "shopping_pet_broad", "buyer_where_pillow", "shopping_product_only"].includes(filters.stage ?? "")) query = query.eq("source_stage", filters.stage!);
   if (["not_applicable", "unresolved", "resolved_product_mismatch"].includes(filters.parent ?? "")) query = query.eq("parent_status", filters.parent!);
@@ -39,7 +44,7 @@ export async function RawReviewPage({ filters }: { filters: RawFilters }) {
   const rows = (data ?? []) as RawRow[];
   const makePageHref = (target: number) => {
     const params = new URLSearchParams({ mode: "raw_review", page: String(target) });
-    for (const key of ["tier", "topic", "reply", "status", "stage", "parent", "field", "query"] as const) if (filters[key]) params.set(key, filters[key]);
+    for (const key of ["tier", "topic", "reply", "photo", "status", "stage", "parent", "field", "query"] as const) if (filters[key]) params.set(key, filters[key]);
     return `/admin/x-leads?${params}`;
   };
   return <AppShell admin><main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">
@@ -53,6 +58,7 @@ export async function RawReviewPage({ filters }: { filters: RawFilters }) {
       <Filter name="tier" label="文本判断" value={filters.tier} options={[["", "全部"], ["explicit_request", "明确请求"], ["exploratory", "探索"], ["excluded", "排除"]]} />
       <Filter name="topic" label="正文宠物与商品词" value={filters.topic} options={[["", "全部"], ["true", "有"], ["false", "无"]]} />
       <Filter name="reply" label="回复帖" value={filters.reply} options={[["", "全部"], ["true", "是"], ["false", "否"]]} />
+      <Filter name="photo" label="原帖图片" value={filters.photo} options={[["", "全部"], ["yes", "有图片"], ["no", "无图片"]]} />
       <Filter name="status" label="人工状态" value={filters.status} options={[["", "全部"], ["unreviewed", "未处理"], ["dismissed", "已忽略"]]} />
       <Filter name="stage" label="查询组" value={filters.stage} options={[["", "全部"], ["shopping_broad", "宽购物"], ["buyer_recommend_pillow", "枕头推荐"], ["shopping_pet_product", "宠物商品"], ["shopping_pet_broad", "宽宠物商品"], ["buyer_where_pillow", "枕头购买地点"], ["shopping_product_only", "宽商品"]]} />
       <Filter name="parent" label="父帖" value={filters.parent} options={[["", "全部"], ["not_applicable", "非回复"], ["unresolved", "待核实"], ["resolved_product_mismatch", "已核实不匹配"]]} />
@@ -63,6 +69,7 @@ export async function RawReviewPage({ filters }: { filters: RawFilters }) {
     <div className="mt-5 space-y-4">{rows.map((row) => <article className="rounded-xl border border-line bg-panel p-4" key={row.post_id}>
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm"><a className="font-black text-accent underline" href={row.post_url} target="_blank" rel="noopener noreferrer">@{row.x_handle} · 原帖 {row.post_id}</a><span>{row.posted_at ? formatAdminDate(row.posted_at) : "帖子时间未知"}</span></div>
       <p className="mt-3 whitespace-pre-wrap text-sm leading-6">{row.post_text || "（无正文）"}</p>
+      {row.photo_urls?.length ? <RawPostPhotos urls={row.photo_urls.filter(isTrustedRawPhotoUrl).slice(0, 4)} postUrl={row.post_url} /> : null}
       {row.post_text.length >= 3000 ? <p className="text-xs text-muted">正文显示前 3000 字；完整原文见原帖或本机原始归档。</p> : null}
       <div className="mt-3 flex flex-wrap gap-2 text-xs"><Tag>文本：{row.classifier_tier}</Tag><Tag>正文主题：{row.body_topic_match ? "匹配" : "未匹配"}</Tag><Tag>人工：{row.review_status}</Tag>{row.is_reply ? <Tag>回复 · {row.parent_status}</Tag> : null}</div>
       <p className="mt-3 text-xs text-muted">排除理由：{row.exclusion_reasons.length ? row.exclusion_reasons.join("、") : "无"} · 分类器 {row.classifier_version}</p>

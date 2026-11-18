@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import re
+from urllib.parse import urlsplit
 import uuid
 from typing import Any
 
@@ -45,6 +46,49 @@ def _truncate_utf16(value: str, limit: int) -> str:
         size += width
         end += 1
     return value[:end]
+
+
+def _trusted_post_photo_url(value: Any) -> str | None:
+    raw = str(value or "").strip()
+    if not raw or len(raw) > 2048:
+        return None
+    try:
+        parsed = urlsplit(raw)
+        if (parsed.scheme != "https" or parsed.hostname != "pbs.twimg.com"
+                or parsed.username or parsed.password or parsed.port not in (None, 443)
+                or not parsed.path.startswith("/media/") or parsed.path == "/media/"):
+            return None
+    except ValueError:
+        return None
+    return raw
+
+
+def extract_post_photo_urls(post: dict[str, Any]) -> list[str]:
+    """Only this post's explicit photo media, never video thumbs or nested posts."""
+    photos: list[str] = []
+    seen_paths: set[str] = set()
+    media_items: list[dict[str, Any]] = []
+    for key in ("extendedEntities", "extended_entities", "entities"):
+        container = post.get(key)
+        if isinstance(container, dict) and isinstance(container.get("media"), list):
+            media_items.extend(item for item in container["media"] if isinstance(item, dict)
+                              and item.get("type") == "photo")
+    media = post.get("media")
+    if isinstance(media, dict) and isinstance(media.get("photos"), list):
+        media_items.extend(item for item in media["photos"] if isinstance(item, dict)
+                           and item.get("type") in (None, "photo"))
+    for item in media_items:
+        url = _trusted_post_photo_url(item.get("media_url_https") or item.get("url"))
+        if not url:
+            continue
+        path = urlsplit(url).path
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
+        photos.append(url)
+        if len(photos) == 4:
+            break
+    return photos
 
 
 class RecallProbeError(RuntimeError):
@@ -173,6 +217,7 @@ def extract_raw_reviews(archive_paths: list[Path]) -> list[dict[str, Any]]:
                         "postId": post_id, "authorId": _author_id(post),
                         "handle": handle, "postUrl": f"https://x.com/{handle}/status/{post_id}",
                         "postText": text, "postedAt": posted_at,
+                        "photoUrls": extract_post_photo_urls(post),
                         "sourceArchive": path.name, "sourceStage": stage,
                         "classifierVersion": intent["version"],
                         "classifierTier": intent["tier"],

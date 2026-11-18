@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { isAuthorizedXLeadWorker } from "@/lib/x-lead-worker-auth";
-import { keepResolvedParentEvidence, toRawReviewRow, xLeadRawReviewSchema } from "@/lib/x-lead-raw-review";
+import { keepResolvedParentEvidence, preserveOmittedRawPhotos, toRawReviewRow, xLeadRawReviewSchema } from "@/lib/x-lead-raw-review";
 
 export const runtime = "nodejs";
 
@@ -18,11 +18,11 @@ export async function POST(request: Request) {
   if (!supabase) return NextResponse.json({ error: "Supabase is not configured." }, { status: 503 });
   const incoming = parsed.data.rawCandidates.map((candidate) => toRawReviewRow(candidate));
   const { data: existing, error: existingError } = await supabase.from("x_lead_raw_reviews")
-    .select("post_id,parent_status,parent_evidence,parent_source_archive,review_status,reviewed_by,reviewed_at,first_seen_at")
+    .select("post_id,parent_status,parent_evidence,parent_source_archive,review_status,reviewed_by,reviewed_at,first_seen_at,photo_urls")
     .in("post_id", incoming.map((row) => row.post_id));
   if (existingError) return NextResponse.json({ error: existingError.message }, { status: 500 });
   const byId = new Map((existing ?? []).map((row) => [row.post_id, row]));
-  const rows = keepResolvedParentEvidence(incoming, existing ?? []).map((row) => ({
+  const rows = preserveOmittedRawPhotos(keepResolvedParentEvidence(incoming, existing ?? []), existing ?? []).map((row) => ({
     ...row,
     review_status: byId.get(row.post_id)?.review_status ?? "unreviewed",
     reviewed_by: byId.get(row.post_id)?.reviewed_by ?? null,
