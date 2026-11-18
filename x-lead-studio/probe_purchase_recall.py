@@ -34,6 +34,19 @@ PET_BODY = re.compile(r"\b(?:dog|cat|pet|puppy|kitten)s?\b", re.I)
 PRODUCT_BODY = re.compile(r"\b(?:gift|present|pillow|cushion|portrait|print|blanket|mug|custom)s?\b", re.I)
 
 
+def _truncate_utf16(value: str, limit: int) -> str:
+    """Match JavaScript/Zod string length while retaining full Unicode chars."""
+    size = 0
+    end = 0
+    for char in value:
+        width = 2 if ord(char) > 0xFFFF else 1
+        if size + width > limit:
+            break
+        size += width
+        end += 1
+    return value[:end]
+
+
 class RecallProbeError(RuntimeError):
     def __init__(self, archive_path: Path, cause: Exception):
         super().__init__(f"Recall probe failed: {type(cause).__name__}")
@@ -119,8 +132,9 @@ def extract_raw_reviews(archive_paths: list[Path]) -> list[dict[str, Any]]:
                 expanded = [str(url.get("expanded_url")) for url in urls
                             if isinstance(url, dict) and url.get("expanded_url")]
                 resolved_parents[reply_id] = (str(parent.get("id") or ""),
-                                              (str(parent.get("text") or "") +
-                                               ("\nExpanded URL: " + expanded[0] if expanded else ""))[:3000], path.name)
+                                              _truncate_utf16(str(parent.get("text") or "") +
+                                                              ("\nExpanded URL: " + expanded[0] if expanded else ""),
+                                                              3000), path.name)
             continue
         stages: list[tuple[str, list[dict[str, Any]], set[str] | None]] = []
         for query in document.get("queries", []):
@@ -145,7 +159,7 @@ def extract_raw_reviews(archive_paths: list[Path]) -> list[dict[str, Any]]:
                             or not re.fullmatch(r"[A-Za-z0-9_]{1,50}", handle)
                             or post_id in rows):
                         continue
-                    text = str(post.get("text") or "")[:3000]
+                    text = _truncate_utf16(str(post.get("text") or ""), 3000)
                     posted_at = _iso_datetime(post.get("createdAt") or post.get("created_at"))
                     try:
                         if not datetime.fromisoformat(posted_at).tzinfo:

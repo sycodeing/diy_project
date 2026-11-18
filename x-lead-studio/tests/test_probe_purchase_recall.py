@@ -5,7 +5,7 @@ import json
 import httpx
 
 from lead_studio.config import Settings
-from probe_purchase_recall import RecallProbeError, extract_raw_reviews, historical_ids, run_recall_probe
+from probe_purchase_recall import RecallProbeError, _truncate_utf16, extract_raw_reviews, historical_ids, run_recall_probe
 
 
 NOW = datetime(2026, 11, 18, 8, tzinfo=timezone.utc)
@@ -109,6 +109,23 @@ def test_raw_review_extracts_only_shopping_and_keeps_verified_parent(tmp_path):
     assert rows[0]["postId"] == reply["id"]
     assert rows[0]["parentStatus"] == "resolved_product_mismatch"
     assert "https://example.org/pillow" in rows[0]["parentEvidence"]
+
+
+def test_raw_review_text_respects_javascript_utf16_zod_limit(tmp_path):
+    text = "🐈" * 40 + "x" * 2950
+    assert len(text) == 2990 and len(text.encode("utf-16-le")) // 2 == 3030
+    truncated = _truncate_utf16(text, 3000)
+    assert len(truncated.encode("utf-16-le")) // 2 == 3000
+    assert truncated.endswith("x" * 2920)
+    post = _post("123", text=text)
+    archive = {"queries": [{"role": "shopping", "name": "shopping_pet_product",
+                            "pages": [{"response": {"tweets": [post]}}],
+                            "decisions": [{"post_id": "123", "intent": {"tier": "excluded"}}]}]}
+    path = tmp_path / "archive.json"
+    path.write_text(json.dumps(archive), encoding="utf-8")
+    rows = extract_raw_reviews([path])
+    assert len(rows) == 1
+    assert len(rows[0]["postText"].encode("utf-16-le")) // 2 <= 3000
 
 
 def test_failed_later_page_retains_own_archive_raw_rows_for_worker(tmp_path, monkeypatch):
