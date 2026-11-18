@@ -93,7 +93,7 @@ export async function RawReviewPage({ filters }: { filters: RawFilters }) {
       <div className="mt-3 flex flex-wrap gap-2 text-xs"><Tag>文本：{row.classifier_tier === "exploratory" ? "潜在消费场景" : row.classifier_tier === "explicit_request" ? "明确需求" : "排除诊断"}</Tag><Tag>正文主题：{row.body_topic_match ? "匹配" : "未匹配"}</Tag><Tag>人工：{row.review_status}</Tag>{row.is_reply ? <Tag>回复 · {row.parent_status}</Tag> : null}</div>
       {row.classifier_tier !== "excluded" ? <p className="mt-2 text-xs">入选证据：{String(row.intent.consumer_evidence || row.intent.request_evidence || row.intent.evidence || "待人工核对")} · 场景：{String(row.intent.scenario_evidence || row.intent.scene || "未明确")} · 商品适配：{String(row.intent.product_fit || "待审")}</p> : null}
       {row.classifier_tier !== "excluded" ? <p className="mt-2 text-xs text-muted">下一步：人工核对原帖与账号，再用自家商品示例准备草稿。原帖图片仅供理解语境，未核验宠物归属；未生成该用户的定制预览。</p> : null}
-      {row.review_status === "unreviewed" && row.classifier_tier !== "excluded" ? <p className="mt-2 rounded-lg border border-line bg-white p-3 text-sm"><strong>只读场景草稿 · 自家示例：</strong>{createXLeadFirstContactDraft({
+      {row.review_status === "unreviewed" && ["exploratory", "explicit_request"].includes(row.classifier_tier) ? <p className="mt-2 rounded-lg border border-line bg-white p-3 text-sm"><strong>只读场景草稿 · 自家示例：</strong>{createXLeadFirstContactDraft({
         occasion: null, occasionConfidence: null, petType: null, firstOrderOffer,
         targetingData: { purchase_intent: row.intent },
       }).text}<span className="mt-1 block text-xs text-muted">草稿未保存或发送；需人工复核。原帖图片不能作为可预览素材。</span></p> : null}
