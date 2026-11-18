@@ -10,6 +10,7 @@ import {
   type ExistingXLeadDiscoveryRow,
 } from "@/lib/x-lead-discovery-upsert";
 import { X_LEAD_DISCOVERY_SEGMENTS } from "@/lib/x-lead";
+import { keepResolvedParentEvidence, toRawReviewRow, xLeadRawReviewSchema } from "@/lib/x-lead-raw-review";
 
 export const runtime = "nodejs";
 
@@ -49,6 +50,7 @@ const requestSchema = z.object({
   errorMessage: z.string().trim().max(1000).nullable().optional(),
   metrics: z.record(z.string(), z.unknown()).default({}),
   candidates: z.array(candidateSchema).max(100).default([]),
+  rawCandidates: z.array(xLeadRawReviewSchema).max(200).default([]),
 });
 
 export async function POST(request: Request, context: RouteContext<"/api/x-leads/worker/jobs/[id]/complete">) {
@@ -71,12 +73,34 @@ export async function POST(request: Request, context: RouteContext<"/api/x-leads
   if (!supabase) return NextResponse.json({ error: "Supabase is not configured." }, { status: 503 });
   const { data: job, error: jobError } = await supabase
     .from("x_lead_search_jobs")
-    .select("id,status,worker_id")
+    .select("id,status,worker_id,configuration")
     .eq("id", id)
     .maybeSingle();
   if (jobError || !job) return NextResponse.json({ error: jobError?.message ?? "Job not found." }, { status: 404 });
   if (job.status !== "running" || job.worker_id !== parsed.data.workerId) {
     return NextResponse.json({ error: "Job is not owned by this worker." }, { status: 409 });
+  }
+  const recallJob = job.configuration && typeof job.configuration === "object"
+    && !Array.isArray(job.configuration) && job.configuration.discoveryMode === "purchase_recall";
+  if ((recallJob && parsed.data.candidates.length) || (!recallJob && parsed.data.rawCandidates.length)) {
+    return NextResponse.json({ error: "Raw review rows and strict lead candidates must stay in separate jobs." }, { status: 422 });
+  }
+  if (recallJob && parsed.data.rawCandidates.length) {
+    const incoming = parsed.data.rawCandidates.map((candidate) => toRawReviewRow(candidate, id));
+    const { data: existing, error: existingError } = await supabase.from("x_lead_raw_reviews")
+      .select("post_id,parent_status,parent_evidence,parent_source_archive,review_status,reviewed_by,reviewed_at,first_seen_at")
+      .in("post_id", incoming.map((row) => row.post_id));
+    if (existingError) return NextResponse.json({ error: existingError.message }, { status: 500 });
+    const byId = new Map((existing ?? []).map((row) => [row.post_id, row]));
+    const rows = keepResolvedParentEvidence(incoming, existing ?? []).map((row) => ({
+      ...row,
+      review_status: byId.get(row.post_id)?.review_status ?? "unreviewed",
+      reviewed_by: byId.get(row.post_id)?.reviewed_by ?? null,
+      reviewed_at: byId.get(row.post_id)?.reviewed_at ?? null,
+      first_seen_at: byId.get(row.post_id)?.first_seen_at ?? row.last_seen_at,
+    }));
+    const { error: rawError } = await supabase.from("x_lead_raw_reviews").upsert(rows, { onConflict: "post_id" });
+    if (rawError) return NextResponse.json({ error: rawError.message }, { status: 500 });
   }
 
   let insertedCount = 0;
@@ -137,6 +161,7 @@ export async function POST(request: Request, context: RouteContext<"/api/x-leads
       metrics: {
         ...parsed.data.metrics,
         submitted_candidates: parsed.data.candidates.length,
+        raw_review_rows: parsed.data.rawCandidates.length,
         accepted_candidates: acceptedCandidateCount,
         blacklisted_candidates: blacklistedCandidateCount,
         duplicate_account_candidates: duplicateAccountCandidateCount,

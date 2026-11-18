@@ -34,6 +34,12 @@ PET_BODY = re.compile(r"\b(?:dog|cat|pet|puppy|kitten)s?\b", re.I)
 PRODUCT_BODY = re.compile(r"\b(?:gift|present|pillow|cushion|portrait|print|blanket|mug|custom)s?\b", re.I)
 
 
+class RecallProbeError(RuntimeError):
+    def __init__(self, archive_path: Path, cause: Exception):
+        super().__init__(f"Recall probe failed: {type(cause).__name__}")
+        self.archive_path = archive_path
+
+
 def _save(path: Path, document: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".part")
@@ -92,6 +98,83 @@ def historical_ids(archive_dir: Path) -> tuple[set[str], set[str], int]:
             if author_id:
                 author_ids.add(author_id)
     return post_ids, author_ids, archives
+
+
+def extract_raw_reviews(archive_paths: list[Path]) -> list[dict[str, Any]]:
+    """Build review-only rows from shopping pages; never include control pages."""
+    rows: dict[str, dict[str, Any]] = {}
+    resolved_parents: dict[str, tuple[str, str, str]] = {}
+    for path in archive_paths:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        if document.get("kind") == "single_parent_context_query_only":
+            reply_id = str(document.get("reply_post_id") or "")
+            parents = (document.get("response") or {}).get("tweets") or []
+            # This single parent was independently inspected as an ordinary
+            # non-pet Martian pillow. Other parent archives are not decisions.
+            if (reply_id == "2122748134531166384" and
+                    str(document.get("parent_post_id")) == "2122672037684486452" and
+                    parents and isinstance(parents[0], dict)):
+                parent = parents[0]
+                urls = (parent.get("entities") or {}).get("urls") or []
+                expanded = [str(url.get("expanded_url")) for url in urls
+                            if isinstance(url, dict) and url.get("expanded_url")]
+                resolved_parents[reply_id] = (str(parent.get("id") or ""),
+                                              (str(parent.get("text") or "") +
+                                               ("\nExpanded URL: " + expanded[0] if expanded else ""))[:3000], path.name)
+            continue
+        stages: list[tuple[str, list[dict[str, Any]], set[str] | None]] = []
+        for query in document.get("queries", []):
+            if query.get("role") == "control":
+                continue
+            accepted = {str(decision.get("post_id")) for decision in query.get("decisions") or []
+                        if isinstance(decision, dict) and "intent" in decision}
+            stages.append((str(query.get("name") or "shopping"), query.get("pages") or [], accepted))
+        for page in document.get("pages", []):
+            if page.get("name") == "control":
+                continue
+            stages.append((str(page.get("name") or "shopping"), [page], None))
+        for stage, pages, accepted in stages:
+            for page in pages:
+                for post in (page.get("response") or {}).get("tweets") or []:
+                    if not isinstance(post, dict):
+                        continue
+                    post_id = str(post.get("id") or post.get("id_str") or "")
+                    author = post.get("author") if isinstance(post.get("author"), dict) else {}
+                    handle = str(author.get("userName") or author.get("username") or "")
+                    if (not post_id.isdigit() or (accepted is not None and post_id not in accepted)
+                            or not re.fullmatch(r"[A-Za-z0-9_]{1,50}", handle)
+                            or post_id in rows):
+                        continue
+                    text = str(post.get("text") or "")[:3000]
+                    posted_at = _iso_datetime(post.get("createdAt") or post.get("created_at"))
+                    try:
+                        if not datetime.fromisoformat(posted_at).tzinfo:
+                            posted_at = None
+                    except ValueError:
+                        posted_at = None
+                    intent = assess_purchase_intent(text)
+                    parent_id = str(post.get("inReplyToId") or "") or None
+                    is_reply = bool(parent_id or post.get("isReply"))
+                    rows[post_id] = {
+                        "postId": post_id, "authorId": _author_id(post),
+                        "handle": handle, "postUrl": f"https://x.com/{handle}/status/{post_id}",
+                        "postText": text, "postedAt": posted_at,
+                        "sourceArchive": path.name, "sourceStage": stage,
+                        "classifierVersion": intent["version"],
+                        "classifierTier": intent["tier"],
+                        "exclusionReasons": intent["exclusion_reasons"],
+                        "intent": intent,
+                        "bodyTopicMatch": bool(PET_BODY.search(text) and PRODUCT_BODY.search(text)),
+                        "isReply": is_reply, "parentPostId": parent_id,
+                        "parentStatus": "unresolved" if is_reply else "not_applicable",
+                        "parentEvidence": None, "parentSourceArchive": None,
+                    }
+    for post_id, (parent_id, parent_text, archive_name) in resolved_parents.items():
+        if post_id in rows and parent_id == rows[post_id]["parentPostId"]:
+            rows[post_id]["parentStatus"] = "resolved_product_mismatch"
+            rows[post_id]["parentEvidence"] = parent_text
+            rows[post_id]["parentSourceArchive"] = archive_name
+    return list(rows.values())
 
 
 async def _credits(client: httpx.AsyncClient, settings: Settings) -> dict[str, int]:
@@ -159,7 +242,7 @@ async def run_recall_probe(
         document["status"] = "failed_credit_check"
         document["error_type"] = type(error).__name__
         _save(archive_path, document)
-        raise
+        raise RecallProbeError(archive_path, error) from error
     current = before
     document["credits_before"] = before
     _save(archive_path, document)
@@ -309,7 +392,7 @@ async def run_recall_probe(
     except Exception as error:
         document["status"] = "failed"
         document["error_type"] = type(error).__name__
-        raise
+        raise RecallProbeError(archive_path, error) from error
     finally:
         document["completed_at"] = datetime.now(timezone.utc).isoformat()
         document["credits_after"] = current

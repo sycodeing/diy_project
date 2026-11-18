@@ -6,14 +6,12 @@ import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { formatAdminDate, getServerNowMillis } from "@/lib/utils";
 import {
   X_JOB_STATUS_LABELS,
-  X_DEMAND_SEGMENTS,
-  X_DEMAND_SEGMENT_LABELS,
   X_LEAD_SEGMENTS,
   X_LEAD_SEGMENT_LABELS,
   X_SEARCH_INTERVAL_LABELS,
   X_SEARCH_PRODUCT_LABELS,
 } from "@/lib/x-lead";
-import { runDemandLeadSearch, saveXLeadSearchConfiguration } from "./actions";
+import { runRecallLeadSearch, saveXLeadSearchConfiguration } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -89,7 +87,7 @@ export default async function XLeadSearchPage({
   const worker = ((workersData ?? [])[0] ?? null) as Worker | null;
   const workerOnline = Boolean(worker && getServerNowMillis() - new Date(worker.last_seen_at).getTime() < 120_000);
   const { notice } = await searchParams;
-  const noticeText = notice === "demand-queued" ? "需求验证任务已入队。不会修改旧筛选配置，也不会发送消息。" : notice === "queued"
+  const noticeText = notice === "recall-queued" ? "宽召回任务已入队。原始帖子仅进入待筛视图，不会生成预览或发送消息。" : notice === "queued"
     ? "筛选任务已加入队列，本机执行器会自动领取。"
     : notice === "saved"
       ? "筛选与定时配置已保存。"
@@ -111,23 +109,14 @@ export default async function XLeadSearchPage({
         {noticeText ? <p className="mt-5 rounded-lg border border-line bg-panel p-3 text-sm font-bold">{noticeText}</p> : null}
 
         <section className="mt-6 rounded-xl border border-line bg-panel/90 p-5">
-          <h2 className="text-xl font-black">新模式：购买需求验证</h2>
-          <p className="mt-2 text-sm text-muted">优先寻找宠物定制需求与给宠物主人送礼的需求。保留美国位置、猫狗实拍、非广告和历史去重门槛。意向信号不代表购买承诺或联系许可。</p>
-          <form action={runDemandLeadSearch} className="mt-4 space-y-4">
-            <fieldset className="space-y-2"><legend className="text-sm font-bold">独立查询组</legend>
-              {X_DEMAND_SEGMENTS.map((segment) => <label className="flex items-center gap-2 text-sm" key={segment}>
-                <input name="segments" type="checkbox" value={segment} defaultChecked={segment === "demand_custom" || segment === "demand_gift" || segment === "demand_reply"} />{X_DEMAND_SEGMENT_LABELS[segment]}
-              </label>)}
-            </fieldset>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <NumberField label="查询预算（按整页获取，可能略超出）" name="resultLimit" value={40} min={1} max={100} />
-              <NumberField label="每个场景的候选目标（不足不凑数）" name="qualifiedPerScene" value={20} min={1} max={100} />
-              <SelectField label="需求发布时间" name="lookbackDays" value="3" options={[["3", "最近 3 天"], ["7", "最近 7 天"], ["14", "最近 14 天"]]} />
-            </div>
-            <p className="text-xs text-muted">定制、礼物和回复默认查询，家居装饰可单独勾选。回复必须独立表达需求；依赖原帖才能理解的回复会记录在本机筛选归档中供核对。需求帖可以没有图片，但必须补到同账号公开宠物照片并通过图像验证，候选页会并列显示两条证据。每位作者仅计一次；历史去重后实际新增可能少于目标。需本机更新后的 worker。</p>
+          <h2 className="text-xl font-black">购买讨论宽召回 · 原始待筛</h2>
+          <p className="mt-2 text-sm text-muted">手动获取近期购物主题查询结果，先保存原文、分类理由与来源，再供人工筛选。宽召回包含广告和无关帖；这里的帖子均未取得美国位置、宠物照片或联系资格。</p>
+          <form action={runRecallLeadSearch} className="mt-4 space-y-4">
+            <SelectField label="本次最多搜索页数" name="maxPages" value="2" options={[["1", "1 页"], ["2", "2 页"], ["8", "8 页（上限）"]]} />
+            <p className="text-xs text-muted">最近 3 天，按有界宽查询逐级回退；余额低于 3000 credits 或本轮观察支出达到 2500 credits 即停止。普通 dog 控制页默认关闭。每页原始响应先在本机归档，结果只写原始待筛表，不进入严格候选或发送队列。</p>
             <div className="flex flex-wrap gap-3">
-              <button className="focus-ring rounded-lg bg-accent px-4 py-3 font-bold text-accent-ink" type="submit">启动需求验证筛选</button>
-              <Link className="focus-ring rounded-lg border border-line px-4 py-3 font-bold" href="/admin/x-leads?mode=purchase_intent">查看需求验证候选</Link>
+              <button className="focus-ring rounded-lg bg-accent px-4 py-3 font-bold text-accent-ink" type="submit">启动宽召回待筛</button>
+              <Link className="focus-ring rounded-lg border border-line px-4 py-3 font-bold" href="/admin/x-leads?mode=raw_review">查看原始待筛帖子</Link>
             </div>
           </form>
         </section>
@@ -197,7 +186,7 @@ export default async function XLeadSearchPage({
             <thead className="text-muted"><tr><th className="pb-3">创建时间</th><th>触发方式</th><th>状态</th><th>获取帖子</th><th>发现漏斗</th><th>新增用户</th><th>执行器</th><th>结果</th></tr></thead>
             <tbody>{jobs.map((job) => <tr className="border-t border-line" key={job.id}>
               <td className="py-3">{formatAdminDate(job.created_at)}</td>
-              <td>{job.configuration?.discoveryMode === "purchase_intent" ? "需求验证 · " : "原模式 · "}{job.trigger_type === "manual" ? "手动" : "定时"}</td>
+              <td>{job.configuration?.discoveryMode === "purchase_recall" ? "宽召回待筛 · " : job.configuration?.discoveryMode === "purchase_intent" ? "需求验证 · " : "原模式 · "}{job.trigger_type === "manual" ? "手动" : "定时"}</td>
               <td className="font-bold">{X_JOB_STATUS_LABELS[job.status] ?? job.status}</td>
               <td>{job.received_count}</td><td className="min-w-52 text-xs leading-5 text-muted">{formatDiscoveryMetrics(job.metrics)}</td><td>{job.inserted_count}</td><td>{job.worker_id ?? "—"}</td>
               <td className="max-w-80 text-muted">{job.error_message ?? (job.finished_at ? `完成于 ${formatAdminDate(job.finished_at)}` : "—")}</td>

@@ -4,6 +4,7 @@ export type XLeadDraftContext = {
   occasion: string | null;
   occasionConfidence: number | null;
   petType?: "cat" | "dog" | null;
+  firstOrderOffer?: boolean;
   targetingData: null | {
     matched_terms?: unknown;
     post_excerpt?: unknown;
@@ -13,39 +14,49 @@ export type XLeadDraftContext = {
 };
 
 export type XLeadCopyOccasion = "generic";
-export const X_FIRST_CONTACT_VARIANT = "first_contact_v1" as const;
+export const X_FIRST_CONTACT_VARIANT = "first_contact_v3" as const;
+
+export function canAdvertiseFirstOrder25(
+  promotion: { priceCents: number; currency: string } | null,
+  variants: Array<{ price_cents: number; currency: string }>,
+) {
+  return !!promotion && promotion.priceCents > 0 && variants.length > 0 && variants.every((variant) =>
+    variant.currency.toLowerCase() === promotion.currency.toLowerCase()
+    && promotion.priceCents <= Math.floor(variant.price_cents * 0.75));
+}
 
 export function createXLeadFirstContactDraft(context: XLeadDraftContext) {
   const pet = context.petType === "cat" ? "cat" : context.petType === "dog" ? "dog" : "pet";
+  const offer = context.firstOrderOffer ? " Your first order is 25% off." : "";
   const intent = context.targetingData?.purchase_intent;
   if (intent && typeof intent === "object" && !Array.isArray(intent)) {
     const signal = intent as Record<string, unknown>;
     if (signal.tier === "exploratory" && signal.audience === "gift_exploration") {
       return {
-        variantKey: "first_contact_gift_v2" as const,
+        variantKey: "first_contact_gift_v3" as const,
         contentMode: "first_contact_text" as const,
-        text: "If you're choosing a gift for a pet lover, a pillow cover made from their pet's photo could be one option. I make those. Would you like to see an example?",
+        text: `If you're choosing a gift for a pet lover, I make pillow covers from their pet's photo.${offer} Would you like to see an example?`,
       };
     }
     if (signal.tier === "explicit_request" && typeof signal.parent_post_id === "string") {
       return {
-        variantKey: "first_contact_discussion_v2" as const,
+        variantKey: "first_contact_discussion_v3" as const,
         contentMode: "first_contact_text" as const,
-        text: "I'm another maker, not the seller in this thread. I make custom pet-photo pillow covers. If that could fit what you're looking for, would you like an example?",
+        text: `I'm another maker, not the seller in this thread. I make custom pet-photo pillow covers.${offer} If that fits what you're looking for, would you like an example?`,
       };
     }
     if (signal.tier === "exploratory" && signal.scene === "decor") {
       return {
-        variantKey: "first_contact_decor_v2" as const,
+        variantKey: "first_contact_decor_v3" as const,
         contentMode: "first_contact_text" as const,
-        text: `If you'd like to display a ${pet} photo at home, I make custom photo pillow covers. Would you like to see an example?`,
+        text: `If you'd like to display a ${pet} photo at home, I make custom photo pillow covers.${offer} Would you like to see an example?`,
       };
     }
   }
   return {
     variantKey: X_FIRST_CONTACT_VARIANT,
     contentMode: "first_contact_text" as const,
-    text: `I make custom ${pet}-photo pillow covers. $19.99 shipped to the US, delivery in about 15 days. Cover only, no insert. Would you like to see a sample?`,
+    text: `I make custom ${pet}-photo pillow covers. Cover only, no insert.${offer} Would you like to see a sample?`,
   };
 }
 
@@ -57,7 +68,9 @@ export function isValidXFirstContactText(text: string) {
 export type XLeadShortCopyVariant =
   | "short_direct_a_v1"
   | "short_direct_b_v1"
-  | "guided_preview_a_v2";
+  | "guided_preview_a_v2"
+  | "short_direct_b_v3"
+  | "guided_preview_a_v3";
 
 export type XLeadCopyProfile = {
   accountKey: string;
@@ -75,8 +88,8 @@ export function getXLeadCopyOccasion(context: XLeadDraftContext): XLeadCopyOccas
 
 export function getXLeadShortCopyVariant(seed: string): XLeadShortCopyVariant {
   return stableIndex(`${seed}:guided-preview-experiment-v2`, 2) === 0
-    ? "short_direct_b_v1"
-    : "guided_preview_a_v2";
+    ? "short_direct_b_v3"
+    : "guided_preview_a_v3";
 }
 
 export function createXLeadDrafts(
@@ -91,10 +104,13 @@ export function createXLeadDrafts(
     : contextSeed(context);
   const variant = assignedVariant ?? getXLeadShortCopyVariant(seed);
   const pet = context.petType === "cat" ? "cat" : context.petType === "dog" ? "dog" : "pet";
-  const template = variant === "short_direct_a_v1"
-    ? SHORT_DIRECT_COPY[variant]
-    : X_OUTREACH_GROUPS[group].copy[variant];
-  const message = interpolate(template, pet);
+  const baseVariant = variant === "short_direct_b_v3" ? "short_direct_b_v1"
+    : variant === "guided_preview_a_v3" ? "guided_preview_a_v2" : variant;
+  const template = baseVariant === "short_direct_a_v1"
+    ? SHORT_DIRECT_COPY[baseVariant]
+    : X_OUTREACH_GROUPS[group].copy[baseVariant];
+  const offer = context.firstOrderOffer ? "25% off your first order. " : "";
+  const message = offer + interpolate(template, pet);
   const directCopy = appendLinkWithinLimit(message, link, 220);
 
   return {
@@ -105,7 +121,7 @@ export function createXLeadDrafts(
   };
 }
 
-const SHORT_DIRECT_COPY: Record<XLeadShortCopyVariant, string> = {
+const SHORT_DIRECT_COPY = {
   short_direct_a_v1: "That’s a great photo of your {pet}! I made a custom pet-pillow preview from it:",
   short_direct_b_v1: "I turned this {pet} photo into a personalized pillow preview. See how it looks:",
   guided_preview_a_v2: "I made a quick pillow preview from this {pet} photo. Open it to see the design with your photo already added:",

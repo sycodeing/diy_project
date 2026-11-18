@@ -4,7 +4,10 @@ import {
   createXLeadDrafts,
   getXLeadCopyOccasion,
   getXLeadShortCopyVariant,
+  canAdvertiseFirstOrder25,
+  createXLeadFirstContactDraft,
 } from "./x-lead-copy.ts";
+import { X_OUTREACH_GROUPS } from "./x-outreach-groups.ts";
 import { X_LEAD_MARKETING_CHANNEL } from "./x-lead-materials.ts";
 
 test("attributes the X lead workflow to public replies", () => {
@@ -52,7 +55,7 @@ test("assigns a stable experiment variant by lead seed", () => {
   const assignments = seeds.map(getXLeadShortCopyVariant);
 
   assert.deepEqual(assignments, seeds.map(getXLeadShortCopyVariant));
-  assert.deepEqual(new Set(assignments), new Set(["short_direct_b_v1", "guided_preview_a_v2"]));
+  assert.deepEqual(new Set(assignments), new Set(["short_direct_b_v3", "guided_preview_a_v3"]));
 });
 
 test("keeps a long-link direct message within the short-copy cap", () => {
@@ -68,7 +71,7 @@ test("keeps a long-link direct message within the short-copy cap", () => {
   assert.ok(copy.endsWith(link));
 });
 
-test("profile-based drafts resolve to the v2 control or guided treatment", () => {
+test("new profile-based drafts use the v3 copy versions", () => {
   const drafts = createXLeadDrafts(
     { occasion: null, occasionConfidence: null, petType: "dog", targetingData: null },
     "https://example.com/pet",
@@ -81,6 +84,37 @@ test("profile-based drafts resolve to the v2 control or guided treatment", () =>
     },
   );
 
-  assert.match(drafts.variantKey, /^(short_direct_b_v1|guided_preview_a_v2)$/);
+  assert.match(drafts.variantKey, /^(short_direct_b_v3|guided_preview_a_v3)$/);
   assert.ok(drafts.publicCopy.length < 180);
+});
+
+test("advertises 25 percent only when the live offer covers every pillow variant", () => {
+  const variants = [{ price_cents: 1999, currency: "usd" }];
+  assert.equal(canAdvertiseFirstOrder25({ priceCents: 1499, currency: "USD" }, variants), true);
+  assert.equal(canAdvertiseFirstOrder25(null, variants), false);
+  assert.equal(canAdvertiseFirstOrder25({ priceCents: 1599, currency: "usd" }, variants), false);
+  assert.equal(canAdvertiseFirstOrder25({ priceCents: 1499, currency: "eur" }, variants), false);
+  assert.equal(canAdvertiseFirstOrder25({ priceCents: 1499, currency: "usd" }, []), false);
+  assert.equal(canAdvertiseFirstOrder25({ priceCents: 1499, currency: "usd" }, [...variants, { price_cents: 1499, currency: "usd" }]), false);
+});
+
+test("all new copy scenes can include the verified first-order offer without product prices", () => {
+  const context = { occasion: null, occasionConfidence: null, petType: "cat" as const, targetingData: null, firstOrderOffer: true };
+  for (const group of Object.keys(X_OUTREACH_GROUPS) as Array<keyof typeof X_OUTREACH_GROUPS>) {
+    for (const variant of ["short_direct_b_v3", "guided_preview_a_v3"] as const) {
+      const draft = createXLeadDrafts(context, "https://example.com/go/test", undefined, variant, group);
+      assert.match(draft.publicCopy, /25% off your first order/);
+      assert.doesNotMatch(draft.publicCopy, /[$€£]|\bUSD\b|\d+\.\d{2}/i);
+      assert.ok(draft.publicCopy.endsWith("https://example.com/go/test"));
+      assert.ok(draft.publicCopy.length <= 220);
+    }
+  }
+  for (const intent of [null, { tier: "exploratory", audience: "gift_exploration" }, { tier: "explicit_request", parent_post_id: "9000" }, { tier: "exploratory", scene: "decor" }]) {
+    const draft = createXLeadFirstContactDraft({ ...context, targetingData: { purchase_intent: intent } });
+    assert.match(draft.text, /first order is 25% off/);
+    assert.doesNotMatch(draft.text, /[$€£]|\bUSD\b|\d+\.\d{2}/i);
+    assert.ok(draft.text.length <= 280);
+    const noOffer = createXLeadFirstContactDraft({ ...context, firstOrderOffer: false, targetingData: { purchase_intent: intent } });
+    assert.doesNotMatch(noOffer.text, /25%|[$€£]|\bUSD\b|\d+\.\d{2}/i);
+  }
 });

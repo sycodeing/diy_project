@@ -9,7 +9,39 @@ import {
   demandSearchConfigurationSchema,
   type XSearchConfiguration,
 } from "@/lib/x-lead";
-import { supportsDiscussionSearch } from "@/lib/x-lead-worker-version";
+import { supportsDiscussionSearch, supportsPurchaseRecall } from "@/lib/x-lead-worker-version";
+
+export async function runRecallLeadSearch(formData: FormData) {
+  const user = await requireAdmin("/admin/x-lead-search");
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) throw new Error("Supabase 服务端配置缺失。");
+  const { data: worker, error: workerError } = await supabase.from("x_lead_workers")
+    .select("worker_version,last_seen_at").eq("status", "online")
+    .order("last_seen_at", { ascending: false }).limit(1).maybeSingle();
+  if (workerError) throw new Error(workerError.message);
+  if (!worker || Date.now() - new Date(worker.last_seen_at).getTime() > 120_000
+      || !supportsPurchaseRecall(worker.worker_version ?? undefined)) {
+    throw new Error("宽召回需要在线的 1.14.0 或更高版本发现执行器。");
+  }
+  const { data: active, error: activeError } = await supabase.from("x_lead_search_jobs")
+    .select("id").in("status", ["queued", "running"]).limit(1).maybeSingle();
+  if (activeError) throw new Error(activeError.message);
+  if (active) redirect("/admin/x-lead-search?notice=active");
+  const maxPages = Number(formData.get("maxPages") ?? 2);
+  if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 8) {
+    throw new Error("单次查询页数必须为 1–8。");
+  }
+  const { error } = await supabase.from("x_lead_search_jobs").insert({
+    trigger_type: "manual", status: "queued", created_by: user.id,
+    configuration: {
+      discoveryMode: "purchase_recall", lookbackDays: 3,
+      maxPages, targetNewPosts: 20, diagnoseControl: false,
+    },
+  });
+  if (error) throw new Error(error.message);
+  revalidatePath("/admin/x-lead-search");
+  redirect("/admin/x-lead-search?notice=recall-queued");
+}
 
 // Independent, bounded manual jobs. Never saves or enables the legacy schedule.
 export async function runDemandLeadSearch(formData: FormData) {

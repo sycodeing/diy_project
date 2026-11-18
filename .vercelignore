@@ -3,3 +3,8 @@ mockup-renderer/scripts/**
 mockup-renderer/__pycache__/**
 mockup-renderer/*.log
 mockup-renderer/smoke-output.webp
+x-lead-studio/.data/**
+x-lead-studio/.venv/**
+x-lead-studio/.env
+**/.env.local
+**/.env.production.local

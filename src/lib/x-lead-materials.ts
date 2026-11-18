@@ -2,12 +2,25 @@ import { createHash, createHmac, randomBytes } from "node:crypto";
 import { getAppUrl, getMarketingIngestSecret } from "@/lib/env";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { getXLeadPreviewSourceHash } from "@/lib/x-lead-preview-identity";
-import { createXLeadDrafts, createXLeadFirstContactDraft, getXLeadShortCopyVariant, type XLeadCopyProfile } from "@/lib/x-lead-copy";
+import { canAdvertiseFirstOrder25, createXLeadDrafts, createXLeadFirstContactDraft, getXLeadShortCopyVariant, type XLeadCopyProfile } from "@/lib/x-lead-copy";
+import { getActiveFirstOrderPromotion } from "@/lib/first-order-promotion";
+import { PRODUCT_SLUG } from "@/lib/product-config";
 import { getXLeadTargetingChecks, type XLeadRow } from "@/lib/x-lead";
 import { resolveXOutreachGroup, xOutreachCampaign } from "@/lib/x-outreach-groups";
 
 type QueueKind = "manual" | "automatic";
 export const X_LEAD_MARKETING_CHANNEL = "public_reply" as const;
+
+async function hasXFirstOrderOffer() {
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) return false;
+  const promotion = await getActiveFirstOrderPromotion();
+  if (!promotion) return false;
+  const { data, error } = await supabase.from("product_variants")
+    .select("price_cents,currency,products!inner(slug)").eq("products.slug", PRODUCT_SLUG);
+  if (error) throw new Error(`无法核实首单优惠：${error.message}`);
+  return canAdvertiseFirstOrder25(promotion, data ?? []);
+}
 
 export async function ensureXLeadMarketingAssets(
   leadId: string,
@@ -46,9 +59,10 @@ export async function ensureXLeadMarketingAssets(
   const campaign = xOutreachCampaign(group, dateKey);
   const channel = X_LEAD_MARKETING_CHANNEL;
   const variant = getXLeadShortCopyVariant(lead.post_id);
+  const firstOrderOffer = await hasXFirstOrderOffer();
   const sourceHash = getXLeadPreviewSourceHash(secret, lead.post_id, lead.media_url);
   const linkCycle = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));
-  const material = `${lead.post_id}\n${sourceHash}\n${campaign}\n${channel}\n${variant}\n${linkCycle}`;
+  const material = `${lead.post_id}\n${sourceHash}\n${campaign}\n${channel}\n${variant}\n${firstOrderOffer}\n${linkCycle}`;
   const idempotencyKey = `x-link:${createHash("sha256").update(material).digest("hex")}`;
   const payload = {
     campaign,
@@ -105,6 +119,7 @@ export async function ensureXLeadMarketingAssets(
     occasion: lead.occasion,
     occasionConfidence: lead.occasion_confidence,
     petType: lead.pet_type,
+    firstOrderOffer,
     targetingData: lead.targeting_data,
   }, result.url, copyProfile, variant, group);
   if (drafts.variantKey !== variant) {
@@ -165,6 +180,7 @@ export async function prepareXLeadQueueTask({
         const draft = createXLeadFirstContactDraft({
           occasion: lead.occasion, occasionConfidence: lead.occasion_confidence,
           petType: lead.pet_type, targetingData: lead.targeting_data,
+          firstOrderOffer: await hasXFirstOrderOffer(),
         });
         const { error } = await supabase.from("x_reply_jobs").update({
           reply_text: draft.text, copy_variant: draft.variantKey, content_mode: draft.contentMode,
