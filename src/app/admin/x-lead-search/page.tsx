@@ -109,10 +109,10 @@ export default async function XLeadSearchPage({
         {noticeText ? <p className="mt-5 rounded-lg border border-line bg-panel p-3 text-sm font-bold">{noticeText}</p> : null}
 
         <section className="mt-6 rounded-xl border border-line bg-panel/90 p-5">
-          <h2 className="text-xl font-black">购买讨论宽召回 · 原始待筛</h2>
-          <p className="mt-2 text-sm text-muted">手动获取近期购物主题查询结果，先保存原文、分类理由与来源，再供人工筛选。宽召回包含广告和无关帖；这里的帖子均未取得美国位置、宠物照片或联系资格。</p>
+          <h2 className="text-xl font-black">个人消费场景召回 · 原始待筛</h2>
+          <p className="mt-2 text-sm text-muted">需要 1.15.0 或更新的发现执行器。优先搜索近期送礼与家居个性化场景，再由 v9 文本规则区分潜在顾客、明确需求、商家与噪音。保存原文、分类理由与来源供人工筛选；这里的帖子均未取得美国位置、宠物照片或联系资格。</p>
           <form action={runRecallLeadSearch} className="mt-4 space-y-4">
-            <SelectField label="本次最多搜索页数" name="maxPages" value="2" options={[["1", "1 页"], ["2", "2 页"], ["8", "8 页（上限）"]]} />
+            <SelectField label="本次最多搜索页数" name="maxPages" value="2" options={[["1", "1 页"], ["2", "2 页"], ["3", "3 页（含明确买家组）"], ["8", "8 页（上限）"]]} />
             <p className="text-xs text-muted">最近 3 天，按有界宽查询逐级回退；余额低于 3000 credits 或本轮观察支出达到 2500 credits 即停止。普通 dog 控制页默认关闭。每页原始响应先在本机归档，结果只写原始待筛表，不进入严格候选或发送队列。</p>
             <div className="flex flex-wrap gap-3">
               <button className="focus-ring rounded-lg bg-accent px-4 py-3 font-bold text-accent-ink" type="submit">启动宽召回待筛</button>
@@ -201,8 +201,8 @@ export default async function XLeadSearchPage({
 
 function rawReviewHref(metrics: Record<string, unknown> | null) {
   const archiveId = typeof metrics?.archive_id === "string" ? metrics.archive_id : "";
-  if (!hasRawReviewArchive(metrics)) return "/admin/x-leads?mode=raw_review";
-  return `/admin/x-leads?mode=raw_review&field=archive&query=${encodeURIComponent(`${archiveId}.json`)}`;
+  if (!hasRawReviewArchive(metrics)) return "/admin/x-leads?mode=raw_review&tier=all";
+  return `/admin/x-leads?mode=raw_review&tier=all&field=archive&query=${encodeURIComponent(`${archiveId}.json`)}`;
 }
 
 function hasRawReviewArchive(metrics: Record<string, unknown> | null) {
@@ -214,7 +214,12 @@ function formatDiscoveryMetrics(metrics: Record<string, unknown> | null, recall 
     const rawRows = metrics ? metricNumber(metrics, "raw_review_rows") : null;
     const newPosts = metrics ? metricNumber(metrics, "shopping_query_new_posts_vs_baseline") : null;
     const pages = metrics ? metricNumber(metrics, "search_pages") : null;
-    return [`原始待筛 ${rawRows ?? "—"}`, `新帖 ${newPosts ?? "—"}`, `搜索 ${pages ?? "—"} 页`, "严格资格 0"].join(" · ");
+    const tiers = metrics?.shopping_text_tiers && typeof metrics.shopping_text_tiers === "object"
+      ? metrics.shopping_text_tiers as Record<string, unknown> : null;
+    const potential = tiers && typeof tiers.exploratory === "number" ? tiers.exploratory : null;
+    const explicit = tiers && typeof tiers.explicit_request === "number" ? tiers.explicit_request : null;
+    return [`原始待筛 ${rawRows ?? "—"}`, `新帖 ${newPosts ?? "—"}`, `潜在 ${potential ?? "—"}`,
+      `明确 ${explicit ?? "—"}`, `搜索 ${pages ?? "—"} 页`, "严格资格 0"].join(" · ");
   }
   if (!metrics || typeof metrics.provider !== "string") return "—";
   const parts = [metrics.provider];

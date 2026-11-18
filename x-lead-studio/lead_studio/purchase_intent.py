@@ -6,7 +6,7 @@ from typing import Any
 
 DEMAND_SEGMENT_KEYS = ("demand_custom", "demand_recommendation", "demand_gift", "demand_decor", "demand_reply", "demand_discussion")
 DEMAND_SCENES = ("custom", "gift", "decor")
-VERSION = "pet-demand-v8-shopping"
+VERSION = "pet-demand-v9-consumer"
 PRODUCT = r"\b(?:pillow(?:case|\s+cover)?s?|cushions?|portraits?|prints?|wall\s+art|keepsakes?|blankets?|mugs?|ornaments?|canvases|framed\s+(?:art|prints?|photos?)|tote\s+bags?|shirts?|sweatshirts?)\b"
 PILLOW = r"\b(?:pillow(?:case|\s+cover)?s?|cushions?)\b"
 PET = r"\b(?:dog|cat|puppy|kitten|pet)s?\b"
@@ -31,10 +31,13 @@ WISH = r"\b(?:i\s+(?:want|wish|would\s+love)|would\s+look\s+(?:great|good)|think
 EXCLUSIONS = {
     "sensitive_context": r"\b(?:passed\s+away|died|rainbow\s+bridge|cancer|tumou?r|surgery|gofundme|fundrais\w*|missing\s+(?:dog|cat)|lost\s+my\s+(?:dog|cat))\b",
     "seller_or_giveaway": r"\b(?:shop\s+now|for\s+sale|use\s+(?:my\s+)?code|commissions?\s+open|giveaway|affiliate|dm\s+(?:me\s+)?to\s+order|my\s+(?:#\w+\s+)?shop|our\s+(?:shop|store|guide|products?|collection)|we\s+(?:make|sell)|shop\s+(?:at|our)|order\s+from\s+our|buy\s+now|you\s+can\s+customiz[es]|customiz[es]\s+with\s+your)\b",
-    "already_purchased": r"\b(?:already\s+(?:bought|ordered)|just\s+(?:bought|ordered|received)|i\s+(?:bought|ordered)|arrived\s+today)\b",
+    "already_purchased": r"\b(?:already\s+(?:bought|ordered)|just\s+(?:bought|ordered|received)|i\s+(?:bought|ordered)|arrived\s+today|(?:gave|gifted|got)\s+me\s+(?:this|a|the)|i\s+(?:made|sewed|embroidered|printed|painted|crafted|created)\s+.{0,65}\b(?:pillow|cushion|portrait|gift|present))\b",
     "urgent_delivery": r"\b(?:tomorrow|tonight|this\s+weekend|next\s+week|overnight|urgent|asap|by\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|in\s+(?:[1-9]|1[0-4])\s+days?)\b",
     "negative_or_hypothetical": r"\b(?:don'?t\s+(?:want|need)|do\s+not\s+(?:want|need)|not\s+(?:looking|interested)|can'?t\s+afford|cannot\s+afford|if\s+i|one\s+day|someday|joking|just\s+kidding)\b",
 }
+CONSUMER_PLAN = r"\b(?:i(?:'m|\s+am)\s+(?:choosing|picking|selecting|planning|redecorating|decorating|deciding)|i\s+(?:plan\s+to|want\s+to\s+display)|we(?:'re|\s+are)\s+(?:choosing|picking|planning|redecorating|decorating|deciding)|thinking\s+(?:of|about)\s+(?:getting|buying|ordering)|planning\s+to\s+(?:get|buy|add)|shopping\s+for)\b"
+SCENARIO = r"\b(?:birthday|christmas|holiday|anniversary|new\s+(?:home|apartment)|living\s+room|bedroom|home|redecorating|decorating|personalized|personalised|custom|photo|picture)\b"
+SELLER_BIO = r"\b(?:commissions?\s+open|shop\s+(?:our|my)|order\s+(?:from|at)\s+(?:our|my)|custom\s+pet\s+(?:portrait|pillow|gift)\s+(?:shop|store|artist)|we\s+(?:make|sell)\s+(?:custom|personalized|personalised)\s+(?:pet|dog|cat)|(?:pet|dog|cat)\s+(?:portrait|pillow|gift)\s+(?:shop|store))\b"
 
 
 def _sitter_gift_consultation(context: str) -> bool:
@@ -53,13 +56,15 @@ def _sitter_gift_consultation(context: str) -> bool:
                 or re.search(rf"\b(?:get|buy|give)\s+{sitter}\b.{{0,70}}\b(?:gift|present)\b", context, re.I))
 
 
-def assess_purchase_intent(text: str) -> dict[str, Any]:
+def assess_purchase_intent(text: str, author_bio: str = "") -> dict[str, Any]:
     text = text.replace("’", "'")
     result: dict[str, Any] = {
         "version": VERSION, "tier": "excluded", "score": 0,
         "scene": None, "audience": None, "product_fit": None,
         "evidence": [], "request_evidence": None, "product_evidence": None,
         "recipient_evidence": None, "exclusion_reasons": [],
+        "consumer_evidence": None, "scenario_evidence": None,
+        "media_eligibility": "not_assessed",
         "human_review_required": True, "contact_permission": False,
     }
     # Sensitive situations and unambiguous selling language apply to the post.
@@ -71,6 +76,11 @@ def assess_purchase_intent(text: str) -> dict[str, Any]:
             result["exclusion_reasons"].append(reason)
             result["evidence"].append(match.group(0))
     if result["exclusion_reasons"]:
+        return result
+    bio_seller = re.search(SELLER_BIO, author_bio, re.I) or re.search(EXCLUSIONS["seller_or_giveaway"], author_bio, re.I)
+    if bio_seller:
+        result["exclusion_reasons"] = ["seller_profile"]
+        result["evidence"] = [bio_seller.group(0)]
         return result
     if re.search(DIGITAL_ONLY, text, re.I):
         result["exclusion_reasons"] = ["digital_only"]
@@ -115,6 +125,11 @@ def assess_purchase_intent(text: str) -> dict[str, Any]:
                                and (not re.search(r"\bportraits?\b", product_match.group(0), re.I)
                                     or re.search(PHYSICAL_CONTEXT, context, re.I)))
         gift_context = bool(re.search(GIFT, context, re.I) or re.search(GIFT_REQUEST, context, re.I))
+        if (gift_context and re.search(r"\b(?:gift|present)\s+(?:for|to)\s+(?:my|our|the)\s+"
+                                       r"(?:dog|cat|pet|puppy|kitten)\b(?!\s+sitter)", context, re.I)
+                and not re.search(HUMAN_RECIPIENT + "|" + SITTER_RECIPIENT, context, re.I)):
+            result["exclusion_reasons"].append("gift_for_pet")
+            continue
         # A general gift for a dog could mean food or toys. Require a photo /
         # personalized context; birthday/adoption alone is not purchase intent.
         # Remove only negated supply items; "no toys, but food" still asks for food.
@@ -133,7 +148,18 @@ def assess_purchase_intent(text: str) -> dict[str, Any]:
                             and re.search(PET_LOVER, context, re.I)
                             and re.search(r"\b(?:i|my|we|our)\b", context, re.I)
                             and (re.search(GIFT_REQUEST, context, re.I) or re.search(REQUEST, context, re.I)))))
-        if not product_context and not relevant_gift and not gift_exploration:
+        plan = re.search(CONSUMER_PLAN, context, re.I)
+        scenario = re.search(SCENARIO, context, re.I)
+        recipient = re.search(SITTER_RECIPIENT + "|" + HUMAN_RECIPIENT, context, re.I)
+        potential_gift = bool(gift_context and plan and recipient and
+                              re.search(PET_LOVER + "|" + OWN_CAT_DOG, context, re.I)
+                              and not unrelated_positive)
+        potential_decor = bool(plan and re.search(OWN_CAT_DOG, context, re.I) and
+                               (product_context or re.search(r"\b(?:photo|picture)\b", context, re.I)) and
+                               re.search(DECOR + "|" + CUSTOM_CONTEXT + r"|\bdisplay\b", context, re.I))
+        potential_choice = bool(plan and product_context and recipient and
+                                re.search(r"\b(?:birthday|christmas|anniversary|gift|present)\b", context, re.I))
+        if not product_context and not relevant_gift and not gift_exploration and not potential_gift and not potential_decor:
             continue
         if re.search(DIGITAL_ONLY, context, re.I):
             result["exclusion_reasons"].append("digital_only")
@@ -152,18 +178,25 @@ def assess_purchase_intent(text: str) -> dict[str, Any]:
         tier, score = ("explicit_request", 80) if request and not gift_exploration else ("excluded", 0)
         if gift_exploration and request:
             tier, score = "exploratory", 45
+        if isinstance(request, re.Match) and re.fullmatch(r"(?:thinking\s+(?:of|about)\s+(?:buying|ordering))", request.group(0), re.I):
+            tier, score = "exploratory", 45
+            request_evidence = None
+        elif tier == "excluded" and buyer_voice and (potential_gift or potential_decor or potential_choice):
+            tier, score = "exploratory", 45
         product_fit = "pillow" if re.search(PILLOW, context, re.I) else "adjacent"
         if tier == "explicit_request" and product_fit == "adjacent":
             score = 60
         if score > result["score"]:
             scene = "gift" if gift_context else "decor" if re.search(DECOR, context, re.I) else "custom"
             result.update(tier=tier, score=score, scene=scene,
-                          audience="gift_exploration" if gift_exploration else "direct_demand",
+                          audience="potential_consumer" if tier == "exploratory" and not request else
+                                   "gift_exploration" if gift_exploration else "direct_demand",
                           product_fit=product_fit,
                           evidence=[context], request_evidence=request_evidence,
                           product_evidence=product_match.group(0) if product_context and product_match else None,
-                          recipient_evidence=(recipient.group(0) if (recipient := re.search(
-                              SITTER_RECIPIENT + "|" + HUMAN_RECIPIENT, context, re.I)) else None),
+                          recipient_evidence=recipient.group(0) if recipient else None,
+                          consumer_evidence=plan.group(0) if plan else request_evidence,
+                          scenario_evidence=scenario.group(0) if scenario else None,
                           exclusion_reasons=[])
     if not result["score"] and not result["exclusion_reasons"]:
         result["exclusion_reasons"] = ["wish_only" if re.search(WISH, text, re.I)

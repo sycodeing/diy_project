@@ -5,7 +5,7 @@ import json
 import httpx
 
 from lead_studio.config import Settings
-from probe_purchase_recall import (RecallProbeError, _truncate_utf16, extract_post_photo_urls,
+from probe_purchase_recall import (QUERY_TIERS, RecallProbeError, _truncate_utf16, extract_post_photo_urls,
                                    extract_raw_reviews, historical_ids, run_recall_probe)
 
 
@@ -65,7 +65,34 @@ def test_recall_falls_back_after_empty_or_stale_pages_and_preserves_raw(tmp_path
     archive = json.loads((tmp_path / f'{summary["archive_id"]}.json').read_text(encoding="utf-8"))
     assert archive["queries"][1]["counts"]["out_of_window_or_invalid"] == 1
     assert archive["queries"][1]["pages"][0]["response"]["tweets"][0]["id"] == "old"
-    assert archive["queries"][0]["name"] == "shopping_pet_product"  # control is opt-in
+    assert archive["queries"][0]["name"] == "gift_planning"  # control is opt-in
+
+
+def test_scene_pages_precede_buyer_fallback_and_bio_is_used_in_probe_and_replay(tmp_path):
+    seller = _post("123", text="I'm choosing a birthday gift for my mom, who loves her cat.")
+    seller["author"]["profile_bio"] = {"description": "We sell personalized gifts. Shop our collection"}
+    names = []
+
+    def handler(request):
+        if request.url.path.endswith("/oapi/my/info"):
+            return httpx.Response(200, json={"total_bonus_credits": 10000})
+        names.append(request.url.params["query"])
+        return httpx.Response(200, json={"tweets": [seller] if len(names) == 1 else [],
+                                         "has_next_page": False})
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await run_recall_probe(client, Settings(twitterapi_api_key="test"),
+                                          archive_dir=tmp_path, max_pages=3,
+                                          target_new_posts=1, now=NOW)
+
+    summary = asyncio.run(run())
+    archive = json.loads((tmp_path / f'{summary["archive_id"]}.json').read_text(encoding="utf-8"))
+    assert [entry["name"] for entry in archive["queries"]] == [name for name, _ in QUERY_TIERS[:3]]
+    assert archive["queries"][0]["decisions"][0]["intent"]["exclusion_reasons"] == ["seller_profile"]
+    rows = extract_raw_reviews([tmp_path / f'{summary["archive_id"]}.json'])
+    assert rows[0]["classifierTier"] == "excluded"
+    assert rows[0]["exclusionReasons"] == ["seller_profile"]
 
 
 def test_invalid_payload_stops_without_a_retry(tmp_path):

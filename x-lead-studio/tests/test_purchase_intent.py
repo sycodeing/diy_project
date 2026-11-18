@@ -13,6 +13,41 @@ from lead_studio import x_lead_worker as worker
 from audit_purchase_intent import audit
 
 
+@pytest.mark.parametrize("text,expected", [
+    ("I'm choosing a birthday gift for my mom, who loves her cat. Something personal for her home.", "exploratory"),
+    ("I'm redecorating my living room and planning to add a cushion with my dog's photo.", "exploratory"),
+    ("Thinking of getting my partner a personalized gift with our cat on it.", "exploratory"),
+    ("I want to display my dog's photo in our new living room.", "exploratory"),
+    ("I'm deciding between a custom cat cushion and a framed photo for my wife's birthday.", "exploratory"),
+    ("I'm choosing a gift for my cat-loving sister's birthday", "exploratory"),
+    ("Any recommendations for a pillow cover with my dog's photo?", "explicit_request"),
+    ("My mom's birthday is coming. She loves her cat.", "excluded"),
+    ("Moved into a new apartment with my cat.", "excluded"),
+    ("Personalized dog pillows, the perfect gift for your mom. Shop our collection.", "excluded"),
+    ("My partner gave me this custom cat pillow for my birthday.", "excluded"),
+    ("I embroidered my cat on a pillow as a gift for my mom.", "excluded"),
+    ("I love this dog pillow!", "excluded"),
+    ("Thinking of buying a custom gift for my cat.", "excluded"),
+])
+def test_v9_current_consumer_scenes_not_generic_pet_events(text, expected):
+    intent = assess_purchase_intent(text)
+    assert intent["tier"] == expected
+    assert intent["version"] == "pet-demand-v9-consumer"
+    if expected == "exploratory":
+        assert intent["request_evidence"] is None or intent["audience"] == "gift_exploration"
+        assert intent["consumer_evidence"]
+        assert intent["contact_permission"] is False
+
+
+def test_v9_seller_bio_excludes_same_text_without_new_profile_call():
+    text = "I'm choosing a birthday gift for my mom, who loves her cat."
+    assert assess_purchase_intent(text)["tier"] == "exploratory"
+    seller = assess_purchase_intent(text, author_bio="We sell personalized gifts. Shop our collection")
+    assert seller["tier"] == "excluded"
+    assert seller["exclusion_reasons"] == ["seller_profile"]
+    assert assess_purchase_intent(text, author_bio="Cat lover and small business owner")["tier"] == "exploratory"
+
+
 @pytest.mark.parametrize("text,tier", [
     ("Where can I order a custom pillow with a photo of my dog?", "explicit_request"),
     ("Anyone recommend a framed portrait of my cat?", "explicit_request"),
@@ -222,8 +257,39 @@ def test_non_pillow_text_demand_stays_in_local_review_without_vision(monkeypatch
     assert submitted[0]["candidates"] == []
     assert submitted[0]["metrics"]["local_review_leads"] == 1
     review = json.loads((tmp_path / "review_leads" / f"{archive_id}.json").read_text(encoding="utf-8"))
-    assert review["records"][0]["disposition"] == "product_fit_review"
+    assert review["records"][0]["disposition"] == "potential_consumer_review_only"
     assert review["records"][0]["intent"]["product_fit"] == "adjacent"
+
+
+def test_potential_consumer_with_photo_and_us_still_never_enters_strict_pool(monkeypatch, tmp_path):
+    potential = make_candidate(text="I'm redecorating my living room and planning to add a cushion with my dog's photo.")
+    intent = json.loads(potential["targeting_json"])["purchase_intent"]
+    assert (intent["tier"], intent["product_fit"]) == ("exploratory", "pillow")
+    submitted = []
+
+    async def collect(*args, **kwargs):
+        return [{}], [potential], {"provider": "twitterapi", "archive_id": "potential-only"}
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("Potential consumers must not invoke photo verification")
+
+    def handler(request):
+        submitted.append(json.loads(request.content))
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr(worker, "TWITTERAPI_ARCHIVE_DIR", tmp_path)
+    monkeypatch.setattr(worker, "collect_twitterapi_search", collect)
+    monkeypatch.setattr(worker, "ensure_pet_image_verifier", forbidden)
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await worker._execute_job(client, {}, Settings(x_lead_provider="twitterapi", diy_site_url="https://test.invalid"),
+                                      "test", {"id": "potential-only", "configuration": {"segments": ["demand_decor"]}})
+
+    asyncio.run(run())
+    assert submitted[0]["candidates"] == []
+    review = json.loads((tmp_path / "review_leads" / "potential-only.json").read_text(encoding="utf-8"))
+    assert review["records"][0]["disposition"] == "potential_consumer_review_only"
 
 
 def test_offline_audit_parses_twitter_dates_and_dedupes_authors(tmp_path):

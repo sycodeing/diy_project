@@ -21,7 +21,7 @@ export async function runRecallLeadSearch(formData: FormData) {
   if (workerError) throw new Error(workerError.message);
   if (!worker || Date.now() - new Date(worker.last_seen_at).getTime() > 120_000
       || !supportsPurchaseRecall(worker.worker_version ?? undefined)) {
-    throw new Error("宽召回需要在线的 1.14.0 或更高版本发现执行器。");
+    throw new Error("消费场景召回需要在线的 1.15.0 或更高版本发现执行器。");
   }
   const { data: active, error: activeError } = await supabase.from("x_lead_search_jobs")
     .select("id").in("status", ["queued", "running"]).limit(1).maybeSingle();

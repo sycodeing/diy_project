@@ -20,6 +20,13 @@ test("first contact uses reviewed demand scene without claiming a preview exists
   assert.match(discussion.text, /another maker, not the seller/i);
   assert.equal(isValidXFirstContactText(gift.text), true);
   assert.equal(isValidXFirstContactText(discussion.text), true);
+  const potentialGift = createXLeadFirstContactDraft({
+    occasion: null, occasionConfidence: null, petType: "cat",
+    targetingData: { purchase_intent: { tier: "exploratory", audience: "potential_consumer", scene: "gift" } },
+  });
+  assert.equal(potentialGift.variantKey, "first_contact_gift_v3");
+  assert.match(potentialGift.text, /see an example/);
+  assert.doesNotMatch(potentialGift.text, /your photo|your design|I made|preview/i);
 });
 
 test("first-contact copy is truthful, text-only, and has a single interest CTA", () => {

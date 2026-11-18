@@ -11,7 +11,7 @@ import { resolveXOutreachGroup, xOutreachCampaign } from "@/lib/x-outreach-group
 type QueueKind = "manual" | "automatic";
 export const X_LEAD_MARKETING_CHANNEL = "public_reply" as const;
 
-async function hasXFirstOrderOffer() {
+export async function hasXFirstOrderOffer() {
   const supabase = getSupabaseServiceClient();
   if (!supabase) return false;
   const promotion = await getActiveFirstOrderPromotion();

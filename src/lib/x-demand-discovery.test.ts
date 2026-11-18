@@ -5,7 +5,7 @@ import { demandSearchConfigurationSchema, getXLeadPhotoSource, getXLeadPurchaseI
 // @ts-expect-error Node test runner uses explicit TypeScript extensions.
 import { buildXLeadDiscoveryUpsertRow, hasVerifiedDemandPhotoSource, type XLeadDiscoveryCandidate } from "./x-lead-discovery-upsert.ts";
 // @ts-expect-error Node test runner uses explicit TypeScript extensions.
-import { supportsDemandPhotoJoin, supportsDiscussionSearch } from "./x-lead-worker-version.ts";
+import { supportsDemandPhotoJoin, supportsDiscussionSearch, supportsPurchaseRecall } from "./x-lead-worker-version.ts";
 
 test("old workers cannot claim new demand-photo jobs", () => {
   assert.equal(supportsDemandPhotoJoin("1.8.0"), false);
@@ -18,6 +18,12 @@ test("discussion search requires the worker release that can fetch parent replie
   assert.equal(supportsDiscussionSearch("1.11.2"), false);
   assert.equal(supportsDiscussionSearch("1.12.0"), true);
   assert.equal(supportsDiscussionSearch(undefined), false);
+});
+
+test("consumer-scene recall requires the v9 worker", () => {
+  assert.equal(supportsPurchaseRecall("1.14.1"), false);
+  assert.equal(supportsPurchaseRecall("1.15.0"), true);
+  assert.equal(supportsPurchaseRecall(undefined), false);
 });
 
 test("demand configuration is bounded and cannot weaken US gates or mix legacy slices", () => {

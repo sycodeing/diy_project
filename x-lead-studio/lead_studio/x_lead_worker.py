@@ -38,7 +38,7 @@ async def run_x_lead_worker(settings: Settings) -> None:
                     json={
                         "workerId": worker_id,
                         "cookieConfigured": _provider_is_configured(settings, provider),
-                        "version": "1.14.1",
+                        "version": "1.15.0",
                     },
                 )
                 if response.status_code == 204:
@@ -142,6 +142,8 @@ async def _execute_job(
                             local_review[post_id]["disposition"] = "location_pending"
                         if intent.get("product_fit") != "pillow":
                             local_review[post_id]["disposition"] = "product_fit_review"
+                        if intent.get("tier") == "exploratory":
+                            local_review[post_id]["disposition"] = "potential_consumer_review_only"
                 metrics["intent_rejected"] = metrics.get("intent_prefilter_rejected", 0) + sum(
                     json.loads(c.get("targeting_json") or "{}").get("purchase_intent", {}).get("tier") == "excluded"
                     for c in found_for_image_review
@@ -156,6 +158,7 @@ async def _execute_job(
                     if c.get("status") in {"new", "targeting_review"}
                     and int(c.get("us_confidence", 0)) >= 70
                     and json.loads(c.get("targeting_json") or "{}").get("purchase_intent", {}).get("scene") in requested_scenes
+                    and json.loads(c.get("targeting_json") or "{}").get("purchase_intent", {}).get("tier") == "explicit_request"
                     and json.loads(c.get("targeting_json") or "{}").get("purchase_intent", {}).get("product_fit") == "pillow"
                     and c.get("us_evidence") != "profile_location_state"]
                 selected_ids = {str(c.get("post_id")) for c in found_for_image_review}

@@ -25,14 +25,24 @@ CREDITS_PATH = "/oapi/my/info"
 # Explicit probe-only queries. The optional control validates source freshness
 # and is excluded from shopping counts. Fallbacks remove constraints.
 QUERY_TIERS = (
-    ("shopping_pet_product", "(dog OR cat) (gift OR pillow OR cushion OR portrait) lang:en"),
+    ("gift_planning", '(dog OR cat) ("gift for" OR "birthday gift" OR "Christmas gift") lang:en'),
+    ("home_personalization", '("my dog" OR "my cat") (decorating OR redecorating OR "new home" OR "new apartment" OR "living room") lang:en'),
     ("buyer_recommend_pillow", "recommend pillow lang:en"),
+    ("shopping_pet_product", "(dog OR cat) (gift OR pillow OR cushion OR portrait) lang:en"),
     ("buyer_where_pillow", '"where can I buy" pillow lang:en'),
     ("shopping_pet_broad", "(dog OR cat OR pet) (gift OR pillow OR cushion OR portrait OR photo) lang:en"),
     ("shopping_product_only", "(gift OR pillow OR cushion OR portrait) lang:en"),
 )
 PET_BODY = re.compile(r"\b(?:dog|cat|pet|puppy|kitten)s?\b", re.I)
 PRODUCT_BODY = re.compile(r"\b(?:gift|present|pillow|cushion|portrait|print|blanket|mug|custom)s?\b", re.I)
+
+
+def _author_bio(post: dict[str, Any]) -> str:
+    author = post.get("author") if isinstance(post.get("author"), dict) else {}
+    profile = author.get("profile_bio") if isinstance(author.get("profile_bio"), dict) else {}
+    parts = [value.strip() for value in (author.get("description"), profile.get("description"))
+             if isinstance(value, str) and value.strip()]
+    return "\n".join(dict.fromkeys(parts))
 
 
 def _truncate_utf16(value: str, limit: int) -> str:
@@ -210,14 +220,17 @@ def extract_raw_reviews(archive_paths: list[Path]) -> list[dict[str, Any]]:
                             posted_at = None
                     except ValueError:
                         posted_at = None
-                    intent = assess_purchase_intent(text)
+                    intent = assess_purchase_intent(text, author_bio=_author_bio(post))
+                    photo_urls = extract_post_photo_urls(post)
+                    intent["media_eligibility"] = ("original_post_photo_unverified" if photo_urls
+                                                   else "no_original_post_photo")
                     parent_id = str(post.get("inReplyToId") or "") or None
                     is_reply = bool(parent_id or post.get("isReply"))
                     rows[post_id] = {
                         "postId": post_id, "authorId": _author_id(post),
                         "handle": handle, "postUrl": f"https://x.com/{handle}/status/{post_id}",
                         "postText": text, "postedAt": posted_at,
-                        "photoUrls": extract_post_photo_urls(post),
+                        "photoUrls": photo_urls,
                         "sourceArchive": path.name, "sourceStage": stage,
                         "classifierVersion": intent["version"],
                         "classifierTier": intent["tier"],
@@ -327,8 +340,9 @@ async def run_recall_probe(
                 break
             # A validated broad page does not end the run before testing one
             # independent buyer-language hypothesis.
-            if len(shopping_new_posts) >= target_new_posts and tier_name not in {
-                    "control", "shopping_pet_product", "buyer_recommend_pillow"}:
+            required_first_stages = min(max_pages - int(diagnose_control), 3)
+            if (len(shopping_new_posts) >= target_new_posts and
+                    sum(1 for item in document["queries"] if item["role"] == "shopping") >= required_first_stages):
                 break
             query = f"{expression} since_time:{since} until_time:{until}"
             entry: dict[str, Any] = {"name": tier_name,
@@ -418,7 +432,7 @@ async def run_recall_probe(
                     if author_id and author_id not in baseline_authors:
                         shopping_new_authors.add(author_id)
                     shopping_dates.append(posted_at)
-                    intent = assess_purchase_intent(raw_text)
+                    intent = assess_purchase_intent(raw_text, author_bio=_author_bio(post))
                     text_tiers[intent["tier"]] += 1
                     rejection_reasons.update(intent["exclusion_reasons"])
                     entry["decisions"].append({
@@ -434,7 +448,8 @@ async def run_recall_probe(
                 document["credits_after_page"] = current
                 _save(archive_path, document)
                 if (tier_name == "control" or tier_name.startswith("buyer_")
-                        or len(shopping_new_posts) >= target_new_posts):
+                        or len(shopping_new_posts) >= target_new_posts
+                        or tier_name in {"gift_planning", "home_personalization"}):
                     break
                 if page_valid_new == 0:
                     break

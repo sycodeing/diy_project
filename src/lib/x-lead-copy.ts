@@ -31,7 +31,7 @@ export function createXLeadFirstContactDraft(context: XLeadDraftContext) {
   const intent = context.targetingData?.purchase_intent;
   if (intent && typeof intent === "object" && !Array.isArray(intent)) {
     const signal = intent as Record<string, unknown>;
-    if (signal.tier === "exploratory" && signal.audience === "gift_exploration") {
+    if (signal.tier === "exploratory" && signal.scene === "gift") {
       return {
         variantKey: "first_contact_gift_v3" as const,
         contentMode: "first_contact_text" as const,
@@ -50,6 +50,13 @@ export function createXLeadFirstContactDraft(context: XLeadDraftContext) {
         variantKey: "first_contact_decor_v3" as const,
         contentMode: "first_contact_text" as const,
         text: `If you'd like to display a ${pet} photo at home, I make custom photo pillow covers.${offer} Would you like to see an example?`,
+      };
+    }
+    if (signal.tier === "exploratory" && signal.scene === "custom") {
+      return {
+        variantKey: "first_contact_decor_v3" as const,
+        contentMode: "first_contact_text" as const,
+        text: `If you're considering something personal with a ${pet} photo, I make custom photo pillow covers.${offer} Would you like to see an example?`,
       };
     }
   }
