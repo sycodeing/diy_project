@@ -288,6 +288,7 @@ def test_explicit_owner_reply_at_position_eighteen_gets_parent_lookup_first(tmp_
 def test_valid_demand_with_ambiguous_pet_type_survives_until_photo_check(tmp_path: Path) -> None:
     item = _tweet()
     item.update(id="9200", text="Where can I order a custom pet photo pillow for my dog and cat?")
+    item["createdAt"] = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path.endswith("advanced_search")
@@ -308,6 +309,30 @@ def test_valid_demand_with_ambiguous_pet_type_survives_until_photo_check(tmp_pat
     assert candidates[0]["status"] == "targeting_review"
     assert metrics["pet_type_pending"] == 1
     assert metrics["query_slices"][0]["pet_type_pending"] == 1
+
+
+def test_demand_collection_rejects_stale_provider_posts_by_tweet_timestamp(tmp_path: Path) -> None:
+    recent = _tweet()
+    recent.update(id="current", text="Where can I order a custom pillow with my dog's photo?",
+                  createdAt=(datetime.now(timezone.utc) - timedelta(hours=1)).isoformat())
+    stale = {**recent, "id": "stale", "createdAt": "Mon Oct 26 18:00:00 +0000 2026"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"tweets": [recent, stale], "has_next_page": False})
+
+    async def run():
+        settings = Settings(twitterapi_api_key="test", twitterapi_geo_query_enabled=False,
+                            twitterapi_about_enrichment_enabled=False)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await collect_twitterapi_search(client, settings,
+                {"segments": ["demand_custom"], "resultLimit": 2, "lookbackDays": 3,
+                 "usRequired": True, "usMinConfidence": 70},
+                state_path=tmp_path / "state.json")
+
+    _, candidates, _ = asyncio.run(run())
+    assert [candidate["post_id"] for candidate in candidates] == ["current"]
+    archive = json.loads(next((tmp_path / "runs").glob("*.json")).read_text(encoding="utf-8"))
+    assert {entry["post_id"]: entry["reason"] for entry in archive["queries"][0]["decisions"]}["stale"] == "post_outside_query_time_window"
 
 
 def test_collection_paginates_deduplicates_and_persists_watermarks(tmp_path: Path) -> None:
@@ -664,8 +689,9 @@ def _tweet() -> dict[str, object]:
         },
     }
 def test_parent_first_discussion_archives_replies_and_keeps_direct_buyers_only(tmp_path: Path) -> None:
+    recent = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     parent = {"id": "9000", "text": "I make custom pet photo pillow covers from your dog or cat picture.",
-              "author": {"userName": "maker"}, "replyCount": 4}
+              "author": {"userName": "maker"}, "replyCount": 4, "createdAt": recent}
     replies = [
         {"id": "9001", "text": "How much?", "isReply": True, "inReplyToId": "9000",
          "author": {"id": "buyer-1", "userName": "buyer", "location": "Austin, TX"}},
@@ -676,6 +702,8 @@ def test_parent_first_discussion_archives_replies_and_keeps_direct_buyers_only(t
         {"id": "9004", "text": "How much?", "isReply": True, "inReplyToId": "9000",
          "author": {"id": "maker", "userName": "maker", "location": "Austin, TX"}},
     ]
+    for reply in replies:
+        reply["createdAt"] = recent
     requests = []
 
     def handler(request):

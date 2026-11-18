@@ -79,6 +79,12 @@ async def _probe(segment: str, revision: str, lookback_days: int, result_limit: 
         "intent_prefilter_rejected": metrics["intent_prefilter_rejected"],
         "intent_rejection_reasons": metrics["intent_rejection_reasons"],
         "candidate_posts": metrics["candidate_posts"],
+        "text_review_posts": len({str(c.get("post_id")) for c in candidates
+                                   if c.get("status") in {"new", "targeting_review", "location_review"}}),
+        "text_review_authors": len({str(c.get("author_hash")) for c in candidates
+                                     if c.get("status") in {"new", "targeting_review", "location_review"}}),
+        "strict_qualified": 0,
+        "scope": "query_only_text_review_no_photo_verification_no_cloud_import",
         "pet_type_pending": metrics["pet_type_pending"],
         "reply_parent_lookups": metrics["reply_parent_lookups"],
         "reply_parent_resolved": metrics["reply_parent_resolved"],
@@ -94,7 +100,7 @@ async def _probe(segment: str, revision: str, lookback_days: int, result_limit: 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute-paid", action="store_true", help="Actually call the paid search API")
-    parser.add_argument("--segment", choices=["demand_discussion", "demand_gift"], help="Probe one query segment")
+    parser.add_argument("--segment", choices=["demand_custom", "demand_gift", "demand_reply", "demand_discussion"], help="Probe one query segment")
     parser.add_argument("--revision", default="", help="Probe only this query revision")
     parser.add_argument("--lookback-days", type=int, default=14)
     parser.add_argument("--result-limit", type=int, default=5)

@@ -6,13 +6,17 @@ from typing import Any
 
 DEMAND_SEGMENT_KEYS = ("demand_custom", "demand_recommendation", "demand_gift", "demand_decor", "demand_reply", "demand_discussion")
 DEMAND_SCENES = ("custom", "gift", "decor")
-VERSION = "pet-demand-v7"
-PRODUCT = r"\b(?:pillow(?:case|\s+cover)?s?|cushions?|portraits?|prints?|wall\s+art|keepsakes?)\b"
+VERSION = "pet-demand-v8-shopping"
+PRODUCT = r"\b(?:pillow(?:case|\s+cover)?s?|cushions?|portraits?|prints?|wall\s+art|keepsakes?|blankets?|mugs?|ornaments?|canvases|framed\s+(?:art|prints?|photos?)|tote\s+bags?|shirts?|sweatshirts?)\b"
 PILLOW = r"\b(?:pillow(?:case|\s+cover)?s?|cushions?)\b"
 PET = r"\b(?:dog|cat|puppy|kitten|pet)s?\b"
 CUSTOM_CONTEXT = r"\b(?:portraits?|photos?|pictures?|custom|personalized|personalised)\b"
 PET_PLACEMENT = r"\b(?:of|with)\s+(?:(?:my|our|their)\s+)?(?:dog|cat|puppy|kitten|pet)\b|\b(?:my|our|their)\s+(?:dog|cat|puppy|kitten|pet)\s+on\s+it\b"
 REQUEST = r"\b(?:where\s+can\s+i|where\s+to\s+(?:buy|order)|(?:does|can)\s+any(?:one|body)\s+know|(?:can|could)\s+someone\s+recommend|any(?:one|body)\s+(?:know|recommend)|looking\s+for|i(?:'m|\s+am)\s+looking|recommendations?\s+for|i\s+(?:want|need|would\s+like)\s+to\s+(?:buy|order|commission)|i\s+(?:want|need)\s+(?:a|an|the)|want\s+to\s+get)\b"
+SHOPPING_REQUEST = r"\b(?:where\s+(?:can\s+i|to)\s+(?:buy|get|order|find)|(?:can|could|does)\s+any(?:one|body)\s+(?:know|recommend)|(?:can|could)\s+someone\s+recommend|any(?:one|body)\s+(?:know|recommend)|(?:any|some)\s+(?:recommendations?|suggestions?)|recommendations?\s+for|looking\s+for|i(?:'m|\s+am)\s+(?:looking|shopping)\s+for|trying\s+to\s+find|who\s+(?:makes|sells)|how\s+much|can\s+i\s+(?:buy|order)|i\s+want\s+to\s+(?:buy|order|commission)|i\s+want\s+(?:a|an|the)\b|thinking\s+(?:of|about)\s+(?:buying|ordering))\b"
+PHYSICAL_CONTEXT = r"\b(?:physical|printed|framed|canvas|paper|shipped|delivered)\b"
+DIGITAL_ONLY = r"\b(?:digital\s+(?:portrait|art|print|drawing)|download(?:able)?|png\s+file|jpeg\s+file|jpg\s+file|profile\s+(?:pic|picture)|avatar|file\s+only|digital\s+only)\b"
+OTHER_PRODUCT_ONLY = r"(?:\bonly\s+(?:mugs?|blankets?|ornaments?|portraits?|prints?|canvases|framed\s+(?:art|prints?|photos?))\b|\b(?:mugs?|blankets?|ornaments?|portraits?|prints?|canvases|framed\s+(?:art|prints?|photos?))\s+only\b)"
 GIFT = r"\b(?:gifts?|presents?)\b"
 DECOR = r"\b(?:decor(?:ating)?|sofa|couch|living\s+room|bedroom|wall\s+art)\b"
 GIFT_REQUEST = r"\b(?:gift\s+(?:ideas?|recommendations?)|what\s+(?:can|should)\s+i\s+(?:buy|get)|need\s+(?:a\s+)?(?:gift|present))\b"
@@ -20,16 +24,16 @@ HUMAN_RECIPIENT = r"\b(?:wife|husband|partner|girlfriend|boyfriend|mom|mother|da
 SITTER_RECIPIENT = r"\b(?:my|our|the)\s+(?:cat|dog|pet)\s+sitter\b"
 OWN_CAT_DOG = r"\b(?:my|our)\s+(?:cat|dog|kitten|puppy)s?\b"
 SITTER_GIFT_ADVICE = r"\b(?:any\s+(?:gift\s+)?ideas?|(?:need|want|seeking)\s+(?:gift\s+)?(?:ideas?|recommendations?)|(?:can|could)\s+(?:anyone|anybody|someone)\s+recommend|looking\s+for|what\s+(?:should|can)\s+i\s+(?:get|buy))\b"
-PET_LOVER = r"\b(?:dog|cat|pet)[-\s]+lov(?:er|ing)s?\b|\b(?:loves?|adores?)\s+(?:(?:my|our|her|his|their)\s+)?(?:dog|cat|pet)s?\b|\b(?:dog|cat|pet)\s+(?:mom|dad|owner|parent|lover)s?\b"
+PET_LOVER = r"\b(?:dog|cat|pet)[-\s]+lov(?:er|ing)s?\b|\b(?:loves?|adores?)\s+(?:(?:my|our|her|his|their)\s+)?(?:\d+|one|two|three)?\s*(?:dog|cat|pet)s?\b|\b(?:dog|cat|pet)\s+(?:mom|dad|owner|parent|lover)s?\b"
 UNRELATED_GIFT_ITEM = r"(?:toys?|treats?|food|leash(?:es)?|collars?|beds?)"
 UNRELATED_GIFT = rf"\b{UNRELATED_GIFT_ITEM}\b"
 WISH = r"\b(?:i\s+(?:want|wish|would\s+love)|would\s+look\s+(?:great|good)|thinking\s+(?:of|about)|decorating)\b"
 EXCLUSIONS = {
     "sensitive_context": r"\b(?:passed\s+away|died|rainbow\s+bridge|cancer|tumou?r|surgery|gofundme|fundrais\w*|missing\s+(?:dog|cat)|lost\s+my\s+(?:dog|cat))\b",
-    "seller_or_giveaway": r"\b(?:shop\s+now|for\s+sale|use\s+(?:my\s+)?code|commissions?\s+open|giveaway|affiliate|dm\s+(?:me\s+)?to\s+order|my\s+(?:#\w+\s+)?shop|our\s+shop|shop\s+at|buy\s+now|you\s+can\s+customiz[es]|customiz[es]\s+with\s+your)\b",
+    "seller_or_giveaway": r"\b(?:shop\s+now|for\s+sale|use\s+(?:my\s+)?code|commissions?\s+open|giveaway|affiliate|dm\s+(?:me\s+)?to\s+order|my\s+(?:#\w+\s+)?shop|our\s+(?:shop|store|guide|products?|collection)|we\s+(?:make|sell)|shop\s+(?:at|our)|order\s+from\s+our|buy\s+now|you\s+can\s+customiz[es]|customiz[es]\s+with\s+your)\b",
     "already_purchased": r"\b(?:already\s+(?:bought|ordered)|just\s+(?:bought|ordered|received)|i\s+(?:bought|ordered)|arrived\s+today)\b",
     "urgent_delivery": r"\b(?:tomorrow|tonight|this\s+weekend|next\s+week|overnight|urgent|asap|by\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|in\s+(?:[1-9]|1[0-4])\s+days?)\b",
-    "negative_or_hypothetical": r"\b(?:don'?t\s+(?:want|need)|do\s+not\s+(?:want|need)|not\s+(?:looking|interested)|can'?t\s+afford|cannot\s+afford|if\s+i|joking|just\s+kidding)\b",
+    "negative_or_hypothetical": r"\b(?:don'?t\s+(?:want|need)|do\s+not\s+(?:want|need)|not\s+(?:looking|interested)|can'?t\s+afford|cannot\s+afford|if\s+i|one\s+day|someday|joking|just\s+kidding)\b",
 }
 
 
@@ -54,7 +58,8 @@ def assess_purchase_intent(text: str) -> dict[str, Any]:
     result: dict[str, Any] = {
         "version": VERSION, "tier": "excluded", "score": 0,
         "scene": None, "audience": None, "product_fit": None,
-        "evidence": [], "exclusion_reasons": [],
+        "evidence": [], "request_evidence": None, "product_evidence": None,
+        "recipient_evidence": None, "exclusion_reasons": [],
         "human_review_required": True, "contact_permission": False,
     }
     # Sensitive situations and unambiguous selling language apply to the post.
@@ -66,6 +71,12 @@ def assess_purchase_intent(text: str) -> dict[str, Any]:
             result["exclusion_reasons"].append(reason)
             result["evidence"].append(match.group(0))
     if result["exclusion_reasons"]:
+        return result
+    if re.search(DIGITAL_ONLY, text, re.I):
+        result["exclusion_reasons"] = ["digital_only"]
+        return result
+    if re.search(OTHER_PRODUCT_ONLY, text, re.I) and not re.search(PILLOW, text, re.I):
+        result["exclusion_reasons"] = ["product_mismatch"]
         return result
     # Adjacent sentences can describe one request ("custom pillow? My cat on
     # it"), but unrelated paragraphs must not supply missing buyer evidence.
@@ -83,12 +94,26 @@ def assess_purchase_intent(text: str) -> dict[str, Any]:
             related_sitter = (re.search(SITTER_RECIPIENT, sentence, re.I)
                               and re.search(r"\b(?:she|he|they)\b", following, re.I)
                               and re.search(OWN_CAT_DOG, following, re.I))
-            if related_photo or related_gift or related_sitter:
+            related_order_constraint = (re.search(SHOPPING_REQUEST, sentence, re.I)
+                                        and re.search(r"\b(?:it|one)\b", following, re.I)
+                                        and (re.search(EXCLUSIONS["urgent_delivery"], following, re.I)
+                                             or re.search(EXCLUSIONS["already_purchased"], following, re.I)))
+            related_product_choice = (re.search(SHOPPING_REQUEST, sentence, re.I)
+                                      and re.search(CUSTOM_CONTEXT, sentence, re.I)
+                                      and re.search(r"\b(?:compar(?:e|ing)|choos(?:e|ing)|between)\b", following, re.I)
+                                      and re.search(PRODUCT, following, re.I))
+            if related_photo or related_gift or related_sitter or related_order_constraint or related_product_choice:
                 context = f"{sentence}. {following}"
         if len(context) > 350 or not re.search(PET, context, re.I):
             continue
-        product_context = bool(re.search(PRODUCT, context, re.I) and
-                               (re.search(CUSTOM_CONTEXT, context, re.I) or re.search(PET_PLACEMENT, context, re.I)))
+        if re.search(r"\b(?:not|no|instead\s+of)\s+(?:a\s+)?" + PILLOW, context, re.I):
+            result["exclusion_reasons"].append("product_mismatch")
+            continue
+        product_match = re.search(PRODUCT, context, re.I)
+        product_context = bool(product_match and
+                               (re.search(CUSTOM_CONTEXT, context, re.I) or re.search(PET_PLACEMENT, context, re.I))
+                               and (not re.search(r"\bportraits?\b", product_match.group(0), re.I)
+                                    or re.search(PHYSICAL_CONTEXT, context, re.I)))
         gift_context = bool(re.search(GIFT, context, re.I) or re.search(GIFT_REQUEST, context, re.I))
         # A general gift for a dog could mean food or toys. Require a photo /
         # personalized context; birthday/adoption alone is not purchase intent.
@@ -110,20 +135,21 @@ def assess_purchase_intent(text: str) -> dict[str, Any]:
                             and (re.search(GIFT_REQUEST, context, re.I) or re.search(REQUEST, context, re.I)))))
         if not product_context and not relevant_gift and not gift_exploration:
             continue
+        if re.search(DIGITAL_ONLY, context, re.I):
+            result["exclusion_reasons"].append("digital_only")
+            continue
         excluded = next((reason for reason in ("already_purchased", "urgent_delivery", "negative_or_hypothetical")
                          if re.search(EXCLUSIONS[reason], context, re.I)), None)
         if excluded or re.search(r"\bi\s+(?:sell|make|create|offer)\b.{0,80}" + PRODUCT, context, re.I):
             result["exclusion_reasons"].append(excluded or "seller_or_giveaway")
             continue
-        if re.search(r"\b(?:not|no|instead\s+of)\s+(?:a\s+)?" + PILLOW, context, re.I):
-            result["exclusion_reasons"].append("product_mismatch")
-            continue
         buyer_voice = bool(re.search(r"\b(?:i|my|we|our|anyone|anybody)\b", context, re.I))
-        request = re.search(REQUEST, context, re.I) or (sitter_gift and buyer_voice) or (
+        request = re.search(SHOPPING_REQUEST, context, re.I) or (sitter_gift and buyer_voice) or (
             (relevant_gift or gift_exploration) and buyer_voice and re.search(GIFT_REQUEST, context, re.I))
-        tier, score = ("explicit_request", 80) if request and not gift_exploration else (
-            ("exploratory", 50) if re.search(WISH, context, re.I) else ("excluded", 0)
-        )
+        request_evidence = (request.group(0) if isinstance(request, re.Match)
+                            else re.search(SITTER_GIFT_ADVICE, context, re.I).group(0) if sitter_gift and request
+                            else None)
+        tier, score = ("explicit_request", 80) if request and not gift_exploration else ("excluded", 0)
         if gift_exploration and request:
             tier, score = "exploratory", 45
         product_fit = "pillow" if re.search(PILLOW, context, re.I) else "adjacent"
@@ -134,10 +160,14 @@ def assess_purchase_intent(text: str) -> dict[str, Any]:
             result.update(tier=tier, score=score, scene=scene,
                           audience="gift_exploration" if gift_exploration else "direct_demand",
                           product_fit=product_fit,
-                          evidence=[context], exclusion_reasons=[])
-    if not result["score"]:
-        if not result["exclusion_reasons"]:
-            result["exclusion_reasons"] = ["no_current_product_request"]
+                          evidence=[context], request_evidence=request_evidence,
+                          product_evidence=product_match.group(0) if product_context and product_match else None,
+                          recipient_evidence=(recipient.group(0) if (recipient := re.search(
+                              SITTER_RECIPIENT + "|" + HUMAN_RECIPIENT, context, re.I)) else None),
+                          exclusion_reasons=[])
+    if not result["score"] and not result["exclusion_reasons"]:
+        result["exclusion_reasons"] = ["wish_only" if re.search(WISH, text, re.I)
+                                       else "no_current_product_request"]
     return result
 
 
@@ -152,26 +182,40 @@ def assess_reply_with_parent(reply_text: str, parent_text: str, parent_post_id: 
            for reason in ("sensitive_context", "seller_or_giveaway", "already_purchased",
                           "urgent_delivery", "negative_or_hypothetical")):
         return result
-    buyer_request = re.search(
-        r"\b(?:can|could)\s+you\s+make\b|\bhow\s+much\b|\bwhere\s+can\s+i\s+(?:buy|get|order)\b|"
-        r"\bcan\s+i\s+(?:buy|order|get)\b|\bi\s+(?:want|need|would\s+love)\b|\bi'd\s+love\b", reply_text, re.I,
-    )
+    buyer_request = _parent_buyer_request(reply_text)
     reference = re.search(r"\b(?:one|this|it|same)\b", reply_text, re.I)
-    # A direct reply to the verified product post supplies the referent for
-    # short questions such as "How much?".
     short_price_question = re.fullmatch(r"\s*how\s+much(?:\s+(?:is|does)\s+(?:it|this)(?:\s+cost)?)?\s*[?.!]*\s*", reply_text, re.I)
     if not buyer_request or (not reference and not short_price_question):
         return result
     if any(re.search(EXCLUSIONS[reason], parent_text, re.I)
            for reason in ("sensitive_context", "negative_or_hypothetical")):
         return result
-    parent_is_pet_pillow = (re.search(PILLOW, parent_text, re.I)
-                            and re.search(PET, parent_text, re.I)
-                            and (re.search(CUSTOM_CONTEXT, parent_text, re.I)
-                                 or re.search(PET_PLACEMENT, parent_text, re.I)))
-    if not parent_is_pet_pillow:
+    parent_product = re.search(PRODUCT, parent_text, re.I)
+    parent_is_pet_product = (parent_product and re.search(PET, parent_text, re.I)
+                             and (re.search(CUSTOM_CONTEXT, parent_text, re.I)
+                                  or re.search(PET_PLACEMENT, parent_text, re.I))
+                             and (not re.search(r"\bportraits?\b", parent_product.group(0), re.I)
+                                  or re.search(PHYSICAL_CONTEXT, parent_text, re.I))
+                             and not re.search(DIGITAL_ONLY, parent_text, re.I))
+    if not parent_is_pet_product:
         return result
     return {**result, "tier": "explicit_request", "score": 75, "scene": "custom",
-            "audience": "direct_demand", "product_fit": "pillow",
+            "audience": "direct_demand", "product_fit": "pillow" if re.search(PILLOW, parent_product.group(0), re.I) else "adjacent",
             "evidence": [reply_text.strip()[:350]], "exclusion_reasons": [],
+            "request_evidence": buyer_request.group(0), "product_evidence": parent_product.group(0),
+            "recipient_evidence": None,
             "parent_post_id": parent_post_id, "parent_evidence": parent_text.strip()[:350]}
+
+
+def _parent_buyer_request(reply_text: str) -> re.Match[str] | None:
+    return re.search(
+        r"\b(?:can|could)\s+you\s+make\b|\bhow\s+much\b|\bwhere\s+can\s+i\s+(?:buy|get|order)\b|"
+        r"\bcan\s+i\s+(?:buy|order|get)\b|\bi\s+want\s+(?:to\s+(?:buy|order)|(?:one|this|it))\b", reply_text, re.I,
+    )
+
+
+def needs_reply_parent_context(reply_text: str) -> bool:
+    """True only for a buyer's unresolved reference to the parent product."""
+    return bool(_parent_buyer_request(reply_text)
+                and (re.search(r"\b(?:one|this|it|same)\b", reply_text, re.I)
+                     or re.fullmatch(r"\s*how\s+much\s*[?.!]*\s*", reply_text, re.I)))

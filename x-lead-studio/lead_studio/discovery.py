@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .targeting import build_targeting, candidate_status, demand_candidate_status, MIN_OWNERSHIP_CONFIDENCE
-from .purchase_intent import DEMAND_SEGMENT_KEYS, assess_purchase_intent, assess_reply_with_parent
+from .purchase_intent import DEMAND_SEGMENT_KEYS, assess_purchase_intent, assess_reply_with_parent, needs_reply_parent_context
 from .xclient import read
 
 
@@ -76,8 +76,7 @@ def candidate_from_tweet(
                                                str(parent_context["post_id"]))
         if (intent["tier"] == "excluded" and isinstance(source_metadata, dict)
                 and source_metadata.get("is_reply") and source_metadata.get("in_reply_to_id")
-                and re.search(r"\b(?:can\s+you\s+make|where\s+can\s+i\s+get|how\s+much|i\s+want|would\s+love)\b", text_excerpt(tweet), re.I)
-                and re.search(r"\b(?:one|this|it|same)\b", text_excerpt(tweet), re.I)
+                and needs_reply_parent_context(text_excerpt(tweet))
                 and intent["exclusion_reasons"] == ["no_current_product_request"]):
             intent["exclusion_reasons"] = [
                 "reply_parent_product_mismatch" if has_matching_parent else "reply_parent_context_required"

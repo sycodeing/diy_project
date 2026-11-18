@@ -10,12 +10,13 @@ from lead_studio.discovery import candidate_from_tweet
 from lead_studio.purchase_intent import assess_purchase_intent, assess_reply_with_parent
 from lead_studio.twitterapi import build_query_plan
 from lead_studio import x_lead_worker as worker
+from audit_purchase_intent import audit
 
 
 @pytest.mark.parametrize("text,tier", [
     ("Where can I order a custom pillow with a photo of my dog?", "explicit_request"),
-    ("Anyone recommend a portrait of my cat?", "explicit_request"),
-    ("I would love a pillow with a photo of my dog", "exploratory"),
+    ("Anyone recommend a framed portrait of my cat?", "explicit_request"),
+    ("I would love a pillow with a photo of my dog", "excluded"),
     ("My cat is adorable, happy birthday!", "excluded"),
     ("Looking for a pillow for my dog to sleep on", "excluded"),
     ("I just ordered a custom pillow of my cat", "excluded"),
@@ -122,13 +123,15 @@ def test_sitter_gift_search_does_not_infer_buyer_advice_from_noise(text):
 
 def test_pillow_fit_is_ranked_above_related_art_and_explicit_rejection_is_respected():
     pillow = assess_purchase_intent("Does anyone know where I can get a cushion with my dog on it?")
-    art = assess_purchase_intent("Can someone recommend a custom portrait of my cat?")
+    art = assess_purchase_intent("Can someone recommend a framed custom portrait of my cat?")
     mismatch = assess_purchase_intent("Looking for a custom portrait of my dog, not a pillow.")
     assert pillow["product_fit"] == "pillow"
     assert art["product_fit"] == "adjacent"
     assert pillow["score"] > art["score"]
     assert mismatch["tier"] == "excluded"
     assert "product_mismatch" in mismatch["exclusion_reasons"]
+    assert assess_purchase_intent("Where can I buy only mugs with my dog's photo?")["exclusion_reasons"] == ["product_mismatch"]
+    assert assess_purchase_intent("Can someone recommend a framed print of my cat? Framed print only.")["exclusion_reasons"] == ["product_mismatch"]
 
 
 def test_reply_parent_can_confirm_the_product_but_not_invent_a_buyer_request():
@@ -162,11 +165,95 @@ def test_reply_parent_cannot_override_explicit_pillow_mismatch():
     assert assess_reply_with_parent("How much?", parent, "123")["tier"] == "explicit_request"
 
 
+def test_real_seller_guide_and_old_pillow_pet_are_not_buyer_demand():
+    seller = ("New pet, full camera roll already? Choose one clear photo that captures their "
+              "personality. Our guide has personalised gift ideas for new puppy, kitten and "
+              "adopted-pet owners: https://t.co/AG92V60wdx")
+    old_plush = ("Am I about to search for a pillow pet for my best friend for Christmas "
+                 "bc she lost her childhood one and they don’t make it anymore? Yes yes I am, eBay here I come")
+    assert "seller_or_giveaway" in assess_purchase_intent(seller)["exclusion_reasons"]
+    assert assess_purchase_intent(old_plush)["tier"] == "excluded"
+
+
+def test_parent_request_evidence_only_for_current_buyer_questions():
+    parent = "Custom pet-photo cushion covers, made to order."
+    for text in ("Can I buy this?", "Could you make one for my dog?", "How much?"):
+        result = assess_reply_with_parent(text, parent, "123")
+        assert result["tier"] == "explicit_request"
+        assert result["request_evidence"] in text
+        assert result["product_fit"] == "pillow"
+    for text in ("I'd love one someday!", "Your dog is adorable, I love this!"):
+        assert assess_reply_with_parent(text, parent, "123")["tier"] == "excluded"
+
+
+def test_non_pillow_text_demand_stays_in_local_review_without_vision(monkeypatch, tmp_path):
+    gift = make_candidate(text="Any gift recommendations for my sister? She adores her two cats.",
+                          location="", segment="demand_gift", with_photo=False)
+    assert gift["status"] == "location_review"
+    archive_id = "text-demand-job"
+    (tmp_path / f"{archive_id}.json").write_text(json.dumps({"review_leads": [{
+        "post_id": gift["post_id"], "author_id": gift["author_id"],
+        "author_handle": gift["author_handle"], "intent": json.loads(gift["targeting_json"])["purchase_intent"],
+        "post_text": "Any gift recommendations for my sister? She adores her two cats.",
+        "disposition": "text_passed_pending_evidence",
+    }]}), encoding="utf-8")
+    submitted = []
+
+    async def collect(*args, **kwargs):
+        return [{}], [gift], {"provider": "twitterapi", "archive_id": archive_id}
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("Non-pillow text review must not require image verification")
+
+    def handler(request):
+        submitted.append(json.loads(request.content))
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr(worker, "TWITTERAPI_ARCHIVE_DIR", tmp_path)
+    monkeypatch.setattr(worker, "collect_twitterapi_search", collect)
+    monkeypatch.setattr(worker, "ensure_pet_image_verifier", forbidden)
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await worker._execute_job(client, {}, Settings(x_lead_provider="twitterapi", diy_site_url="https://test.invalid"),
+                                      "test", {"id": archive_id, "configuration": {"segments": ["demand_gift"]}})
+
+    asyncio.run(run())
+    assert submitted[0]["candidates"] == []
+    assert submitted[0]["metrics"]["local_review_leads"] == 1
+    review = json.loads((tmp_path / "review_leads" / f"{archive_id}.json").read_text(encoding="utf-8"))
+    assert review["records"][0]["disposition"] == "product_fit_review"
+    assert review["records"][0]["intent"]["product_fit"] == "adjacent"
+
+
+def test_offline_audit_parses_twitter_dates_and_dedupes_authors(tmp_path):
+    start = int(datetime(2026, 11, 17, tzinfo=timezone.utc).timestamp())
+    end = int(datetime(2026, 11, 19, tzinfo=timezone.utc).timestamp())
+    def item(post_id, created_at):
+        return {"id": post_id, "text": "Where can I order a custom pillow with my dog's photo?",
+                "createdAt": created_at,
+                "author": {"id": "one-author", "userName": "dogowner", "location": "Austin, TX"}}
+    archive = {"queries": [{"query": f"since_time:{start} until_time:{end}",
+                            "pages": [{"response": {"tweets": [
+                                item("1", "Wed Nov 18 00:45:35 +0000 2026"),
+                                item("2", "Wed Nov 18 02:45:35 +0000 2026"),
+                                item("3", "Mon Oct 26 18:00:00 +0000 2026"),
+                            ]}}]}]}
+    path = tmp_path / "archive.json"
+    path.write_text(json.dumps(archive), encoding="utf-8")
+    report = audit([path])
+    assert report["unique_posts_in_window"] == 2
+    assert report["text_passed_posts"] == 2
+    assert report["text_review_authors"] == 1
+    assert report["exclusion_reasons"]["post_outside_archive_window"] == 1
+    assert report["strict_qualified"] == 0
+
+
 @pytest.mark.parametrize("text,scene", [
     ("Looking for a custom pillow of my dog", "custom"),
     ("Looking for a gift with a photo of my cat for my partner", "gift"),
     ("Any gift ideas with a photo of my dog for my wife?", "gift"),
-    ("I would love a portrait of my cat for my living room", "decor"),
+    ("Looking for a framed portrait of my cat for my living room", "decor"),
     ("Looking for a portrait of my dog as a gift for our living room", "gift"),
     ("My dog has a birthday next month", None),
     ("Looking for a gift for my dog", None),
@@ -324,10 +411,10 @@ def test_completed_demand_job_filters_before_vision_and_preserves_evidence(monke
 def test_scene_caps_never_fill_with_other_scenes_or_duplicate_authors(monkeypatch):
     found = []
     for index, (text, author) in enumerate([
-        ("Looking for a portrait of my dog", "same-owner"),
+            ("Looking for a custom pillow of my dog", "same-owner"),
         ("Looking for a photo gift of my dog for my wife", "same-owner"),
-        ("Looking for a portrait of my cat", "other-owner"),
-        ("Looking for a photo gift of my cat for my wife", "gift-owner"),
+            ("Looking for a custom pillow with a photo of my cat", "other-owner"),
+            ("Looking for a custom pillow with a photo of my cat as a gift for my wife", "gift-owner"),
     ]):
         candidate = make_candidate(text=text)
         candidate.update(post_id=str(index), author_hash=author)

@@ -146,6 +146,18 @@ SEARCH_SEGMENTS = (
 
 # Separate keys give demand discovery independent incremental cursors.
 DEMAND_SEARCH_SEGMENTS = (
+    SearchSegment("demand_custom", "Current custom pet keepsake shopping",
+        '("pet photo" OR "dog photo" OR "cat photo" OR "custom dog" OR "custom cat") '
+        '("where can I" OR recommend OR "who makes" OR "looking for") '
+        '-filter:replies -filter:retweets lang:en', "v11-shopping-custom"),
+    SearchSegment("demand_gift", "Current gift advice for a pet lover",
+        '("dog lover" OR "cat lover" OR "pet lover" OR "loves her cat" OR "loves his dog") '
+        '(gift OR present) (recommend OR ideas OR "what should I get") '
+        '-filter:replies -filter:retweets lang:en', "v11-shopping-gift"),
+    SearchSegment("demand_reply", "Buyer replies about custom pet items",
+        '("custom pet" OR "photo pillow" OR "pet blanket" OR "pet photo") '
+        '("how much" OR "can I buy" OR "where can I get" OR "can you make") '
+        'filter:replies -filter:retweets lang:en', "v11-shopping-reply"),
     SearchSegment("demand_discussion", "Replies to custom pet pillow posts",
         '(dog OR cat OR pet) (pillow OR cushion) -filter:replies lang:en',
         "v3-parent-first"),

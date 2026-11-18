@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 import socket
+from pathlib import Path
 from typing import Any
 
 import httpx
 
 from .apify import collect_apify_search
-from .config import CREDENTIAL_PATH, Settings
+from .config import CREDENTIAL_PATH, TWITTERAPI_ARCHIVE_DIR, Settings
 from .discovery import collect_search, dedupe_candidates_by_author
 from .demand_photo import attach_same_account_photo, record_verified_photo_source
 from .pet_image_gate import ensure_pet_image_verifier, verify_pet_photo
@@ -37,7 +38,7 @@ async def run_x_lead_worker(settings: Settings) -> None:
                     json={
                         "workerId": worker_id,
                         "cookieConfigured": _provider_is_configured(settings, provider),
-                        "version": "1.12.1",
+                        "version": "1.13.0",
                     },
                 )
                 if response.status_code == 204:
@@ -67,6 +68,7 @@ async def _execute_job(
     error_message = None
     metrics: dict[str, Any] = {"provider": _selected_provider(settings)}
     found_for_image_review: list[dict[str, Any]] = []
+    local_review: dict[str, dict[str, Any]] = {}
     is_demand = False
     requested_scenes: set[str] = set()
     scene_target = 20
@@ -85,7 +87,8 @@ async def _execute_job(
                     requested_scenes.update(("custom", "gift"))
                 else:
                     requested_scenes.add("custom" if key == "demand_recommendation" else key.removeprefix("demand_"))
-        await ensure_pet_image_verifier(client, settings)
+        if not is_demand:
+            await ensure_pet_image_verifier(client, settings)
         if provider == "twitterapi":
             items, found, metrics = await collect_twitterapi_search(
                 client,
@@ -113,6 +116,29 @@ async def _execute_job(
         if provider in {"twitterapi", "apify", "x-cookie"}:
             if is_demand:
                 metrics["discovery_mode"] = "purchase_intent"
+                for candidate in found_for_image_review:
+                    intent = json.loads(candidate.get("targeting_json") or "{}").get("purchase_intent") or {}
+                    if (intent.get("tier") == "excluded" or candidate.get("status") == "rejected_targeting"
+                            or candidate.get("organization") or candidate.get("advertisement")):
+                        continue
+                    post_id = str(candidate.get("post_id") or "")
+                    if post_id:
+                        local_review[post_id] = {
+                            "post_id": post_id,
+                            "post_url": candidate.get("post_url"),
+                            "author_handle": candidate.get("author_handle"),
+                            "author_id": candidate.get("author_id"),
+                            "author_hash": candidate.get("author_hash"),
+                            "posted_at": candidate.get("posted_at"),
+                            "intent": intent,
+                            "us_confidence": candidate.get("us_confidence"),
+                            "us_evidence": candidate.get("us_evidence"),
+                            "disposition": "awaiting_preview_evidence",
+                        }
+                        if candidate.get("status") == "location_review":
+                            local_review[post_id]["disposition"] = "location_pending"
+                        if intent.get("product_fit") != "pillow":
+                            local_review[post_id]["disposition"] = "product_fit_review"
                 metrics["intent_rejected"] = metrics.get("intent_prefilter_rejected", 0) + sum(
                     json.loads(c.get("targeting_json") or "{}").get("purchase_intent", {}).get("tier") == "excluded"
                     for c in found_for_image_review
@@ -127,19 +153,36 @@ async def _execute_job(
                     if c.get("status") in {"new", "targeting_review"}
                     and int(c.get("us_confidence", 0)) >= 70
                     and json.loads(c.get("targeting_json") or "{}").get("purchase_intent", {}).get("scene") in requested_scenes
+                    and json.loads(c.get("targeting_json") or "{}").get("purchase_intent", {}).get("product_fit") == "pillow"
                     and c.get("us_evidence") != "profile_location_state"]
+                selected_ids = {str(c.get("post_id")) for c in found_for_image_review}
+                for post_id, review in local_review.items():
+                    if post_id not in selected_ids and review["disposition"] == "awaiting_preview_evidence":
+                        review["disposition"] = "outside_requested_scene_or_us_gate"
                 found_for_image_review.sort(key=lambda c: (
                     json.loads(c.get("targeting_json") or "{}").get("purchase_intent", {}).get("score", 0),
                     c.get("recency_score") or 0,
                 ), reverse=True)
+                deduped = dedupe_candidates_by_author(found_for_image_review)
+                retained_ids = {str(candidate["post_id"]) for candidate in deduped}
+                metrics["demand_duplicate_author_review"] = len(found_for_image_review) - len(deduped)
+                for candidate in found_for_image_review:
+                    if str(candidate["post_id"]) not in retained_ids:
+                        local_review[str(candidate["post_id"])]["disposition"] = "duplicate_author"
+                found_for_image_review = deduped
                 photo_lookup_cap = min(60, scene_target * len(requested_scenes) * 2)
                 metrics["photo_lookup_cap"] = photo_lookup_cap
                 metrics["photo_lookup_deferred"] = max(0, len(found_for_image_review) - photo_lookup_cap)
+                for candidate in found_for_image_review[photo_lookup_cap:]:
+                    local_review[str(candidate["post_id"])]["disposition"] = "preview_lookup_deferred"
                 found_for_image_review = found_for_image_review[:photo_lookup_cap]
+                if found_for_image_review:
+                    await ensure_pet_image_verifier(client, settings)
             checked = 0
             verified = 0
             photo_matched = 0
             for candidate in found_for_image_review:
+                candidate_post_id = str(candidate.get("post_id") or "")
                 if candidate.get("status") == "rejected_targeting":
                     continue
                 sources: dict[str, dict[str, Any]] = {}
@@ -151,6 +194,7 @@ async def _execute_job(
                         force_search=ownership_pending,
                     )
                     if not candidate:
+                        local_review[str(candidate_post_id)]["disposition"] = "same_account_photo_missing"
                         continue
                     photo_matched += 1
                 checked += 1
@@ -170,6 +214,10 @@ async def _execute_job(
                 if selected:
                     verified += 1
                     candidates[selected["post_id"]] = _cloud_candidate(selected)
+                    if is_demand:
+                        local_review.pop(str(selected["post_id"]), None)
+                elif is_demand:
+                    local_review[str(candidate_post_id)]["disposition"] = "photo_not_preview_verified"
             metrics = {**metrics, "image_checked": checked, "image_verified": verified,
                        "image_rejected": checked - verified}
             if is_demand:
@@ -177,6 +225,10 @@ async def _execute_job(
                 metrics["photo_source_missing"] = len(found_for_image_review) - photo_matched
     except Exception as error:
         message = str(error)
+        if is_demand and "image verification" in message.lower():
+            for review in local_review.values():
+                if review["disposition"] == "awaiting_preview_evidence":
+                    review["disposition"] = "vision_unavailable"
         blocked_terms = (
             "captcha", "cloudflare", "unauthorized", "forbidden", "rate limit", "no account",
             "apify authorization", "usage limit", "not enough credits", "credits are exhausted",
@@ -201,6 +253,17 @@ async def _execute_job(
             error_message = f"Read-only discovery failed: {type(error).__name__}"
 
     submitted_candidates = list(candidates.values()) if status == "completed" else []
+    if is_demand and metrics.get("archive_id"):
+        archive_id = str(metrics["archive_id"])
+        review_path = _write_local_review_leads(TWITTERAPI_ARCHIVE_DIR, archive_id,
+                                                str(job.get("id") or ""), local_review,
+                                                set(candidates) if status == "completed" else set())
+        review_rows = json.loads(review_path.read_text(encoding="utf-8"))["records"]
+        metrics["local_text_demand_records"] = len(review_rows)
+        metrics["local_review_leads"] = sum(row.get("disposition") != "targeting_rejected" for row in review_rows)
+        metrics["local_review_unique_authors"] = len({row.get("author_id") or row.get("author_hash")
+                                                       for row in review_rows if row.get("author_id") or row.get("author_hash")})
+        metrics["local_review_file"] = str(review_path.relative_to(TWITTERAPI_ARCHIVE_DIR))
     deduped_candidates = dedupe_candidates_by_author(submitted_candidates)
     metrics = {
         **metrics,
@@ -233,6 +296,44 @@ async def _execute_job(
         },
     )
     response.raise_for_status()
+
+
+def _write_local_review_leads(archive_root: Path, archive_id: str, job_id: str,
+                              pending: dict[str, dict[str, Any]],
+                              verified_post_ids: set[str]) -> Path:
+    """Persist text-demand audit separately from the strict hosted lead pool."""
+    safe_id = archive_id if archive_id and all(char.isalnum() or char in "-_." for char in archive_id) else job_id
+    if not safe_id or safe_id in {".", ".."} or not all(char.isalnum() or char in "-_." for char in safe_id):
+        raise ValueError("Unsafe archive id for local demand review")
+    archive_path = archive_root / f"{safe_id}.json"
+    source = json.loads(archive_path.read_text(encoding="utf-8")) if archive_path.exists() else {}
+    rows: dict[str, dict[str, Any]] = {}
+    for row in source.get("review_leads", []):
+        post_id = str(row.get("post_id") or "")
+        if post_id and post_id not in verified_post_ids:
+            rows[post_id] = row
+    for post_id, row in pending.items():
+        if post_id not in verified_post_ids:
+            rows[post_id] = {**rows.get(post_id, {}), **row}
+    by_author: dict[str, dict[str, Any]] = {}
+    for row in sorted(rows.values(), key=lambda value: (
+        value.get("disposition") != "targeting_rejected",
+        int((value.get("intent") or {}).get("score") or 0),
+        value.get("posted_at") or "",
+    ), reverse=True):
+        key = str(row.get("author_id") or row.get("author_hash") or row.get("author_handle")
+                  or row["post_id"]).casefold()
+        by_author.setdefault(key, row)
+    destination = archive_root / "review_leads" / f"{safe_id}.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(".part")
+    temporary.write_text(json.dumps({
+        "version": 1, "source_archive": archive_path.name, "source_job_id": job_id,
+        "scope": "local_text_demand_review_only_not_hosted_x_leads_or_contact_approval",
+        "records": list(by_author.values()),
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(destination)
+    return destination
 
 
 def _selected_provider(settings: Settings) -> str:

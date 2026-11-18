@@ -20,6 +20,7 @@ from .config import (
     TWITTERAPI_STATE_PATH,
 )
 from .discovery import candidate_from_tweet
+from .purchase_intent import CUSTOM_CONTEXT, PET, PHYSICAL_CONTEXT, PRODUCT
 from .targeting import SEARCH_SEGMENTS, DEMAND_SEARCH_SEGMENTS, SearchSegment
 
 
@@ -28,7 +29,7 @@ TWEETS_BY_ID_PATH = "/twitter/tweets"
 TWEET_REPLIES_PATH = "/twitter/tweet/replies"
 USER_ABOUT_PATH = "/twitter/user_about"
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503}
-EXPERIMENTAL_QUERY_REVISIONS = {"v10-sitter"}
+EXPERIMENTAL_QUERY_REVISIONS = {"v10-sitter", "v11-shopping-custom", "v11-shopping-gift", "v11-shopping-reply"}
 
 
 class TwitterApiError(RuntimeError):
@@ -164,6 +165,7 @@ async def collect_twitterapi_search(
         "started_at": _utc_now(),
         "configuration": _archive_configuration(configuration),
         "queries": [],
+        "review_leads": [],
     }
     _save_archive(archive_path, archive)
 
@@ -235,7 +237,7 @@ async def collect_twitterapi_search(
                     parent_id = str(parent.get("id") or "")
                     parent_text = str(parent.get("text") or "")
                     if (not parent_id or parent.get("replyCount") == 0
-                            or not _is_pet_photo_pillow_parent(parent_text)):
+                            or not _is_relevant_pet_product_parent(parent_text)):
                         continue
                     metrics.discussion_parents_checked += 1
                     payload = await _request_replies_page(client, settings, parent_id)
@@ -301,6 +303,23 @@ async def collect_twitterapi_search(
                     slice_counts["unusable"] += 1
                     query_archive["decisions"].append({"post_id": post_id, "reason": "unusable_post"})
                     continue
+                try:
+                    posted_at = datetime.fromisoformat(str(tweet.get("date") or "").replace("Z", "+00:00"))
+                    if posted_at.tzinfo is None:
+                        raise ValueError("missing timezone")
+                    posted_seconds = int(posted_at.timestamp())
+                except ValueError:
+                    posted_seconds = None
+                if (plan.segment.key in {segment.key for segment in DEMAND_SEARCH_SEGMENTS}
+                        and (posted_seconds is None or not plan.since_time <= posted_seconds <= plan.until_time)):
+                    metrics.unusable_posts += 1
+                    slice_counts["unusable"] += 1
+                    query_archive["decisions"].append({
+                        "post_id": post_id,
+                        "reason": "post_outside_query_time_window" if posted_seconds is not None
+                                  else "post_time_missing_or_invalid",
+                    })
+                    continue
                 if tweet["media"]["photos"]:
                     metrics.photo_posts += 1
                 preliminary = candidate_from_tweet(
@@ -348,6 +367,17 @@ async def collect_twitterapi_search(
                         query_archive["decisions"].append({"post_id": post_id, "reason": "intent_rejected",
                                                            "details": intent.get("exclusion_reasons") or []})
                         continue
+                    archive["review_leads"].append({
+                        "post_id": post_id,
+                        "author_id": str(tweet.get("author", {}).get("id") or ""),
+                        "author_hash": preliminary.get("author_hash"),
+                        "author_handle": str(tweet.get("author", {}).get("username") or ""),
+                        "posted_at": tweet.get("date"),
+                        "post_text": str(tweet.get("rawContent") or "")[:1500],
+                        "intent": intent,
+                        "disposition": "text_passed_pending_evidence" if preliminary["status"] != "rejected_targeting"
+                                       else "targeting_rejected",
+                    })
                     if preliminary["status"] == "rejected_targeting":
                         metrics.targeting_prefilter_rejected += 1
                         slice_counts["targeting_rejected"] += 1
@@ -441,6 +471,12 @@ async def collect_twitterapi_search(
             metrics.targeting_review_status += 1
         elif status == "rejected_targeting":
             metrics.rejected_targeting_status += 1
+    final_by_post = {str(candidate["post_id"]): candidate for candidate in candidates.values()}
+    for row in archive["review_leads"]:
+        final_candidate = final_by_post.get(str(row["post_id"]))
+        if final_candidate and final_candidate.get("status") == "rejected_targeting":
+            row["disposition"] = "targeting_rejected"
+            row["targeting_rejection"] = "final_location_or_account_gate"
     archive["status"] = "completed"
     archive["completed_at"] = _utc_now()
     archive["metrics"] = metrics.as_dict()
@@ -764,10 +800,12 @@ async def _request_page(
     raise TwitterApiError("TwitterAPI.io request failed after retries.")
 
 
-def _is_pet_photo_pillow_parent(text: str) -> bool:
-    return bool(re.search(r"\b(?:dog|cat|pet|puppy|kitten)\b", text, re.I)
-                and re.search(r"\b(?:pillow(?:\s+cover)?|pillowcase|cushion)s?\b", text, re.I)
-                and re.search(r"\b(?:photo|picture|portrait|custom|personali[sz]ed)\b", text, re.I))
+def _is_relevant_pet_product_parent(text: str) -> bool:
+    product = re.search(PRODUCT, text, re.I)
+    return bool(product and re.search(PET, text, re.I)
+                and re.search(CUSTOM_CONTEXT, text, re.I)
+                and (not re.search(r"\bportraits?\b", product.group(0), re.I)
+                     or re.search(PHYSICAL_CONTEXT, text, re.I)))
 
 
 async def _request_replies_page(
