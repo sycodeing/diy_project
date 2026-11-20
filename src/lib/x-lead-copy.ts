@@ -31,6 +31,18 @@ export function createXLeadFirstContactDraft(context: XLeadDraftContext) {
   const intent = context.targetingData?.purchase_intent;
   if (intent && typeof intent === "object" && !Array.isArray(intent)) {
     const signal = intent as Record<string, unknown>;
+    if (signal.persona === "gift_giver") {
+      return { variantKey: "consumer_gift_v1" as const, contentMode: "first_contact_text" as const,
+        text: `I saw you're planning a gift. I make custom photo pillow covers and can share an example from my own work.${offer} Would that fit your idea?` };
+    }
+    if (signal.persona === "identity_consumer") {
+      return { variantKey: "consumer_identity_v1" as const, contentMode: "first_contact_text" as const,
+        text: `I make custom photo pillow covers for personal collections and spaces.${offer} I can share an example from my own work if that sounds relevant.` };
+    }
+    if (signal.persona === "group_organizer") {
+      return { variantKey: "consumer_group_v1" as const, contentMode: "first_contact_text" as const,
+        text: `I saw you're planning a group occasion. I make custom photo pillow covers and can share an example from my own work.${offer} Would you like to see one?` };
+    }
     if (signal.tier === "exploratory" && signal.scene === "gift") {
       return {
         variantKey: "first_contact_gift_v3" as const,

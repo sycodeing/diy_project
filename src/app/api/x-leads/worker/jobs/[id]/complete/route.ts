@@ -81,7 +81,7 @@ export async function POST(request: Request, context: RouteContext<"/api/x-leads
     return NextResponse.json({ error: "Job is not owned by this worker." }, { status: 409 });
   }
   const recallJob = job.configuration && typeof job.configuration === "object"
-    && !Array.isArray(job.configuration) && job.configuration.discoveryMode === "purchase_recall";
+    && !Array.isArray(job.configuration) && ["purchase_recall", "consumer_recall"].includes(String(job.configuration.discoveryMode));
   if ((recallJob && parsed.data.candidates.length) || (!recallJob && parsed.data.rawCandidates.length)) {
     return NextResponse.json({ error: "Raw review rows and strict lead candidates must stay in separate jobs." }, { status: 422 });
   }

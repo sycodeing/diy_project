@@ -17,6 +17,7 @@ import httpx
 
 from lead_studio.config import Settings, TWITTERAPI_ARCHIVE_DIR
 from lead_studio.purchase_intent import assess_purchase_intent, needs_reply_parent_context
+from lead_studio.consumer_profiles import assess_consumer_profile
 from lead_studio.twitterapi import _iso_datetime
 
 
@@ -191,10 +192,12 @@ def extract_raw_reviews(archive_paths: list[Path]) -> list[dict[str, Any]]:
                                                               3000), path.name)
             continue
         stages: list[tuple[str, list[dict[str, Any]], set[str] | None]] = []
+        consumer_archive = document.get("kind") == "query_only_consumer_recall"
         for query in document.get("queries", []):
             if query.get("role") == "control":
                 continue
-            accepted = {str(decision.get("post_id")) for decision in query.get("decisions") or []
+            accepted = {str(decision.get("post_id")): decision["intent"]
+                        for decision in query.get("decisions") or []
                         if isinstance(decision, dict) and "intent" in decision}
             stages.append((str(query.get("name") or "shopping"), query.get("pages") or [], accepted))
         for page in document.get("pages", []):
@@ -220,7 +223,8 @@ def extract_raw_reviews(archive_paths: list[Path]) -> list[dict[str, Any]]:
                             posted_at = None
                     except ValueError:
                         posted_at = None
-                    intent = assess_purchase_intent(text, author_bio=_author_bio(post))
+                    intent = (accepted[post_id] if consumer_archive and accepted is not None
+                              else assess_purchase_intent(text, author_bio=_author_bio(post)))
                     photo_urls = extract_post_photo_urls(post)
                     intent["media_eligibility"] = ("original_post_photo_unverified" if photo_urls
                                                    else "no_original_post_photo")
@@ -236,7 +240,8 @@ def extract_raw_reviews(archive_paths: list[Path]) -> list[dict[str, Any]]:
                         "classifierTier": intent["tier"],
                         "exclusionReasons": intent["exclusion_reasons"],
                         "intent": intent,
-                        "bodyTopicMatch": bool(PET_BODY.search(text) and PRODUCT_BODY.search(text)),
+                        "bodyTopicMatch": (intent.get("persona") is not None if consumer_archive else
+                                           bool(PET_BODY.search(text) and PRODUCT_BODY.search(text))),
                         "isReply": is_reply, "parentPostId": parent_id,
                         "parentStatus": "unresolved" if is_reply else "not_applicable",
                         "parentEvidence": None, "parentSourceArchive": None,

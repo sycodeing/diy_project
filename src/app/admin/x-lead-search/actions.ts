@@ -9,7 +9,36 @@ import {
   demandSearchConfigurationSchema,
   type XSearchConfiguration,
 } from "@/lib/x-lead";
-import { supportsDiscussionSearch, supportsPurchaseRecall } from "@/lib/x-lead-worker-version";
+import { supportsConsumerRecall, supportsDiscussionSearch, supportsPurchaseRecall } from "@/lib/x-lead-worker-version";
+
+export async function runConsumerLeadSearch(formData: FormData) {
+  const user = await requireAdmin("/admin/x-lead-search");
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) throw new Error("Supabase 服务端配置缺失。");
+  const { data: worker, error: workerError } = await supabase.from("x_lead_workers")
+    .select("worker_version,last_seen_at").eq("status", "online")
+    .order("last_seen_at", { ascending: false }).limit(1).maybeSingle();
+  if (workerError) throw new Error(workerError.message);
+  if (!worker || Date.now() - new Date(worker.last_seen_at).getTime() > 120_000
+      || !supportsConsumerRecall(worker.worker_version ?? undefined)) {
+    throw new Error("三画像召回需要在线的 1.16.0 或更高版本发现执行器。");
+  }
+  const { data: active, error: activeError } = await supabase.from("x_lead_search_jobs")
+    .select("id").in("status", ["queued", "running"]).limit(1).maybeSingle();
+  if (activeError) throw new Error(activeError.message);
+  if (active) redirect("/admin/x-lead-search?notice=active");
+  const maxPages = Number(formData.get("maxPages") ?? 6);
+  if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 6) {
+    throw new Error("本轮查询页数必须为 1–6。");
+  }
+  const { error } = await supabase.from("x_lead_search_jobs").insert({
+    trigger_type: "manual", status: "queued", created_by: user.id,
+    configuration: { discoveryMode: "consumer_recall", lookbackDays: 3, maxPages },
+  });
+  if (error) throw new Error(error.message);
+  revalidatePath("/admin/x-lead-search");
+  redirect("/admin/x-lead-search?notice=consumer-queued");
+}
 
 export async function runRecallLeadSearch(formData: FormData) {
   const user = await requireAdmin("/admin/x-lead-search");

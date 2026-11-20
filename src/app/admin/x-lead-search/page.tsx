@@ -11,7 +11,7 @@ import {
   X_SEARCH_INTERVAL_LABELS,
   X_SEARCH_PRODUCT_LABELS,
 } from "@/lib/x-lead";
-import { runRecallLeadSearch, saveXLeadSearchConfiguration } from "./actions";
+import { runConsumerLeadSearch, runRecallLeadSearch, saveXLeadSearchConfiguration } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -87,7 +87,7 @@ export default async function XLeadSearchPage({
   const worker = ((workersData ?? [])[0] ?? null) as Worker | null;
   const workerOnline = Boolean(worker && getServerNowMillis() - new Date(worker.last_seen_at).getTime() < 120_000);
   const { notice } = await searchParams;
-  const noticeText = notice === "recall-queued" ? "宽召回任务已入队。原始帖子仅进入待筛视图，不会生成预览或发送消息。" : notice === "queued"
+  const noticeText = notice === "consumer-queued" ? "三画像召回任务已入队。帖子仅进入原始待筛，不会发送或生成预览。" : notice === "recall-queued" ? "宽召回任务已入队。原始帖子仅进入待筛视图，不会生成预览或发送消息。" : notice === "queued"
     ? "筛选任务已加入队列，本机执行器会自动领取。"
     : notice === "saved"
       ? "筛选与定时配置已保存。"
@@ -107,6 +107,17 @@ export default async function XLeadSearchPage({
         </div>
 
         {noticeText ? <p className="mt-5 rounded-lg border border-line bg-panel p-3 text-sm font-bold">{noticeText}</p> : null}
+
+        <section className="mt-6 rounded-xl border border-line bg-panel/90 p-5">
+          <h2 className="text-xl font-black">三类个人消费场景 · 新原始待筛</h2>
+          <p className="mt-2 text-sm text-muted">送礼者、兴趣周边消费者、小批量自用活动组织者。六组短查询各最多一页；查询只负责召回，原帖证据与已联系记录决定待审分类。需要 1.16.0 发现执行器。无宠物或图片也能留作原始待筛；不进入严格候选或发送队列。</p>
+          <form action={runConsumerLeadSearch} className="mt-4 flex flex-wrap items-end gap-3">
+            <SelectField label="本次最多搜索页数" name="maxPages" value="6" options={[["3", "3 页（每画像一组）"], ["6", "6 页（每画像两组）"]]} />
+            <button className="focus-ring rounded-lg bg-accent px-4 py-3 font-bold text-accent-ink" type="submit">启动三画像小批测试</button>
+            <Link className="focus-ring rounded-lg border border-line px-4 py-3 font-bold" href="/admin/x-leads?mode=raw_review">查看原始待筛</Link>
+          </form>
+          <p className="mt-2 text-xs text-muted">最近 3 天，最多 6 搜索页；余额至少 3000 credits、观察支出最多 2500 credits。无自动定时、无控制页、无联系动作。</p>
+        </section>
 
         <section className="mt-6 rounded-xl border border-line bg-panel/90 p-5">
           <h2 className="text-xl font-black">个人消费场景召回 · 原始待筛</h2>
@@ -186,9 +197,9 @@ export default async function XLeadSearchPage({
             <thead className="text-muted"><tr><th className="pb-3">创建时间</th><th>触发方式</th><th>状态</th><th>帖子数</th><th>发现漏斗</th><th>严格候选入库</th><th>执行器</th><th>结果</th></tr></thead>
             <tbody>{jobs.map((job) => <tr className="border-t border-line" key={job.id}>
               <td className="py-3">{formatAdminDate(job.created_at)}</td>
-              <td>{job.configuration?.discoveryMode === "purchase_recall" ? "宽召回待筛 · " : job.configuration?.discoveryMode === "purchase_intent" ? "需求验证 · " : "原模式 · "}{job.trigger_type === "manual" ? "手动" : "定时"}</td>
+              <td>{job.configuration?.discoveryMode === "consumer_recall" ? "三画像待筛 · " : job.configuration?.discoveryMode === "purchase_recall" ? "宽召回待筛 · " : job.configuration?.discoveryMode === "purchase_intent" ? "需求验证 · " : "原模式 · "}{job.trigger_type === "manual" ? "手动" : "定时"}</td>
               <td className="font-bold">{X_JOB_STATUS_LABELS[job.status] ?? job.status}</td>
-              <td>{job.configuration?.discoveryMode === "purchase_recall" ? `${job.received_count} 新帖` : job.received_count}</td><td className="min-w-52 text-xs leading-5 text-muted">{formatDiscoveryMetrics(job.metrics, job.configuration?.discoveryMode === "purchase_recall")}{job.configuration?.discoveryMode === "purchase_recall" ? <Link className="mt-1 block font-bold text-accent underline" href={rawReviewHref(job.metrics)}>{hasRawReviewArchive(job.metrics) ? "查看本任务原始帖" : "查看全部原始帖"}</Link> : null}</td><td>{job.inserted_count}</td><td>{job.worker_id ?? "—"}</td>
+              <td>{["purchase_recall", "consumer_recall"].includes(job.configuration?.discoveryMode ?? "") ? `${job.received_count} 新帖` : job.received_count}</td><td className="min-w-52 text-xs leading-5 text-muted">{formatDiscoveryMetrics(job.metrics, ["purchase_recall", "consumer_recall"].includes(job.configuration?.discoveryMode ?? ""))}{["purchase_recall", "consumer_recall"].includes(job.configuration?.discoveryMode ?? "") ? <Link className="mt-1 block font-bold text-accent underline" href={rawReviewHref(job.metrics)}>{hasRawReviewArchive(job.metrics) ? "查看本任务原始帖" : "查看全部原始帖"}</Link> : null}</td><td>{job.inserted_count}</td><td>{job.worker_id ?? "—"}</td>
               <td className="max-w-80 text-muted">{job.error_message ?? (job.finished_at ? `完成于 ${formatAdminDate(job.finished_at)}` : "—")}</td>
             </tr>)}</tbody>
           </table>
@@ -212,13 +223,17 @@ function hasRawReviewArchive(metrics: Record<string, unknown> | null) {
 function formatDiscoveryMetrics(metrics: Record<string, unknown> | null, recall = false) {
   if (recall) {
     const rawRows = metrics ? metricNumber(metrics, "raw_review_rows") : null;
-    const newPosts = metrics ? metricNumber(metrics, "shopping_query_new_posts_vs_baseline") : null;
+    const newPosts = metrics ? metricNumber(metrics, "retrieved_new_posts") ?? metricNumber(metrics, "shopping_query_new_posts_vs_baseline") : null;
     const pages = metrics ? metricNumber(metrics, "search_pages") : null;
-    const tiers = metrics?.shopping_text_tiers && typeof metrics.shopping_text_tiers === "object"
-      ? metrics.shopping_text_tiers as Record<string, unknown> : null;
+    const tierValue = metrics?.text_tiers ?? metrics?.shopping_text_tiers;
+    const tiers = tierValue && typeof tierValue === "object"
+      ? tierValue as Record<string, unknown> : null;
     const potential = tiers && typeof tiers.exploratory === "number" ? tiers.exploratory : null;
     const explicit = tiers && typeof tiers.explicit_request === "number" ? tiers.explicit_request : null;
+    const personas = metrics?.persona_unique_authors && typeof metrics.persona_unique_authors === "object"
+      ? metrics.persona_unique_authors as Record<string, unknown> : null;
     return [`原始待筛 ${rawRows ?? "—"}`, `新帖 ${newPosts ?? "—"}`, `潜在 ${potential ?? "—"}`,
+      ...(personas ? [`送礼 ${personas.gift_giver ?? 0} 人`, `兴趣 ${personas.identity_consumer ?? 0} 人`, `活动 ${personas.group_organizer ?? 0} 人`] : []),
       `明确 ${explicit ?? "—"}`, `搜索 ${pages ?? "—"} 页`, "严格资格 0"].join(" · ");
   }
   if (!metrics || typeof metrics.provider !== "string") return "—";

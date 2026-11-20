@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime, timezone
 
 import httpx
 
@@ -19,7 +20,7 @@ def _demand(photo=False):
 
 def _item(post_id, author_id="account-1", text="My dog in the garden", photo=True):
     return {
-        "id": post_id, "text": text, "createdAt": "2026-11-15T12:00:00Z",
+        "id": post_id, "text": text, "createdAt": datetime.now(timezone.utc).isoformat(),
         "author": {"id": author_id, "userName": "dogowner", "location": "Austin, TX"},
         "media": {"photos": [{"url": f"https://img.example/{post_id}.jpg"}]} if photo else {},
     }

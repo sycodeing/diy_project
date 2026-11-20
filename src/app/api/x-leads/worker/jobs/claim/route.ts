@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { isAuthorizedXLeadWorker } from "@/lib/x-lead-worker-auth";
-import { supportsDemandPhotoJoin, supportsPurchaseRecall } from "@/lib/x-lead-worker-version";
+import { supportsConsumerRecall, supportsDemandPhotoJoin, supportsPurchaseRecall } from "@/lib/x-lead-worker-version";
 
 export const runtime = "nodejs";
 
@@ -61,6 +61,9 @@ export async function POST(request: Request) {
   }
   if (!supportsPurchaseRecall(parsed.data.version)) {
     queuedQuery = queuedQuery.or("configuration->>discoveryMode.is.null,configuration->>discoveryMode.neq.purchase_recall");
+  }
+  if (!supportsConsumerRecall(parsed.data.version)) {
+    queuedQuery = queuedQuery.or("configuration->>discoveryMode.is.null,configuration->>discoveryMode.neq.consumer_recall");
   }
   const { data: queued, error: readError } = await queuedQuery
     .limit(1)
