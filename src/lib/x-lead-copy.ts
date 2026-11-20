@@ -41,7 +41,7 @@ export function createXLeadFirstContactDraft(context: XLeadDraftContext) {
     }
     if (signal.persona === "relationship_memory") {
       return { variantKey: "life_memory_v1" as const, contentMode: "first_contact_text" as const,
-        text: `I saw the memory you shared. I make personalized photo pillow covers and can share an example from my own work if a keepsake feels relevant.${offer}` };
+        text: `I saw your post about an important occasion. I make personalized photo pillow covers and can share an example from my own work if a keepsake feels relevant.${offer}` };
     }
     if (signal.persona === "gift_giver") {
       return { variantKey: "consumer_gift_v1" as const, contentMode: "first_contact_text" as const,

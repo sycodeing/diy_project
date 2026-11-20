@@ -30,7 +30,7 @@ export async function RawReviewPage({ filters }: { filters: RawFilters }) {
   let query = supabase.from("x_lead_raw_reviews")
     .select("post_id,author_id,x_handle,post_url,post_text,posted_at,photo_urls,photo_count,source_archive,source_stage,classifier_version,classifier_tier,exclusion_reasons,intent,body_topic_match,is_reply,parent_post_id,parent_status,parent_evidence,parent_source_archive,review_status,first_seen_at", { count: "exact" })
     .order("first_seen_at", { ascending: false }).order("post_id", { ascending: false });
-  if (!filters.tier || filters.tier === "valuable") query = query.in("classifier_tier", ["explicit_request", "exploratory"]).eq("classifier_version", "consumer-life-scenes-v2");
+  if (!filters.tier || filters.tier === "valuable") query = query.in("classifier_tier", ["explicit_request", "exploratory"]).eq("classifier_version", "consumer-life-scenes-v2.1");
   else if (["excluded", "exploratory", "explicit_request"].includes(filters.tier)) query = query.eq("classifier_tier", filters.tier);
   if ((!filters.tier || filters.tier === "valuable") && filters.status === undefined) query = query.eq("review_status", "unreviewed");
   if (["true", "false"].includes(filters.topic ?? "")) query = query.eq("body_topic_match", filters.topic === "true");
@@ -51,14 +51,14 @@ export async function RawReviewPage({ filters }: { filters: RawFilters }) {
     supabase.from("x_lead_raw_reviews").select("post_id", { count: "exact", head: true }).eq("classifier_tier", "exploratory"),
     supabase.from("x_lead_raw_reviews").select("post_id", { count: "exact", head: true }).eq("classifier_tier", "explicit_request"),
     supabase.from("x_lead_raw_reviews").select("post_id", { count: "exact", head: true }).eq("classifier_tier", "excluded"),
-    supabase.from("x_lead_raw_reviews").select("post_id", { count: "exact", head: true }).neq("classifier_version", "consumer-life-scenes-v2"),
+    supabase.from("x_lead_raw_reviews").select("post_id", { count: "exact", head: true }).neq("classifier_version", "consumer-life-scenes-v2.1"),
   ]);
   const countError = [totalResult, potentialResult, explicitResult, excludedResult, oldResult].find((result) => result.error)?.error;
   if (error || countError) throw new Error((error || countError)!.message);
   const rows = (data ?? []) as RawRow[];
   const hasDraftRows = rows.some((row) => row.review_status === "unreviewed" &&
-    row.classifier_version === "consumer-life-scenes-v2" && row.classifier_tier === "exploratory" &&
-    row.intent.specific_other_product !== true);
+    row.classifier_version === "consumer-life-scenes-v2.1" && row.classifier_tier === "exploratory" &&
+    row.intent.needs_context_review !== true && row.intent.specific_other_product !== true);
   const firstOrderOffer = hasDraftRows ? await hasXFirstOrderOffer() : false;
   const makePageHref = (target: number) => {
     const params = new URLSearchParams({ mode: "raw_review", page: String(target) });
@@ -99,9 +99,10 @@ export async function RawReviewPage({ filters }: { filters: RawFilters }) {
       {row.classifier_tier !== "excluded" ? <p className="mt-2 text-xs">本人证据：{String(row.intent.consumer_evidence || row.intent.request_evidence || "待人工核对")} · 场景证据：{String(row.intent.scenario_evidence || row.intent.scene || "未明确")} · 证据强度：{String(row.intent.evidence_strength || "历史分类未标注")} · 人群适配：{String(row.intent.person_fit || "待审")} · 场景适配：{String(row.intent.scenario_fit || "待审")} · 商品适配：{String(row.intent.product_fit || "待审")} · 购物意向：{String(row.intent.shopping_intent || "未知")} · 复核优先级：{String(row.intent.priority || "待审")}</p> : null}
       {row.classifier_tier !== "excluded" && row.intent.conversation_angle ? <p className="mt-1 text-xs text-muted">交流切入：{String(row.intent.conversation_angle)}。仅供人工判断，不能据此推定联系资格。</p> : null}
       {row.classifier_tier !== "excluded" && Array.isArray(row.intent.verification) ? <p className="mt-1 text-xs text-muted">待核实：{row.intent.verification.map(String).join("、")}</p> : null}
+      {row.intent.needs_context_review === true ? <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">原帖涉及敏感生活处境，仅保留人群待审；请先核对语境，不生成促销草稿。</p> : null}
       {row.classifier_tier !== "excluded" ? <p className="mt-2 text-xs text-muted">下一步：人工核对原帖与账号、商品适配和联系资格。草稿只用自家示例；原帖图片仅供理解语境，未核验归属或生成该用户的定制预览。</p> : null}
       {row.intent.specific_other_product === true ? <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">原帖指定其他商品；本站枕套适配未证实，暂不生成可使用的联系草稿。先人工核对商品与地区。</p> : null}
-      {row.review_status === "unreviewed" && row.classifier_version === "consumer-life-scenes-v2" && row.intent.specific_other_product !== true && row.classifier_tier === "exploratory" ? <p className="mt-2 rounded-lg border border-line bg-white p-3 text-sm"><strong>只读场景草稿 · 自家示例：</strong>{createXLeadFirstContactDraft({
+      {row.review_status === "unreviewed" && row.classifier_version === "consumer-life-scenes-v2.1" && row.intent.needs_context_review !== true && row.intent.specific_other_product !== true && row.classifier_tier === "exploratory" ? <p className="mt-2 rounded-lg border border-line bg-white p-3 text-sm"><strong>只读场景草稿 · 自家示例：</strong>{createXLeadFirstContactDraft({
         occasion: null, occasionConfidence: null, petType: null, firstOrderOffer,
         targetingData: { purchase_intent: row.intent },
       }).text}<span className="mt-1 block text-xs text-muted">草稿未保存或发送；需人工复核。原帖图片不能作为可预览素材。</span></p> : null}

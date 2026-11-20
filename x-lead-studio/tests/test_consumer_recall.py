@@ -47,6 +47,36 @@ def test_three_personas_and_boundaries():
     assert assess_consumer_profile("My cat's photo on a custom face towel made me smile.")["product_fit"] == "verified"
 
 
+def test_reviewed_life_scene_edges_keep_persona_separate_from_contact_draft():
+    accepted = [
+        ("Throwback when my son dressed up and was petting our cat.", "pet_owner"),
+        ("Almost overslept for work today and my cat just let me.", "pet_owner"),
+        ("Here are some cat photos. This solo photo is of our cat Aiya.", "pet_owner"),
+        ("If I got this framed and put it on my room wall with my other posters.", "home_decorator"),
+    ]
+    for post, persona in accepted:
+        result = assess_consumer_profile(post)
+        assert result["persona"] == persona, post
+        assert result["shopping_intent"] == "unknown"
+        assert result["product_fit"] != "verified"
+    rejected = [
+        ("I arranged a DNA test. I walked into my house.", ""),
+        ("It is our dog, the owner says. WHAT SHOULD YOU DO? Rabies spreads through bites.", ""),
+        ("Immortalis Book 1, Act II, Scene I. Our cat fell asleep on my bed again.", ""),
+        ("Our family photo from my wedding still makes me smile.", "The stories here are fictional."),
+    ]
+    for post, bio in rejected:
+        assert assess_consumer_profile(post, author_bio=bio)["persona"] is None, post
+    sensitive = assess_consumer_profile("My cat just did something sweet while I was in severe pain.")
+    assert sensitive["persona"] == "pet_owner"
+    assert sensitive["needs_context_review"] is True
+    assert sensitive["shopping_intent"] == "unknown"
+    future = assess_consumer_profile("I want to take a photo at my wedding with close family.")
+    assert future["persona"] == "relationship_memory"
+    assert future["experience_phase"] == "future_planned"
+    assert future["conversation_angle"] == "a future family occasion they are planning"
+
+
 def test_six_distinct_pages_archive_and_contacted_exclusion(tmp_path):
     calls = []
     def handler(request):
@@ -82,7 +112,7 @@ def test_six_distinct_pages_archive_and_contacted_exclusion(tmp_path):
     assert len(rows) == 6
     assert next(row for row in rows if row["handle"] == "user2")["classifierTier"] == "excluded"
     assert next(row for row in rows if row["handle"] == "user3")["classifierTier"] == "excluded"
-    assert all(row["classifierVersion"] == "consumer-life-scenes-v2" for row in rows)
+    assert all(row["classifierVersion"] == "consumer-life-scenes-v2.1" for row in rows)
 
 
 def test_old_consumer_archive_is_reassessed_without_changing_source_or_prior_snapshot(tmp_path):

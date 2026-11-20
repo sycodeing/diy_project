@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-VERSION = "consumer-life-scenes-v2"
+VERSION = "consumer-life-scenes-v2.1"
 PERSONAS = ("pet_owner", "home_decorator", "relationship_memory")
 
 SELLER = re.compile(
@@ -18,11 +18,14 @@ PET_OWN = re.compile(r"\b(?:my|our)\s+(?:cat|dog|puppy|kitten|pup|pets?)(?:'s)?\
 PET_SCENE = re.compile(
     r"\b(?:birthday|turns?\s+\w+\s+today|years?\s+of|again|always|every\s+day|"
     r"fell\s+asleep|steal(?:s|ing)?\s+my|on\s+my\s+(?:sofa|hoodie|lap|bed)|"
-    r"first\s+(?:walk|trip|day)|this\s+(?:photo|picture)|made\s+me\s+smile)\b", re.I)
+    r"first\s+(?:walk|trip|day)|this\s+(?:photo|picture)|made\s+me\s+smile|"
+    r"just\s+did|just\s+let\s+me|throwback|petting|"
+    r"(?:cat|dog)\s+photos?|purr(?:ed|ing)?)\b", re.I)
 HOME_SELF = re.compile(r"\b(?:my|our)\s+(?:(?:new|first)\s+)?(?:home|house|apartment|flat|room|living\s+room|"
                        r"bedroom|sofa|couch|wall|corner|place)\b", re.I)
-HOME_SCENE = re.compile(r"\b(?:decorat(?:e|ing|ed|ion)|redecorat\w*|arrang(?:e|ing|ed)|"
-                        r"set(?:ting)?\s+up|display(?:ing|ed)?|hung|hanging|"
+HOME_SCENE = re.compile(r"\b(?:decorat(?:e|ing|ed|ion)|redecorat\w*|"
+                        r"arrang(?:e|ing|ed)\s+(?:my|our|the)\s+(?:new\s+)?(?:sofa|room|photos?|furniture|wall|corner)|"
+                        r"set(?:ting)?\s+up|display(?:ing|ed)?|hung|hanging|framed|"
                         r"new\s+(?:sofa|room|home|apartment)|photos?\s+on\s+(?:the|my|our)\s+wall|"
                         r"family\s+photos?)\b", re.I)
 REL_SELF = re.compile(r"\b(?:my|our)\s+(?:first\s+trip|wedding|anniversary|graduation|"
@@ -44,6 +47,10 @@ PHOTO_TOWEL = re.compile(r"\b(?:photo|picture|image)\b.{0,45}\b(?:face\s+towel)\
 PILLOW = re.compile(r"\b(?:pillow|cushion)s?\b", re.I)
 PILLOW_REJECTION = re.compile(r"\b(?:not\s+(?:a|any)?\s*|no\s+|without\s+)(?:pillow|cushion)s?\b", re.I)
 OTHER_PRODUCT = re.compile(r"\b(?:keychain|sticker|pin|print|poster|mug|shirt|hoodie)s?\b", re.I)
+FICTION_FRAME = re.compile(
+    r"\b(?:the\s+stories\s+here\s+are\s+fictional|"
+    r"i\s+write\s+the\s+relationship\s+stories|"
+    r"book\s+\d+.{0,100}\b(?:act|chapter|scene)\s+[ivx\d]+)\b", re.I | re.S)
 
 
 def _result() -> dict[str, Any]:
@@ -57,7 +64,15 @@ def _result() -> dict[str, Any]:
         "media_eligibility": "not_assessed", "specific_other_product": False,
         "continuity_evidence": "not_established_by_single_post",
         "evidence_strength": "none",
+        "needs_context_review": False, "experience_phase": "unknown",
     }
+
+
+def _linked(first: re.Pattern[str], second: re.Pattern[str], text: str,
+            *, max_distance: int = 120) -> tuple[re.Match[str], re.Match[str]] | None:
+    pairs = [(a, b) for a in first.finditer(text) for b in second.finditer(text)
+             if abs(a.start() - b.start()) <= max_distance]
+    return min(pairs, key=lambda pair: abs(pair[0].start() - pair[1].start())) if pairs else None
 
 
 def assess_consumer_profile(text: str, *, author_bio: str = "",
@@ -72,26 +87,34 @@ def assess_consumer_profile(text: str, *, author_bio: str = "",
     if seller:
         result.update(exclusion_reasons=["seller_or_reseller"], evidence=[seller.group(0)])
         return result
+    fiction = FICTION_FRAME.search(text) or FICTION_FRAME.search(author_bio)
+    if fiction:
+        result.update(exclusion_reasons=["fictional_narrative_not_personal_scene"],
+                      evidence=[fiction.group(0)])
+        return result
     if GENERIC_GREETING.fullmatch(text):
         result["exclusion_reasons"] = ["greeting_without_scene"]
         return result
 
-    pet, pet_scene = PET_OWN.search(text), PET_SCENE.search(text)
-    home, home_scene = HOME_SELF.search(text), HOME_SCENE.search(text)
-    relation, relation_scene = REL_SELF.search(text), REL_SCENE.search(text)
+    pet_pair = _linked(PET_OWN, PET_SCENE, text)
+    home_pair = _linked(HOME_SELF, HOME_SCENE, text)
+    relation_pair = _linked(REL_SELF, REL_SCENE, text)
     photo = PHOTO.search(text)
-    if pet and pet_scene:
+    if pet_pair:
+        pet, pet_scene = pet_pair
         result.update(persona="pet_owner", consumer_evidence=pet.group(0),
                       scenario_evidence=pet_scene.group(0),
                       conversation_angle="their own pet story or everyday moment",
                       verification=["pet_ownership_from_account", "continuity_not_proven",
                                     "product_fit", "contact_eligibility"])
-    elif home and home_scene:
+    elif home_pair:
+        home, home_scene = home_pair
         result.update(persona="home_decorator", consumer_evidence=home.group(0),
                       scenario_evidence=home_scene.group(0),
                       conversation_angle="their own room or display arrangement",
                       verification=["personal_home_not_business", "product_fit", "contact_eligibility"])
-    elif relation and relation_scene and photo:
+    elif relation_pair and photo and min(abs(photo.start() - part.start()) for part in relation_pair) <= 200:
+        relation, relation_scene = relation_pair
         result.update(persona="relationship_memory", consumer_evidence=relation.group(0),
                       scenario_evidence=relation_scene.group(0),
                       conversation_angle="a shared memory they described",
@@ -108,6 +131,18 @@ def assess_consumer_profile(text: str, *, author_bio: str = "",
     ) else "single_post_self_report"
     result["priority"] = "medium" if result["evidence_strength"] == "specific_single_post_story" else "low"
     result["evidence"] = [result["consumer_evidence"], result["scenario_evidence"]]
+    if result["persona"] == "relationship_memory":
+        result["experience_phase"] = ("future_planned" if re.search(
+            r"\b(?:i\s+want\s+to|planning|next\s+(?:year|month)|will\s+be)\b", text, re.I)
+            else "past_or_current")
+        if result["experience_phase"] == "future_planned":
+            result["conversation_angle"] = "a future family occasion they are planning"
+    if result["persona"] == "pet_owner" and re.search(
+        r"\b(?:severe\s+pain|hospital|grief|bereavement|terminal\s+illness)\b", text, re.I
+    ):
+        result["needs_context_review"] = True
+        result["priority"] = "low"
+        result["verification"].append("sensitive_context_do_not_pitch")
     buying = BUYING.search(text)
     if buying:
         result["shopping_intent"] = "expressed"

@@ -118,3 +118,12 @@ test("all new copy scenes can include the verified first-order offer without pro
     assert.doesNotMatch(noOffer.text, /25%|[$€£]|\bUSD\b|\d+\.\d{2}/i);
   }
 });
+
+test("future relationship scene draft does not claim a shared memory already happened", () => {
+  const draft = createXLeadFirstContactDraft({
+    occasion: null, occasionConfidence: null, firstOrderOffer: false,
+    targetingData: { purchase_intent: { persona: "relationship_memory", experience_phase: "future_planned" } },
+  });
+  assert.match(draft.text, /important occasion/);
+  assert.doesNotMatch(draft.text, /memory you shared|your photo|preview|25%/i);
+});
