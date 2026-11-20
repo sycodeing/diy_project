@@ -1,158 +1,134 @@
-"""Evidence-only consumer personas for raw X review; never contact qualification."""
+"""Evidence-only life-scene personas for raw X review; never contact qualification."""
 from __future__ import annotations
 
 import re
 from typing import Any
 
-VERSION = "consumer-personas-v1.1"
-PERSONAS = ("gift_giver", "identity_consumer", "group_organizer")
+VERSION = "consumer-life-scenes-v2"
+PERSONAS = ("pet_owner", "home_decorator", "relationship_memory")
 
 SELLER = re.compile(
-    r"\b(?:we\s+(?:sell|make|offer)|i\s+(?:sell|make)\s+(?:custom|personalized|personalised|gifts?|merch|products?)|our\s+(?:shop|store|collection|products?)|"
+    r"\b(?:we\s+sell|we\s+(?:make|offer)\s+(?:custom|personalized|personalised|gifts?|merch|products?)|our\s+(?:shop|store|products?)|"
     r"shop\s+(?:now|our|my)|order\s+from\s+(?:our|my)|commissions?\s+open|"
-    r"for\s+sale|dm\s+me\s+to\s+order|use\s+(?:my\s+)?code|affiliate|"
-    r"my\s+shop|wholesale|bulk\s+orders?\s+(?:open|available))\b", re.I)
-RECIPIENT = re.compile(
-    r"\b(?:for|to)\s+(?:my|our)\s+(?:sister|brother|mom|mother|dad|father|"
-    r"wife|husband|partner|girlfriend|boyfriend|friend|daughter|son|teacher|"
-    r"colleague|coworker|grandma|grandpa|aunt|uncle|parents?)\b", re.I)
-GIFT = re.compile(r"\b(?:gift|present|surprise)\b", re.I)
-GIFT_OPEN = re.compile(
-    r"\b(?:i(?:'m|\s+am)\s+(?:planning|choosing|picking|looking|shopping|deciding)|"
-    r"i\s+(?:need|want|plan|hope)\s+(?:to\s+)?(?:get|buy|find|make|give|a\s+gift)|"
-    r"we(?:'re|\s+are)\s+(?:planning|choosing|looking)|"
-    r"thinking\s+(?:of|about)\s+(?:getting|making|buying)|"
-    r"any\s+(?:gift\s+)?(?:ideas|recommendations)|what\s+should\s+i\s+(?:get|buy))\b", re.I)
-GIFT_RESOLVED = re.compile(
-    r"\b(?:gift\s+sorted|already\s+(?:bought|ordered)|(?:bought|ordered|received)\s+"
-    r"(?:her|him|them|my\s+\w+)\s+.{0,60}(?:gift|present|pillow)|"
-    r"(?:gifted|gave)\s+(?:her|him|them)\b|(?:gift|present)\s+(?:arrived|delivered))\b", re.I)
-INTEREST = re.compile(
-    r"\b(?:pet|dog|cat|car|motorcycle|bike|guitar|concert|band|music|anime|game|"
-    r"fandom|fan|cosplay|my\s+oc|original\s+character|my\s+character)\b", re.I)
-MERCH = re.compile(
-    r"\b(?:merch|merchandise|keychains?|stickers?|pins?|prints?|posters?|"
-    r"pillow(?:\s+covers?)?s?|cushions?|shirts?|hoodies?|mugs?|keepsakes?|"
-    r"custom|personalized|personalised)\b", re.I)
-HISTORY = re.compile(
-    r"\b(?:i\s+collect|i(?:'ve|\s+have)\s+bought|i\s+(?:buy|bought)|"
-    r"my\s+collection|i(?:'m|\s+am)\s+collecting)\b", re.I)
-ACTIVE = re.compile(
-    r"\b(?:i\s+want|i(?:'m|\s+am)\s+(?:looking|planning|choosing|deciding)|"
-    r"thinking\s+(?:of|about)\s+(?:getting|buying|making)|"
-    r"where\s+can\s+i|any\s+recommendations|i\s+need|want\s+(?:something|a|to))\b", re.I)
-HISTORICAL_PATTERN = re.compile(r"\b(?:collect|collection|for\s+years|this\s+year|over\s+the\s+years)\b", re.I)
-CURRENT_RESOLVED = re.compile(
-    r"\b(?:my\s+custom\s+.{0,45}\s+(?:just\s+arrived|arrived\s+today)|"
-    r"exactly\s+what\s+i\s+wanted|already\s+(?:ordered|bought)\s+(?:the|my)\b)\b", re.I)
-DIY = re.compile(r"\b(?:i(?:'m|\s+am)\s+(?:sewing|making|embroidering)|i\s+(?:will|plan\s+to)\s+(?:sew|make|embroider))\b", re.I)
-CONSUMPTION_ACTION = re.compile(
-    r"\b(?:i\s+(?:want|need)\s+(?:to\s+)?(?:buy|get|order|make|find)|"
-    r"i(?:'m|\s+am)\s+(?:looking|planning|choosing|deciding)\s+(?:for\s+|to\s+(?:buy|get|order|make)\s+|a\s+|an\s+)|"
-    r"thinking\s+(?:of|about)\s+(?:getting|buying|making)|where\s+can\s+i\s+(?:buy|get|order)|"
-    r"any\s+recommendations\s+for|want\s+something\s+with)\b", re.I)
-ORGANIZING = re.compile(
-    r"\b(?:i(?:'m|\s+am)\s+(?:organizing|planning|hosting|coordinating)|"
-    r"we(?:'re|\s+are)\s+(?:organizing|planning|hosting)|"
-    r"i\s+(?:organize|host|plan)\s+our)\b", re.I)
-GROUP = re.compile(r"\b(?:our|my)\s+(?:book\s+club|car\s+club|fan\s+club|club|team|group|class|choir|crew|community)\b", re.I)
-EVENT = re.compile(
-    r"\b(?:anniversary|meetup|event|reunion|party|gathering|celebration|"
-    r"next\s+(?:month|week)|in\s+\d+\s+(?:days|weeks|months)|"
-    r"for\s+\d+\s+(?:people|members|attendees))\b", re.I)
-PHOTO_COVER = re.compile(r"\b(?:photo|picture|image)\b.{0,45}\b(?:pillow\s+cover|cushion\s+cover)\b|\b(?:pillow\s+cover|cushion\s+cover)\b.{0,45}\b(?:photo|picture|image)\b", re.I)
-OTHER_PRODUCT = re.compile(r"\b(?:keychain|sticker|pin|print|poster|mug|shirt|hoodie)s?\b", re.I)
+    r"for\s+sale|dm\s+me\s+to\s+order|affiliate|use\s+(?:my\s+)?code|"
+    r"my\s+shop|wholesale|book\s+a\s+viewing|shop\s+the\s+collection|"
+    r"i\s+(?:sell|make)\s+(?:custom|personalized|personalised|gifts?|merch|products?))\b", re.I)
+PHOTO = re.compile(r"\b(?:photo|picture|snapshot|portrait|image|album|memory|memories)\b", re.I)
+PET_OWN = re.compile(r"\b(?:my|our)\s+(?:cat|dog|puppy|kitten|pup|pets?)(?:'s)?\b", re.I)
+PET_SCENE = re.compile(
+    r"\b(?:birthday|turns?\s+\w+\s+today|years?\s+of|again|always|every\s+day|"
+    r"fell\s+asleep|steal(?:s|ing)?\s+my|on\s+my\s+(?:sofa|hoodie|lap|bed)|"
+    r"first\s+(?:walk|trip|day)|this\s+(?:photo|picture)|made\s+me\s+smile)\b", re.I)
+HOME_SELF = re.compile(r"\b(?:my|our)\s+(?:(?:new|first)\s+)?(?:home|house|apartment|flat|room|living\s+room|"
+                       r"bedroom|sofa|couch|wall|corner|place)\b", re.I)
+HOME_SCENE = re.compile(r"\b(?:decorat(?:e|ing|ed|ion)|redecorat\w*|arrang(?:e|ing|ed)|"
+                        r"set(?:ting)?\s+up|display(?:ing|ed)?|hung|hanging|"
+                        r"new\s+(?:sofa|room|home|apartment)|photos?\s+on\s+(?:the|my|our)\s+wall|"
+                        r"family\s+photos?)\b", re.I)
+REL_SELF = re.compile(r"\b(?:my|our)\s+(?:first\s+trip|wedding|anniversary|graduation|"
+                      r"honeymoon|partner|wife|husband|sister|brother|mom|mum|dad|family|"
+                      r"friend|friends|memories|story)\b", re.I)
+REL_SCENE = re.compile(r"\b(?:anniversary|graduat(?:ion|ed)|wedding|honeymoon|"
+                       r"first\s+trip|years?\s+together|remember|reminds?\s+me|"
+                       r"still\s+makes?\s+me\s+smile|shared\s+memories|our\s+story)\b", re.I)
+GENERIC_GREETING = re.compile(r"^\s*happy\s+(?:birthday|anniversary|graduation)\b[^.!?]*[.!?]?\s*$", re.I)
+BUYING = re.compile(r"\b(?:i(?:'m|\s+am)\s+(?:shopping\s+for|buying|"
+                    r"choosing\s+(?:a|an)\s+(?:gift|present|custom|pillow|cushion|print))|"
+                    r"i\s+(?:want|need|plan)\s+to\s+(?:buy|order)|"
+                    r"where\s+can\s+i\s+(?:buy|order)|any\s+recommendations?\s+for\s+(?:a|an)\s+"
+                    r"(?:gift|present|custom|pillow|cushion|print))\b", re.I)
+PHOTO_COVER = re.compile(r"\b(?:photo|picture|image)\b.{0,45}\b(?:pillow\s+cover|cushion\s+cover)\b|"
+                         r"\b(?:pillow\s+cover|cushion\s+cover)\b.{0,45}\b(?:photo|picture|image)\b", re.I)
+PHOTO_TOWEL = re.compile(r"\b(?:photo|picture|image)\b.{0,45}\b(?:face\s+towel)\b|"
+                         r"\b(?:face\s+towel)\b.{0,45}\b(?:photo|picture|image)\b", re.I)
 PILLOW = re.compile(r"\b(?:pillow|cushion)s?\b", re.I)
 PILLOW_REJECTION = re.compile(r"\b(?:not\s+(?:a|any)?\s*|no\s+|without\s+)(?:pillow|cushion)s?\b", re.I)
+OTHER_PRODUCT = re.compile(r"\b(?:keychain|sticker|pin|print|poster|mug|shirt|hoodie)s?\b", re.I)
 
 
 def _result() -> dict[str, Any]:
     return {
         "version": VERSION, "tier": "excluded", "persona": None, "priority": "none",
-        "current_need": "unknown", "product_fit": "unknown", "evidence": [],
-        "consumer_evidence": None, "scenario_evidence": None, "product_evidence": None,
-        "recipient_evidence": None, "exclusion_reasons": [], "verification": [],
-        "human_review_required": True, "contact_permission": False,
-        "media_eligibility": "not_assessed",
-        "specific_other_product": False,
+        "shopping_intent": "unknown", "current_need": "unknown", "product_fit": "unknown",
+        "person_fit": "unknown", "scenario_fit": "unknown", "conversation_angle": None,
+        "evidence": [], "consumer_evidence": None, "scenario_evidence": None,
+        "product_evidence": None, "recipient_evidence": None, "exclusion_reasons": [],
+        "verification": [], "human_review_required": True, "contact_permission": False,
+        "media_eligibility": "not_assessed", "specific_other_product": False,
+        "continuity_evidence": "not_established_by_single_post",
+        "evidence_strength": "none",
     }
 
 
-def assess_consumer_profile(text: str, *, author_bio: str = "") -> dict[str, Any]:
-    """Classify an original post as one raw-review persona, preserving matched text."""
+def assess_consumer_profile(text: str, *, author_bio: str = "",
+                            is_repost: bool = False) -> dict[str, Any]:
+    """Preserve matched first-person scene evidence, independent of buying intent."""
     text = text.replace("’", "'").strip()
     result = _result()
+    if is_repost:
+        result["exclusion_reasons"] = ["repost_not_personal_scene"]
+        return result
     seller = SELLER.search(text) or SELLER.search(author_bio)
     if seller:
         result.update(exclusion_reasons=["seller_or_reseller"], evidence=[seller.group(0)])
         return result
-    # A completed gift or one-off custom purchase is not an open buyer node.
-    # A prior purchase may prove affinity while a later clause opens a new need.
-    new_need = CONSUMPTION_ACTION.search(text)
-    resolved = GIFT_RESOLVED.search(text) or CURRENT_RESOLVED.search(text)
-    if resolved and (not new_need or new_need.start() <= resolved.start()):
-        result["exclusion_reasons"] = ["current_purchase_resolved"]
-        return result
-    if DIY.search(text):
-        result["exclusion_reasons"] = ["self_made_not_customer"]
+    if GENERIC_GREETING.fullmatch(text):
+        result["exclusion_reasons"] = ["greeting_without_scene"]
         return result
 
-    recipient = RECIPIENT.search(text)
-    gift = GIFT.search(text)
-    open_gift = GIFT_OPEN.search(text)
-    if gift and recipient and open_gift:
-        result.update(tier="exploratory", persona="gift_giver", priority="high",
-                      current_need="open", product_fit="unknown",
-                      evidence=[open_gift.group(0), gift.group(0), recipient.group(0)],
-                      consumer_evidence=open_gift.group(0), scenario_evidence=gift.group(0),
-                      recipient_evidence=recipient.group(0),
-                      verification=["recipient_and_occasion", "product_fit", "account_is_personal"])
-    else:
-        organizing = ORGANIZING.search(text)
-        group = GROUP.search(text)
-        event = EVENT.search(text)
-        if organizing and group and event:
-            result.update(tier="exploratory", persona="group_organizer", priority="medium",
-                          current_need="open", product_fit="unknown",
-                          evidence=[organizing.group(0), group.group(0), event.group(0)],
-                          consumer_evidence=organizing.group(0), scenario_evidence=event.group(0),
-                          verification=["self_use_not_resale", "group_size_and_deadline", "product_fit"])
-        else:
-            interest = INTEREST.search(text)
-            merch = MERCH.search(text)
-            history = HISTORY.search(text)
-            active = CONSUMPTION_ACTION.search(text)
-            if interest and merch and (history or active):
-                ongoing = bool(active)
-                if not ongoing and not HISTORICAL_PATTERN.search(text):
-                    result["exclusion_reasons"] = ["single_completed_purchase"]
-                    return result
-                consumer = active or history
-                result.update(tier="exploratory", persona="identity_consumer",
-                              priority="medium" if ongoing else "low",
-                              current_need="open" if ongoing else "unknown", product_fit="unknown",
-                              evidence=[consumer.group(0), interest.group(0), merch.group(0)],
-                              consumer_evidence=consumer.group(0), scenario_evidence=interest.group(0),
-                              product_evidence=merch.group(0),
-                              verification=["current_need" if not ongoing else "product_fit",
-                                            "account_is_personal"])
-    if result["tier"] == "excluded":
-        result["exclusion_reasons"] = ["no_concrete_consumer_signal"]
+    pet, pet_scene = PET_OWN.search(text), PET_SCENE.search(text)
+    home, home_scene = HOME_SELF.search(text), HOME_SCENE.search(text)
+    relation, relation_scene = REL_SELF.search(text), REL_SCENE.search(text)
+    photo = PHOTO.search(text)
+    if pet and pet_scene:
+        result.update(persona="pet_owner", consumer_evidence=pet.group(0),
+                      scenario_evidence=pet_scene.group(0),
+                      conversation_angle="their own pet story or everyday moment",
+                      verification=["pet_ownership_from_account", "continuity_not_proven",
+                                    "product_fit", "contact_eligibility"])
+    elif home and home_scene:
+        result.update(persona="home_decorator", consumer_evidence=home.group(0),
+                      scenario_evidence=home_scene.group(0),
+                      conversation_angle="their own room or display arrangement",
+                      verification=["personal_home_not_business", "product_fit", "contact_eligibility"])
+    elif relation and relation_scene and photo:
+        result.update(persona="relationship_memory", consumer_evidence=relation.group(0),
+                      scenario_evidence=relation_scene.group(0),
+                      conversation_angle="a shared memory they described",
+                      verification=["relationship_context", "product_fit", "contact_eligibility"])
+    if not result["persona"]:
+        result["exclusion_reasons"] = ["no_first_person_life_scene"]
         return result
-    current_text = (text[new_need.start():] if new_need else text) if result["current_need"] == "open" else ""
-    pillow_rejected = bool(PILLOW_REJECTION.search(current_text))
-    photo_cover = None if pillow_rejected else PHOTO_COVER.search(current_text)
-    pillow = None if pillow_rejected else PILLOW.search(current_text)
-    if photo_cover:
+
+    result["tier"] = "exploratory"
+    result["person_fit"] = "plausible_individual"
+    result["scenario_fit"] = "plausible"
+    result["evidence_strength"] = "specific_single_post_story" if (
+        result["persona"] != "pet_owner" or re.search(r"\b(?:years?|birthday|first\s+trip)\b", text, re.I)
+    ) else "single_post_self_report"
+    result["priority"] = "medium" if result["evidence_strength"] == "specific_single_post_story" else "low"
+    result["evidence"] = [result["consumer_evidence"], result["scenario_evidence"]]
+    buying = BUYING.search(text)
+    if buying:
+        result["shopping_intent"] = "expressed"
+        result["current_need"] = "open"
+        result["evidence"].append(buying.group(0))
+    towel = PHOTO_TOWEL.search(text)
+    if towel:
         result["product_fit"] = "verified"
-    elif pillow:
-        result["product_fit"] = "adjacent"
-    product = photo_cover or pillow or OTHER_PRODUCT.search(current_text)
-    if product:
-        result["product_evidence"] = product.group(0)
-    if OTHER_PRODUCT.search(current_text) and not pillow:
-        result["specific_other_product"] = True
-        result["product_fit"] = "unknown"
-        result["priority"] = "low"
+        result["product_evidence"] = towel.group(0)
+    if not PILLOW_REJECTION.search(text):
+        cover = PHOTO_COVER.search(text)
+        pillow = PILLOW.search(text)
+        if cover:
+            result["product_fit"] = "verified"
+            result["product_evidence"] = cover.group(0)
+        elif pillow:
+            result["product_fit"] = "adjacent"
+            result["product_evidence"] = pillow.group(0)
+    other = OTHER_PRODUCT.search(text)
+    if other and result["product_fit"] != "verified" and result["current_need"] == "open":
+        result.update(specific_other_product=True, product_fit="unknown", priority="low",
+                      product_evidence=other.group(0))
         result["verification"].append("other_product_requested_check_fit_before_draft")
     return result

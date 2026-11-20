@@ -8,6 +8,7 @@ from lead_studio.config import Settings
 from lead_studio.consumer_profiles import assess_consumer_profile
 from probe_consumer_recall import QUERY_TIERS, run_consumer_recall_probe
 from probe_purchase_recall import extract_raw_reviews
+from reclassify_consumer_archive import reclassify_archive
 
 
 NOW = datetime(2026, 11, 20, 8, tzinfo=timezone.utc)
@@ -21,34 +22,29 @@ def _post(post_id, text, handle=None):
 
 def test_three_personas_and_boundaries():
     cases = [
-        ("I'm planning a graduation gift for my sister using a photo of us.", "gift_giver", "open"),
-        ("Happy birthday to my sister!", None, "unknown"),
-        ("Ordered her custom photo pillow yesterday. Gift sorted.", None, "unknown"),
-        ("I collect car merch; these are the keychains I bought this year.", "identity_consumer", "unknown"),
-        ("I've bought concert merch for years and want something with my own guitar on it.", "identity_consumer", "open"),
-        ("I love cars. Look at my new avatar.", None, "unknown"),
-        ("My custom car pillow just arrived, exactly what I wanted.", None, "unknown"),
-        ("I'm organizing our book club anniversary for 12 people next month, thinking about keepsakes with everyone's name.", "group_organizer", "open"),
-        ("Had fun at our club dinner.", None, "unknown"),
-        ("We sell personalized graduation gifts, order from our shop.", None, "unknown"),
-        ("I want to be famous. I love anime merch.", None, "unknown"),
-        ("I'm planning a gift for my sister: I'm sewing her a pillow myself.", None, "unknown"),
-        ("I've already bought concert posters for years and now I'm choosing a custom photo pillow cover with my guitar.", "identity_consumer", "open"),
+        ("My dog turns five today. Five years of stealing my spot on the sofa.", "pet_owner"),
+        ("My cat fell asleep on my hoodie again.", "pet_owner"),
+        ("Finally arranged my new sofa corner with our family photos.", "home_decorator"),
+        ("Ten years together. This photo from our first trip still makes me smile.", "relationship_memory"),
+        ("We make new memories on every anniversary. This photo from our first trip still makes me smile.", "relationship_memory"),
+        ("Finally arranged our collection of family photos on my new living room wall.", "home_decorator"),
+        ("Happy birthday Mum!", None),
+        ("Cute cat!", None),
+        ("Our shop makes custom dog pillow covers. Order now.", None),
+        ("Tour this beautifully staged living room. Book a viewing.", None),
+        ("I want to be famous. I love anime merch.", None),
     ]
-    for text, persona, current_need in cases:
+    for text, persona in cases:
         intent = assess_consumer_profile(text)
-        assert (intent["persona"], intent["current_need"]) == (persona, current_need), text
+        assert intent["persona"] == persona, text
+        assert intent["shopping_intent"] == "unknown", text
         assert intent["contact_permission"] is False
-    assert assess_consumer_profile(cases[-1][0])["product_fit"] == "verified"
-    assert assess_consumer_profile(cases[7][0])["product_fit"] == "unknown"
-    unrelated_gift = assess_consumer_profile("I'm looking for a keychain to buy as a gift for my friend.")
-    assert unrelated_gift["persona"] == "gift_giver"
-    assert unrelated_gift["specific_other_product"] is True
-    assert unrelated_gift["product_fit"] == "unknown"
-    assert unrelated_gift["priority"] == "low"
-    no_pillow = assess_consumer_profile("I'm choosing a keychain as a gift for my friend, not a pillow.")
-    assert no_pillow["specific_other_product"] is True
-    assert no_pillow["product_fit"] == "unknown"
+    assert assess_consumer_profile(cases[2][0], author_bio="Graphic designer, coffee enthusiast")["persona"] == "home_decorator"
+    assert assess_consumer_profile(cases[0][0], is_repost=True)["persona"] is None
+    keys = assess_consumer_profile("My cat fell asleep on my hoodie again. I'm looking for my keys.")
+    assert keys["shopping_intent"] == "unknown"
+    assert keys["specific_other_product"] is False
+    assert assess_consumer_profile("My cat's photo on a custom face towel made me smile.")["product_fit"] == "verified"
 
 
 def test_six_distinct_pages_archive_and_contacted_exclusion(tmp_path):
@@ -58,8 +54,11 @@ def test_six_distinct_pages_archive_and_contacted_exclusion(tmp_path):
             return httpx.Response(200, json={"total_bonus_credits": 10000})
         calls.append(request.url.params["query"])
         number = len(calls)
-        text = "I'm planning a graduation gift for my sister using a photo of us."
-        return httpx.Response(200, json={"tweets": [_post(number, text)], "has_next_page": True,
+        text = "My dog turns five today. Five years of stealing my spot on the sofa."
+        post = _post(number, text)
+        if number == 3:
+            post["retweetedTweet"] = {"id": "900"}
+        return httpx.Response(200, json={"tweets": [post], "has_next_page": True,
                                           "next_cursor": "would-cost-an-extra-page"})
 
     async def run():
@@ -70,11 +69,11 @@ def test_six_distinct_pages_archive_and_contacted_exclusion(tmp_path):
 
     summary = asyncio.run(run())
     assert len(calls) == 6
-    assert [name for name, _ in QUERY_TIERS] == ["gift_giver_1", "identity_consumer_1",
-        "group_organizer_1", "gift_giver_2", "identity_consumer_2", "group_organizer_2"]
+    assert [name for name, _ in QUERY_TIERS] == ["pet_owner_1", "home_decorator_1",
+        "relationship_memory_1", "pet_owner_2", "home_decorator_2", "relationship_memory_2"]
     assert summary["retrieved_new_posts"] == 6
     assert summary["contacted_excluded"] == 1
-    assert summary["persona_unique_authors"]["gift_giver"] == 5
+    assert summary["persona_unique_authors"]["pet_owner"] == 4
     assert summary["strict_qualified"] == 0
     archive = tmp_path / f'{summary["archive_id"]}.json'
     document = json.loads(archive.read_text(encoding="utf-8"))
@@ -82,7 +81,26 @@ def test_six_distinct_pages_archive_and_contacted_exclusion(tmp_path):
     rows = extract_raw_reviews([archive])
     assert len(rows) == 6
     assert next(row for row in rows if row["handle"] == "user2")["classifierTier"] == "excluded"
-    assert all(row["classifierVersion"] == "consumer-personas-v1.1" for row in rows)
+    assert next(row for row in rows if row["handle"] == "user3")["classifierTier"] == "excluded"
+    assert all(row["classifierVersion"] == "consumer-life-scenes-v2" for row in rows)
+
+
+def test_old_consumer_archive_is_reassessed_without_changing_source_or_prior_snapshot(tmp_path):
+    source = tmp_path / "old.json"
+    post = _post(1, "My cat fell asleep on my hoodie again.")
+    source.write_text(json.dumps({"kind": "query_only_consumer_recall", "queries": [{
+        "name": "gift_giver_1", "pages": [{"response": {"tweets": [post]}}],
+        "decisions": [{"post_id": "1", "intent": {"version": "consumer-personas-v1.1",
+            "tier": "excluded", "persona": None, "contact_status": "not_seen_in_snapshot"}}],
+    }]}), encoding="utf-8")
+    destination = tmp_path / "reclass.json"
+    result = reclassify_archive(source, destination)
+    row = result["rows"][0]
+    assert row["source_archive"] == "old.json"
+    assert row["source_stage"] == "gift_giver_1"
+    assert row["prior_intent"]["tier"] == "excluded"
+    assert row["new_intent"]["persona"] == "pet_owner"
+    assert row["new_intent"]["previous_classification"]["version"] == "consumer-personas-v1.1"
 
 
 def test_snapshot_failure_does_not_call_paid_api(tmp_path):

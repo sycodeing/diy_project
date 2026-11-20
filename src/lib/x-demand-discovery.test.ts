@@ -27,8 +27,8 @@ test("consumer-scene recall requires the v9 worker", () => {
 });
 
 test("three-persona raw recall cannot be claimed by an old worker", () => {
-  assert.equal(supportsConsumerRecall("1.15.9"), false);
-  assert.equal(supportsConsumerRecall("1.16.0"), true);
+  assert.equal(supportsConsumerRecall("1.16.9"), false);
+  assert.equal(supportsConsumerRecall("1.17.0"), true);
   assert.equal(supportsConsumerRecall(undefined), false);
 });
 

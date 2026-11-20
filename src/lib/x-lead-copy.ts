@@ -31,6 +31,18 @@ export function createXLeadFirstContactDraft(context: XLeadDraftContext) {
   const intent = context.targetingData?.purchase_intent;
   if (intent && typeof intent === "object" && !Array.isArray(intent)) {
     const signal = intent as Record<string, unknown>;
+    if (signal.persona === "pet_owner") {
+      return { variantKey: "life_pet_owner_v1" as const, contentMode: "first_contact_text" as const,
+        text: `I saw your pet story. I make personalized photo pillow covers and can share an example from my own work if that feels relevant.${offer}` };
+    }
+    if (signal.persona === "home_decorator") {
+      return { variantKey: "life_home_v1" as const, contentMode: "first_contact_text" as const,
+        text: `I saw your room setup. I make custom photo pillow covers and can share an example from my own work if that fits your space.${offer}` };
+    }
+    if (signal.persona === "relationship_memory") {
+      return { variantKey: "life_memory_v1" as const, contentMode: "first_contact_text" as const,
+        text: `I saw the memory you shared. I make personalized photo pillow covers and can share an example from my own work if a keepsake feels relevant.${offer}` };
+    }
     if (signal.persona === "gift_giver") {
       return { variantKey: "consumer_gift_v1" as const, contentMode: "first_contact_text" as const,
         text: `I saw you're planning a gift. I make custom photo pillow covers and can share an example from my own work.${offer} Would that fit your idea?` };

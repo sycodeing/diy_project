@@ -21,13 +21,19 @@ from probe_purchase_recall import (
 
 # One page per hypothesis. The first three pages cover all personas.
 QUERY_TIERS = (
-    ("gift_giver_1", '("gift for my sister" OR "gift for my mom" OR "gift for my friend") lang:en'),
-    ("identity_consumer_1", '(car OR guitar OR pet) (merch OR keychain OR custom) lang:en'),
-    ("group_organizer_1", '("organizing our" OR "planning our") (club OR team OR group) lang:en'),
-    ("gift_giver_2", '("planning a gift" OR "choosing a gift" OR "graduation gift") lang:en'),
-    ("identity_consumer_2", '("my OC" OR "my character" OR "my car") (merch OR print OR pillow) lang:en'),
-    ("group_organizer_2", '("book club" OR "car club" OR "fan club") (anniversary OR meetup OR event) lang:en'),
+    ("pet_owner_1", '("my dog" OR "my cat") lang:en'),
+    ("home_decorator_1", '("my living room" OR "our living room") lang:en'),
+    ("relationship_memory_1", '("our first trip" OR "our anniversary") lang:en'),
+    ("pet_owner_2", '("our dog" OR "our cat") (photo OR sofa OR birthday) lang:en'),
+    ("home_decorator_2", '("my room" OR "our home") (sofa OR wall OR photos) lang:en'),
+    ("relationship_memory_2", '("my wedding" OR "our graduation") (photo OR memories) lang:en'),
 )
+
+
+def is_repost(post: dict[str, Any]) -> bool:
+    return (post.get("isRetweet") is True or post.get("is_retweet") is True
+            or isinstance(post.get("retweetedTweet"), dict)
+            or isinstance(post.get("retweeted_tweet"), dict))
 
 
 def _contact_match(post: dict[str, Any], snapshot: dict[str, Any]) -> bool:
@@ -92,7 +98,7 @@ async def run_consumer_recall_probe(
     valid: set[str] = set()
     authors: set[str] = set()
     persona_authors: dict[str, set[str]] = {name: set() for name in
-                                           ("gift_giver", "identity_consumer", "group_organizer")}
+                                           ("pet_owner", "home_decorator", "relationship_memory")}
     tiers: Counter[str] = Counter()
     latest: list[str] = []
     contacted_count = 0
@@ -165,7 +171,7 @@ async def run_consumer_recall_probe(
                     authors.add(author_id)
                 latest.append(posted_at)
                 intent = assess_consumer_profile(str(post.get("text") or ""),
-                                                 author_bio=_author_bio(post))
+                                                 author_bio=_author_bio(post), is_repost=is_repost(post))
                 if _contact_match(post, snapshot):
                     contacted_count += 1
                     intent.update(tier="excluded", persona=None, priority="none",
