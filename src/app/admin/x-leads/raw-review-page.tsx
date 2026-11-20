@@ -51,7 +51,7 @@ export async function RawReviewPage({ filters }: { filters: RawFilters }) {
     supabase.from("x_lead_raw_reviews").select("post_id", { count: "exact", head: true }).eq("classifier_tier", "exploratory"),
     supabase.from("x_lead_raw_reviews").select("post_id", { count: "exact", head: true }).eq("classifier_tier", "explicit_request"),
     supabase.from("x_lead_raw_reviews").select("post_id", { count: "exact", head: true }).eq("classifier_tier", "excluded"),
-    supabase.from("x_lead_raw_reviews").select("post_id", { count: "exact", head: true }).not("classifier_version", "in", "(pet-demand-v9-consumer,consumer-personas-v1)"),
+    supabase.from("x_lead_raw_reviews").select("post_id", { count: "exact", head: true }).not("classifier_version", "in", "(pet-demand-v9-consumer,consumer-personas-v1,consumer-personas-v1.1)"),
   ]);
   const countError = [totalResult, potentialResult, explicitResult, excludedResult, oldResult].find((result) => result.error)?.error;
   if (error || countError) throw new Error((error || countError)!.message);
@@ -98,7 +98,8 @@ export async function RawReviewPage({ filters }: { filters: RawFilters }) {
       {row.classifier_tier !== "excluded" ? <p className="mt-2 text-xs">入选证据：{String(row.intent.consumer_evidence || row.intent.request_evidence || row.intent.evidence || "待人工核对")} · 场景：{String(row.intent.scenario_evidence || row.intent.scene || "未明确")} · 商品适配：{String(row.intent.product_fit || "待审")} · 复核优先级：{String(row.intent.priority || "待审")} · 当前需求：{String(row.intent.current_need || "待审")}</p> : null}
       {row.classifier_tier !== "excluded" && Array.isArray(row.intent.verification) ? <p className="mt-1 text-xs text-muted">待核实：{row.intent.verification.map(String).join("、")}</p> : null}
       {row.classifier_tier !== "excluded" ? <p className="mt-2 text-xs text-muted">下一步：人工核对原帖与账号、商品适配和联系资格。草稿只用自家示例；原帖图片仅供理解语境，未核验归属或生成该用户的定制预览。</p> : null}
-      {row.review_status === "unreviewed" && ["exploratory", "explicit_request"].includes(row.classifier_tier) ? <p className="mt-2 rounded-lg border border-line bg-white p-3 text-sm"><strong>只读场景草稿 · 自家示例：</strong>{createXLeadFirstContactDraft({
+      {row.intent.specific_other_product === true ? <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">原帖指定其他商品；本站枕套适配未证实，暂不生成可使用的联系草稿。先人工核对商品与地区。</p> : null}
+      {row.review_status === "unreviewed" && row.intent.specific_other_product !== true && ["exploratory", "explicit_request"].includes(row.classifier_tier) ? <p className="mt-2 rounded-lg border border-line bg-white p-3 text-sm"><strong>只读场景草稿 · 自家示例：</strong>{createXLeadFirstContactDraft({
         occasion: null, occasionConfidence: null, petType: null, firstOrderOffer,
         targetingData: { purchase_intent: row.intent },
       }).text}<span className="mt-1 block text-xs text-muted">草稿未保存或发送；需人工复核。原帖图片不能作为可预览素材。</span></p> : null}

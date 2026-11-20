@@ -41,6 +41,14 @@ def test_three_personas_and_boundaries():
         assert intent["contact_permission"] is False
     assert assess_consumer_profile(cases[-1][0])["product_fit"] == "verified"
     assert assess_consumer_profile(cases[7][0])["product_fit"] == "unknown"
+    unrelated_gift = assess_consumer_profile("I'm looking for a keychain to buy as a gift for my friend.")
+    assert unrelated_gift["persona"] == "gift_giver"
+    assert unrelated_gift["specific_other_product"] is True
+    assert unrelated_gift["product_fit"] == "unknown"
+    assert unrelated_gift["priority"] == "low"
+    no_pillow = assess_consumer_profile("I'm choosing a keychain as a gift for my friend, not a pillow.")
+    assert no_pillow["specific_other_product"] is True
+    assert no_pillow["product_fit"] == "unknown"
 
 
 def test_six_distinct_pages_archive_and_contacted_exclusion(tmp_path):
@@ -74,7 +82,7 @@ def test_six_distinct_pages_archive_and_contacted_exclusion(tmp_path):
     rows = extract_raw_reviews([archive])
     assert len(rows) == 6
     assert next(row for row in rows if row["handle"] == "user2")["classifierTier"] == "excluded"
-    assert all(row["classifierVersion"] == "consumer-personas-v1" for row in rows)
+    assert all(row["classifierVersion"] == "consumer-personas-v1.1" for row in rows)
 
 
 def test_snapshot_failure_does_not_call_paid_api(tmp_path):

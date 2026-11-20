@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-VERSION = "consumer-personas-v1"
+VERSION = "consumer-personas-v1.1"
 PERSONAS = ("gift_giver", "identity_consumer", "group_organizer")
 
 SELLER = re.compile(
@@ -63,6 +63,7 @@ EVENT = re.compile(
 PHOTO_COVER = re.compile(r"\b(?:photo|picture|image)\b.{0,45}\b(?:pillow\s+cover|cushion\s+cover)\b|\b(?:pillow\s+cover|cushion\s+cover)\b.{0,45}\b(?:photo|picture|image)\b", re.I)
 OTHER_PRODUCT = re.compile(r"\b(?:keychain|sticker|pin|print|poster|mug|shirt|hoodie)s?\b", re.I)
 PILLOW = re.compile(r"\b(?:pillow|cushion)s?\b", re.I)
+PILLOW_REJECTION = re.compile(r"\b(?:not\s+(?:a|any)?\s*|no\s+|without\s+)(?:pillow|cushion)s?\b", re.I)
 
 
 def _result() -> dict[str, Any]:
@@ -73,6 +74,7 @@ def _result() -> dict[str, Any]:
         "recipient_evidence": None, "exclusion_reasons": [], "verification": [],
         "human_review_required": True, "contact_permission": False,
         "media_eligibility": "not_assessed",
+        "specific_other_product": False,
     }
 
 
@@ -138,11 +140,19 @@ def assess_consumer_profile(text: str, *, author_bio: str = "") -> dict[str, Any
         result["exclusion_reasons"] = ["no_concrete_consumer_signal"]
         return result
     current_text = (text[new_need.start():] if new_need else text) if result["current_need"] == "open" else ""
-    if PHOTO_COVER.search(current_text):
+    pillow_rejected = bool(PILLOW_REJECTION.search(current_text))
+    photo_cover = None if pillow_rejected else PHOTO_COVER.search(current_text)
+    pillow = None if pillow_rejected else PILLOW.search(current_text)
+    if photo_cover:
         result["product_fit"] = "verified"
-    elif PILLOW.search(current_text) or OTHER_PRODUCT.search(current_text):
+    elif pillow:
         result["product_fit"] = "adjacent"
-    product = PHOTO_COVER.search(current_text) or PILLOW.search(current_text) or OTHER_PRODUCT.search(current_text)
+    product = photo_cover or pillow or OTHER_PRODUCT.search(current_text)
     if product:
         result["product_evidence"] = product.group(0)
+    if OTHER_PRODUCT.search(current_text) and not pillow:
+        result["specific_other_product"] = True
+        result["product_fit"] = "unknown"
+        result["priority"] = "low"
+        result["verification"].append("other_product_requested_check_fit_before_draft")
     return result
