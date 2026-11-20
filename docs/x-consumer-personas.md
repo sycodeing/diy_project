@@ -6,6 +6,6 @@
 
 线上产品目录读取 `products.active`；截至本次只读核对，`custom-pillow` 和 `face-towel` 有活动变体。分类器仅对原文明示照片枕套或照片面巾标 `product_fit=verified`；纯生活场景保持 `unknown`，不声称用户已选择商品。目录可能变化，实际商品适配必须人工再次核对。
 
-六条短查询分别覆盖三画像，每画像两组、每组最多一页，最近三天。查询不要求买、推荐或求购词。执行前取得已联系快照，失败即停止；每页原始响应先归档再分类，按历史 post ID 和本轮 author 分别统计。余额至少 3000 credits，本轮观测支出达到 2500 即停。原始入选与严格资格分开报告，不为凑数字扩大页数。
+六条短查询覆盖宠物四组、家居一组、关系一组，每组最多一页，最近三天。前四组使用服务商的 `filter:images` 作为媒体倾向实验，后两组保留不带媒体或照片词的自然宠物配文；图片过滤命中不证明原帖有可用宠物照片，仍按原帖自己的 photo 元数据单独计数，且不做视觉或归属验证。查询不要求买、推荐或求购词。执行前取得已联系快照，失败即停止；每页原始响应先归档再分类，按历史 post ID 和本轮 author 分别统计。余额至少 3000 credits，本轮观测支出达到 2500 即停。原始入选与严格资格分开报告，不为凑数字扩大页数。
 
 旧 `consumer-personas-v1.1` 档案通过 `reclassify_consumer_archive.py SOURCE DESTINATION` 离线重审，输出每帖旧新分类快照；只有分类字段可回填，原始档案、source、媒体、首次留存和人工状态保持原样。旧批复核不算新 API 数据。验证：`x-lead-studio/.venv/Scripts/python.exe -m pytest x-lead-studio/tests/test_consumer_recall.py -q`，并运行 TS 测试、lint/build 与上线后 1.17.1 worker、任务及数据库隔离核验。

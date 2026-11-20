@@ -100,7 +100,10 @@ def test_six_distinct_pages_archive_and_contacted_exclusion(tmp_path):
     summary = asyncio.run(run())
     assert len(calls) == 6
     assert [name for name, _ in QUERY_TIERS] == ["pet_owner_1", "home_decorator_1",
-        "relationship_memory_1", "pet_owner_2", "home_decorator_2", "relationship_memory_2"]
+        "relationship_memory_1", "pet_owner_2", "pet_owner_3", "pet_owner_4"]
+    assert sum("filter:images" in query for _, query in QUERY_TIERS) == 4
+    assert all("photo" not in query and "picture" not in query
+               for _, query in QUERY_TIERS[4:])
     assert summary["retrieved_new_posts"] == 6
     assert summary["contacted_excluded"] == 1
     assert summary["persona_unique_authors"]["pet_owner"] == 4
