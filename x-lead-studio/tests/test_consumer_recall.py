@@ -71,10 +71,60 @@ def test_reviewed_life_scene_edges_keep_persona_separate_from_contact_draft():
     assert sensitive["persona"] == "pet_owner"
     assert sensitive["needs_context_review"] is True
     assert sensitive["shopping_intent"] == "unknown"
+    assert assess_consumer_profile("@friend Same shit again my dog 😂")['persona'] is None
+    ill_pet = assess_consumer_profile("my dog just needs to make it to her birthday in exactly one week PLEASE no more bad days MAISY HOLD ON")
+    assert ill_pet['persona'] == 'pet_owner'
+    assert ill_pet['needs_context_review'] is True
+    memorial = assess_consumer_profile("We always watch her videos. Our hearts are broken. We even named our cat Chunky Bella in honour of Fiona. RIP sweet girl.")
+    assert memorial['persona'] == 'pet_owner'
+    assert memorial['needs_context_review'] is True
     future = assess_consumer_profile("I want to take a photo at my wedding with close family.")
     assert future["persona"] == "relationship_memory"
     assert future["experience_phase"] == "future_planned"
     assert future["conversation_angle"] == "a future family occasion they are planning"
+
+
+def test_pet_self_report_without_fixed_scene_verbs_and_context_guards():
+    for text in (
+        "My cat got crazy big eyes today.",
+        "Here's my cat, I hope you like her.",
+        "He's playing with my cat Xixi.",
+        "Good morning from my cat friend Lulu.",
+        "Why does my dog insist on staying out in the rain?",
+        "My partner asked me to draw our dog.",
+        "Our dog loves tuna too.",
+    ):
+        result = assess_consumer_profile(text)
+        assert result["persona"] == "pet_owner", text
+        assert result["shopping_intent"] == "unknown", text
+        assert result["contact_permission"] is False
+    for text in (
+        "@friend Same shit again my dog 😂",
+        '"My dog is a wolf killer!" Sure, but that is a bad guardian dog.',
+        "Even if somebody burned our house and shot our dog, this is hypothetical.",
+        "Our cat is on our Cat B rookie list.",
+        "I posted a collection of my dog portraits; will you do one for free?",
+        "We love our $CATE and our cat(e) loves us.",
+        "I dreamt my dog turned into an ostrich.",
+        "My dog had better hygiene than these dirty people.",
+    ):
+        assert assess_consumer_profile(text)["persona"] is None, text
+    assert assess_consumer_profile("Our cat sleeps beside me. I also follow crypto.")["persona"] == "pet_owner"
+    assert assess_consumer_profile("Second solo photo is of our cat Aiya.")["persona"] == "pet_owner"
+    for text in (
+        "My cat Misho and I are still alive.",
+        "We put our dog to sleep today.",
+        "My dog needs regular jabs.",
+    ):
+        result = assess_consumer_profile(text)
+        assert result["persona"] == "pet_owner", text
+        assert result["needs_context_review"] is True, text
+    uncertain = assess_consumer_profile("I lost my cat. Please contact me if you see him at the game.")
+    assert uncertain["persona"] == "pet_owner"
+    assert uncertain["person_fit"] == "uncertain_self_report"
+    assert uncertain["needs_context_review"] is True
+    seller_bio = "An organic tannery producing washable rugs."
+    assert assess_consumer_profile("I miss my cat who passed away.", author_bio=seller_bio)["persona"] is None
 
 
 def test_six_distinct_pages_archive_and_contacted_exclusion(tmp_path):
@@ -100,10 +150,7 @@ def test_six_distinct_pages_archive_and_contacted_exclusion(tmp_path):
     summary = asyncio.run(run())
     assert len(calls) == 6
     assert [name for name, _ in QUERY_TIERS] == ["pet_owner_1", "home_decorator_1",
-        "relationship_memory_1", "pet_owner_2", "pet_owner_3", "pet_owner_4"]
-    assert sum("filter:images" in query for _, query in QUERY_TIERS) == 4
-    assert all("photo" not in query and "picture" not in query
-               for _, query in QUERY_TIERS[4:])
+        "relationship_memory_1", "pet_owner_2", "home_decorator_2", "relationship_memory_2"]
     assert summary["retrieved_new_posts"] == 6
     assert summary["contacted_excluded"] == 1
     assert summary["persona_unique_authors"]["pet_owner"] == 4
@@ -115,7 +162,7 @@ def test_six_distinct_pages_archive_and_contacted_exclusion(tmp_path):
     assert len(rows) == 6
     assert next(row for row in rows if row["handle"] == "user2")["classifierTier"] == "excluded"
     assert next(row for row in rows if row["handle"] == "user3")["classifierTier"] == "excluded"
-    assert all(row["classifierVersion"] == "consumer-life-scenes-v2.1" for row in rows)
+    assert all(row["classifierVersion"] == "consumer-life-scenes-v2.2" for row in rows)
 
 
 def test_old_consumer_archive_is_reassessed_without_changing_source_or_prior_snapshot(tmp_path):

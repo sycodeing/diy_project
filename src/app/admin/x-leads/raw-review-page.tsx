@@ -30,7 +30,9 @@ export async function RawReviewPage({ filters }: { filters: RawFilters }) {
   let query = supabase.from("x_lead_raw_reviews")
     .select("post_id,author_id,x_handle,post_url,post_text,posted_at,photo_urls,photo_count,source_archive,source_stage,classifier_version,classifier_tier,exclusion_reasons,intent,body_topic_match,is_reply,parent_post_id,parent_status,parent_evidence,parent_source_archive,review_status,first_seen_at", { count: "exact" })
     .order("first_seen_at", { ascending: false }).order("post_id", { ascending: false });
-  if (!filters.tier || filters.tier === "valuable") query = query.in("classifier_tier", ["explicit_request", "exploratory"]).eq("classifier_version", "consumer-life-scenes-v2.1");
+  if (!filters.tier || filters.tier === "valuable") query = query.in("classifier_tier", ["explicit_request", "exploratory"]).eq("classifier_version", "consumer-life-scenes-v2.2").neq("intent->>person_fit", "uncertain_self_report").neq("intent->>needs_context_review", "true");
+  else if (filters.tier === "hold") query = query.eq("classifier_tier", "exploratory").eq("classifier_version", "consumer-life-scenes-v2.2").eq("intent->>needs_context_review", "true");
+  else if (filters.tier === "uncertain") query = query.eq("classifier_tier", "exploratory").eq("classifier_version", "consumer-life-scenes-v2.2").eq("intent->>person_fit", "uncertain_self_report");
   else if (["excluded", "exploratory", "explicit_request"].includes(filters.tier)) query = query.eq("classifier_tier", filters.tier);
   if ((!filters.tier || filters.tier === "valuable") && filters.status === undefined) query = query.eq("review_status", "unreviewed");
   if (["true", "false"].includes(filters.topic ?? "")) query = query.eq("body_topic_match", filters.topic === "true");
@@ -51,14 +53,14 @@ export async function RawReviewPage({ filters }: { filters: RawFilters }) {
     supabase.from("x_lead_raw_reviews").select("post_id", { count: "exact", head: true }).eq("classifier_tier", "exploratory"),
     supabase.from("x_lead_raw_reviews").select("post_id", { count: "exact", head: true }).eq("classifier_tier", "explicit_request"),
     supabase.from("x_lead_raw_reviews").select("post_id", { count: "exact", head: true }).eq("classifier_tier", "excluded"),
-    supabase.from("x_lead_raw_reviews").select("post_id", { count: "exact", head: true }).neq("classifier_version", "consumer-life-scenes-v2.1"),
+    supabase.from("x_lead_raw_reviews").select("post_id", { count: "exact", head: true }).neq("classifier_version", "consumer-life-scenes-v2.2"),
   ]);
   const countError = [totalResult, potentialResult, explicitResult, excludedResult, oldResult].find((result) => result.error)?.error;
   if (error || countError) throw new Error((error || countError)!.message);
   const rows = (data ?? []) as RawRow[];
   const hasDraftRows = rows.some((row) => row.review_status === "unreviewed" &&
-    row.classifier_version === "consumer-life-scenes-v2.1" && row.classifier_tier === "exploratory" &&
-    row.intent.needs_context_review !== true && row.intent.specific_other_product !== true);
+    row.classifier_version === "consumer-life-scenes-v2.2" && row.classifier_tier === "exploratory" &&
+    row.intent.needs_context_review !== true && row.intent.person_fit !== "uncertain_self_report" && row.intent.specific_other_product !== true);
   const firstOrderOffer = hasDraftRows ? await hasXFirstOrderOffer() : false;
   const makePageHref = (target: number) => {
     const params = new URLSearchParams({ mode: "raw_review", page: String(target) });
@@ -72,12 +74,12 @@ export async function RawReviewPage({ filters }: { filters: RawFilters }) {
     <div className="flex flex-wrap items-end justify-between gap-3">
       <div><h1 className="text-3xl font-black">X 原始待筛帖子</h1>
         <p className="mt-2 text-sm text-muted">原始帖 {totalResult.count ?? 0} · 历史各版本潜在 {potentialResult.count ?? 0} · 明确需求 {explicitResult.count ?? 0} · 排除 {excludedResult.count ?? 0}。当前筛选 {count ?? 0} 条。非当前生活画像版本 {oldResult.count ?? 0} 条可从全部原始帖查看。购买意向、商品适配、账号与图片归属均待核实；不在严格候选池，也不能从此页发送。</p>
-        <p className="mt-2 flex gap-4 text-sm"><Link className="font-bold text-accent underline" href="/admin/x-leads?mode=raw_review">当前生活画像</Link><Link className="font-bold text-accent underline" href="/admin/x-leads?mode=raw_review&tier=all">全部原始帖</Link><Link className="font-bold text-accent underline" href="/admin/x-leads?mode=raw_review&tier=excluded">排除诊断</Link></p></div>
+        <p className="mt-2 flex gap-4 text-sm"><Link className="font-bold text-accent underline" href="/admin/x-leads?mode=raw_review">可优先复核</Link><Link className="font-bold text-accent underline" href="/admin/x-leads?mode=raw_review&tier=hold">语境待核</Link><Link className="font-bold text-accent underline" href="/admin/x-leads?mode=raw_review&tier=uncertain">本人关系待补证</Link><Link className="font-bold text-accent underline" href="/admin/x-leads?mode=raw_review&tier=all">全部原始帖</Link><Link className="font-bold text-accent underline" href="/admin/x-leads?mode=raw_review&tier=excluded">排除诊断</Link></p></div>
       <div className="flex gap-3"><Link className="font-bold text-accent underline" href="/admin/x-leads">严格候选</Link><Link className="font-bold text-accent underline" href="/admin/x-lead-search">发现任务</Link></div>
     </div>
     <form className="mt-5 flex flex-wrap gap-3 rounded-xl border border-line bg-panel p-4 text-sm">
       <input type="hidden" name="mode" value="raw_review" />
-      <Filter name="tier" label="文本判断" value={filters.tier ?? "valuable"} options={[["valuable", "当前生活画像"], ["explicit_request", "历史明确需求"], ["exploratory", "历史各版本潜在"], ["excluded", "排除诊断"], ["all", "全部原始帖"]]} />
+      <Filter name="tier" label="文本判断" value={filters.tier ?? "valuable"} options={[["valuable", "可优先复核"], ["hold", "语境待核"], ["uncertain", "本人关系待补证"], ["explicit_request", "历史明确需求"], ["exploratory", "历史各版本潜在"], ["excluded", "排除诊断"], ["all", "全部原始帖"]]} />
       <Filter name="persona" label="消费画像" value={filters.persona} options={[["", "全部"], ["pet_owner", "本人宠物生活"], ["home_decorator", "自家空间布置"], ["relationship_memory", "重要关系回忆"], ["gift_giver", "旧送礼者"], ["identity_consumer", "旧兴趣消费"], ["group_organizer", "旧活动组织"]]} />
       <Filter name="priority" label="复核优先级" value={filters.priority} options={[["", "全部"], ["high", "高"], ["medium", "中"], ["low", "低"]]} />
       <Filter name="topic" label="正文主题信号" value={filters.topic} options={[["", "全部"], ["true", "有"], ["false", "无"]]} />
@@ -99,10 +101,10 @@ export async function RawReviewPage({ filters }: { filters: RawFilters }) {
       {row.classifier_tier !== "excluded" ? <p className="mt-2 text-xs">本人证据：{String(row.intent.consumer_evidence || row.intent.request_evidence || "待人工核对")} · 场景证据：{String(row.intent.scenario_evidence || row.intent.scene || "未明确")} · 证据强度：{String(row.intent.evidence_strength || "历史分类未标注")} · 人群适配：{String(row.intent.person_fit || "待审")} · 场景适配：{String(row.intent.scenario_fit || "待审")} · 商品适配：{String(row.intent.product_fit || "待审")} · 购物意向：{String(row.intent.shopping_intent || "未知")} · 复核优先级：{String(row.intent.priority || "待审")}</p> : null}
       {row.classifier_tier !== "excluded" && row.intent.conversation_angle ? <p className="mt-1 text-xs text-muted">交流切入：{String(row.intent.conversation_angle)}。仅供人工判断，不能据此推定联系资格。</p> : null}
       {row.classifier_tier !== "excluded" && Array.isArray(row.intent.verification) ? <p className="mt-1 text-xs text-muted">待核实：{row.intent.verification.map(String).join("、")}</p> : null}
-      {row.intent.needs_context_review === true ? <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">原帖涉及敏感生活处境，仅保留人群待审；请先核对语境，不生成促销草稿。</p> : null}
+      {row.intent.needs_context_review === true ? <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">本人宠物关系或生活语境仍待核对；仅保留待审证据，不生成促销草稿。</p> : null}
       {row.classifier_tier !== "excluded" ? <p className="mt-2 text-xs text-muted">下一步：人工核对原帖与账号、商品适配和联系资格。草稿只用自家示例；原帖图片仅供理解语境，未核验归属或生成该用户的定制预览。</p> : null}
       {row.intent.specific_other_product === true ? <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">原帖指定其他商品；本站枕套适配未证实，暂不生成可使用的联系草稿。先人工核对商品与地区。</p> : null}
-      {row.review_status === "unreviewed" && row.classifier_version === "consumer-life-scenes-v2.1" && row.intent.needs_context_review !== true && row.intent.specific_other_product !== true && row.classifier_tier === "exploratory" ? <p className="mt-2 rounded-lg border border-line bg-white p-3 text-sm"><strong>只读场景草稿 · 自家示例：</strong>{createXLeadFirstContactDraft({
+      {row.review_status === "unreviewed" && row.classifier_version === "consumer-life-scenes-v2.2" && row.intent.needs_context_review !== true && row.intent.person_fit !== "uncertain_self_report" && row.intent.specific_other_product !== true && row.classifier_tier === "exploratory" ? <p className="mt-2 rounded-lg border border-line bg-white p-3 text-sm"><strong>只读场景草稿 · 自家示例：</strong>{createXLeadFirstContactDraft({
         occasion: null, occasionConfidence: null, petType: null, firstOrderOffer,
         targetingData: { purchase_intent: row.intent },
       }).text}<span className="mt-1 block text-xs text-muted">草稿未保存或发送；需人工复核。原帖图片不能作为可预览素材。</span></p> : null}

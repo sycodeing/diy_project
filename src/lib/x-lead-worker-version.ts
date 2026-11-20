@@ -27,5 +27,5 @@ export function supportsConsumerRecall(version: string | undefined) {
   const major = Number(match[1]);
   const minor = Number(match[2]);
   const patch = Number(match[3]);
-  return major > 1 || (major === 1 && (minor > 17 || (minor === 17 && patch >= 2)));
+  return major > 1 || (major === 1 && (minor > 17 || (minor === 17 && patch >= 3)));
 }

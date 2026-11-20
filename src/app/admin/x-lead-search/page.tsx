@@ -110,9 +110,9 @@ export default async function XLeadSearchPage({
 
         <section className="mt-6 rounded-xl border border-line bg-panel/90 p-5">
           <h2 className="text-xl font-black">三类个人生活场景 · 新原始待筛</h2>
-          <p className="mt-2 text-sm text-muted">本人宠物故事、居住空间布置、重要关系回忆。六组短查询各最多一页；无需购物用语，由原帖证据决定待审分类。需要 1.17.2 发现执行器。购买意向和照片归属均待核实；不进入严格候选或发送队列。</p>
+          <p className="mt-2 text-sm text-muted">本人宠物故事、居住空间布置、重要关系回忆。六组短查询各最多一页；无需购物用语，由原帖证据决定待审分类。需要 1.17.3 发现执行器。购买意向和照片归属均待核实；不进入严格候选或发送队列。</p>
           <form action={runConsumerLeadSearch} className="mt-4 flex flex-wrap items-end gap-3">
-            <SelectField label="本次最多搜索页数" name="maxPages" value="6" options={[["3", "3 页（每画像一组）"], ["6", "6 页（宠物四组，家居和关系各一组）"]]} />
+            <SelectField label="本次最多搜索页数" name="maxPages" value="6" options={[["3", "3 页（每画像一组）"], ["6", "6 页（每画像两组）"]]} />
             <button className="focus-ring rounded-lg bg-accent px-4 py-3 font-bold text-accent-ink" type="submit">启动生活场景小批测试</button>
             <Link className="focus-ring rounded-lg border border-line px-4 py-3 font-bold" href="/admin/x-leads?mode=raw_review">查看原始待筛</Link>
           </form>

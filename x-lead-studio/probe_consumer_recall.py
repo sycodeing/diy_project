@@ -21,12 +21,12 @@ from probe_purchase_recall import (
 
 # One page per hypothesis. The first three pages cover all personas.
 QUERY_TIERS = (
-    ("pet_owner_1", '"my cat" filter:images lang:en'),
-    ("home_decorator_1", '("my room" OR "my living room") filter:images lang:en'),
-    ("relationship_memory_1", '("my wedding" OR "our first trip") filter:images lang:en'),
-    ("pet_owner_2", '"my dog" filter:images lang:en'),
-    ("pet_owner_3", '"our cat" lang:en'),
-    ("pet_owner_4", '"our dog" lang:en'),
+    ("pet_owner_1", '("my dog" OR "my cat") lang:en'),
+    ("home_decorator_1", '("my living room" OR "our living room") lang:en'),
+    ("relationship_memory_1", '("our first trip" OR "our anniversary") lang:en'),
+    ("pet_owner_2", '("our dog" OR "our cat") (photo OR sofa OR birthday) lang:en'),
+    ("home_decorator_2", '("my room" OR "our home") (sofa OR wall OR photos) lang:en'),
+    ("relationship_memory_2", '("my wedding" OR "our graduation") (photo OR memories) lang:en'),
 )
 
 
