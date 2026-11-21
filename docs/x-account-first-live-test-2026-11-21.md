@@ -14,9 +14,9 @@ The account-first data path ran on one previously archived discussion seed. It p
 
 | Account | Reply-only evidence | Timeline increment | Product and entry result |
 | --- | --- | --- | --- |
-| @brinkleberrypie | Two hearts on the seed; pet-persona bio | Five original posts describe walks, a visiting pet friend, and photo memories; 15 retweets add no own behavior evidence | Personal pet expression and a social entry, but catalog use unknown |
-| @msnthebeach | “Absolutely” with one photo URL; bio says no DMs | One short original greeting with photo metadata; 19 retweets | Pet/person identity and product use unverified; do not DM |
-| @TerryRo31438315 | “Every time” with one photo URL; bio self-describes dog ownership | Twenty original posts support a dog relationship and songwriting, but also include a deceased-pet memorial blanket | Product use unknown; avoid bereavement as a commercial hook |
+| A | Brief reaction to the seed | Five original pet-persona posts and 15 retweets | Social entry exists; catalog use unknown |
+| B | Brief reaction with one photo URL | One short original post with photo metadata and 19 retweets | Pet/person identity and product use unverified; profile requests no DMs |
+| C | Brief reaction with one photo URL | Twenty original posts support a pet relationship and personal creative activity; some posts involve bereavement | Product use unknown; avoid sensitive context as a commercial hook |
 
 The frozen `account-first-v1` runtime classifier returned `insufficient/no_entry` for all three. Independent AI text and metadata review found richer pet context in two accounts, but **no non-sensitive specific product-use evidence**. It did not change runtime classifications or human review. All photo URLs are metadata only; neither image content nor ownership was visually verified. The detailed personal-text assessment and the 60-item ID/retweet audit stay in ignored `.data/purchase-discussion-evaluation/account-first-ai-review-20261121.json` (`reviewer=astra`, `reviewed_by_human=false`).
 
