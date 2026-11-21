@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 from collections import Counter
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 import json
 from pathlib import Path
+import re
 import time
 import uuid
 from typing import Any
@@ -46,6 +49,7 @@ async def run_engagement_recall_probe(
     client: httpx.AsyncClient, settings: Settings, *, contacted_snapshot: dict[str, Any],
     archive_dir: Path = TWITTERAPI_ARCHIVE_DIR, now: datetime | None = None,
     min_balance_credits: int = 3000, max_total_credits: int = 1800,
+    resume_from: Path | None = None,
 ) -> dict[str, Any]:
     if not settings.twitterapi_api_key:
         raise RuntimeError("TWITTERAPI_API_KEY is missing")
@@ -58,9 +62,41 @@ async def run_engagement_recall_probe(
     snapshot = {"post_ids": set(map(str, contacted_snapshot["post_ids"])),
                 "author_ids": set(map(str, contacted_snapshot["author_ids"])),
                 "handles": {str(v).lower().lstrip("@") for v in contacted_snapshot["handles"]}}
-    started = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    prior: dict[str, Any] | None = None
+    if resume_from is not None:
+        if (not re.fullmatch(r"engagement-recall-[0-9TZa-f-]+\.json", resume_from.name)
+                or resume_from.resolve().parent != archive_dir.resolve()):
+            raise ValueError("Resume archive must be a local engagement archive")
+        prior = json.loads(resume_from.read_text(encoding="utf-8"))
+        old_queries = prior.get("queries") or []
+        if (prior.get("kind") != "query_only_engagement_recall"
+                or prior.get("status") != "stopped_provider_error"
+                or len(old_queries) != 2
+                or old_queries[0].get("name") != "pet_share"
+                or old_queries[0].get("role") != "candidate"
+                or len(old_queries[0].get("pages") or []) != 1
+                or old_queries[0]["pages"][0].get("http_status") != 200
+                or old_queries[1].get("name") != "product_thread_seed"
+                or len(old_queries[1].get("pages") or []) != 1
+                or old_queries[1]["pages"][0].get("http_status") != 503
+                or not isinstance(prior.get("credits_before"), dict)
+                or prior.get("configuration", {}).get("maxTotalCredits") != 1800):
+            raise ValueError("Only the exact one-success, one-503 archive can be resumed")
+        if any(json.loads(p.read_text(encoding="utf-8")).get("resume_of") == prior.get("archive_id")
+               for p in archive_dir.glob("engagement-recall-*.json") if p != resume_from):
+            raise ValueError("This partial archive has already been resumed")
+    started = (datetime.fromisoformat(prior["started_at"]) if prior else
+               (now or datetime.now(timezone.utc))).astimezone(timezone.utc)
     since = int((started - timedelta(days=3)).timestamp())
     until = int(started.timestamp())
+    query_fingerprint = sha256(json.dumps({"version": VERSION, "queries": SEED_QUERIES},
+                                         sort_keys=True).encode("utf-8")).hexdigest()
+    if prior:
+        for index, (_, expression) in enumerate(SEED_QUERIES[:2]):
+            expected = f"{expression} since_time:{since} until_time:{until}"
+            actual = prior["queries"][index]["pages"][0]["request_params"].get("query")
+            if actual != expected:
+                raise ValueError("Resume query or time window differs from the frozen original")
     historical_posts, historical_authors, archive_count = historical_ids(archive_dir)
     archive_id = f"engagement-recall-{started:%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
     path = archive_dir / f"{archive_id}.json"
@@ -69,12 +105,24 @@ async def run_engagement_recall_probe(
         "started_at": started.isoformat(), "status": "collecting", "queries": [],
         "configuration": {"lookbackDays": 3, "searchPages": 3, "maxReplyPages": 2,
                           "maxPaidPages": MAX_PAID_PAGES, "maxTotalCredits": max_total_credits,
-                          "strictImport": False, "outreach": False},
+                          "strictImport": False, "outreach": False,
+                          "queryFingerprint": query_fingerprint},
         "baseline_archives": archive_count, "baseline_post_ids": len(historical_posts),
         "baseline_author_ids": len(historical_authors),
         "contacted_snapshot": {"snapshot_at": contacted_snapshot["snapshot_at"],
                                **{key: len(snapshot[key]) for key in snapshot}},
     }
+    if prior:
+        first = deepcopy(prior["queries"][0])
+        first["role"] = "reused"  # audited here, never reimported with a new source job
+        first["reused_from"] = prior["archive_id"]
+        document["queries"].append(first)
+        document["resume_of"] = prior["archive_id"]
+        document["resume_source_path"] = str(resume_from)
+        document["prior_attempts_reserved_credits"] = 2 * PAGE_CREDIT_RESERVE
+        document["baseline_archives"] = prior["baseline_archives"]
+        document["baseline_post_ids"] = prior["baseline_post_ids"]
+        document["baseline_author_ids"] = prior["baseline_author_ids"]
     _save(path, document)
     try:
         before = await _credits(client, settings)
@@ -83,6 +131,9 @@ async def run_engagement_recall_probe(
         _save(path, document)
         raise RecallProbeError(path, error) from error
     current = before
+    if prior:
+        document["credits_at_resume"] = current
+        before = prior["credits_before"]
     document["credits_before"] = before
     _save(path, document)
     seen_posts: set[str] = set()
@@ -92,13 +143,33 @@ async def run_engagement_recall_probe(
     tier_counts: Counter[str] = Counter()
     candidate_decisions: list[tuple[dict[str, Any], dict[str, Any], str, str]] = []
     seed_posts: list[dict[str, Any]] = []
-    pages_used = 0
+    pages_used = 2 if prior else 0
+    resume_pages = 0
+    reused_post_ids = 0
+    if prior:
+        first_query = document["queries"][0]
+        first_posts = {str(p.get("id") or p.get("id_str")): p
+                       for p in first_query["pages"][0]["response"].get("tweets", [])
+                       if isinstance(p, dict)}
+        for decision in first_query["decisions"]:
+            if not isinstance(decision, dict) or "intent" not in decision:
+                continue
+            seen_posts.add(str(decision["post_id"]))
+            author = str(decision.get("author_id") or "")
+            if author:
+                seen_authors.add(author)
+                author_by_group["pet_share"].add(author)
+            tier_counts[decision["intent"]["tier"]] += 1
+            post = first_posts.get(str(decision["post_id"]))
+            if decision["intent"]["tier"] == "exploratory" and post:
+                candidate_decisions.append((decision, post, _author_bio(post), ""))
+        reused_post_ids = len(seen_posts)
 
     async def one_page(name: str, role: str, endpoint: str, params: dict[str, str],
                        source: str, seed: dict[str, Any] | None = None) -> None:
-        nonlocal current, pages_used
-        if (pages_used >= MAX_PAID_PAGES or pages_used * PAGE_CREDIT_RESERVE + PAGE_CREDIT_RESERVE >
-                max_total_credits - PAGE_CREDIT_RESERVE):
+        nonlocal current, pages_used, resume_pages
+        if (pages_used >= (MAX_PAID_PAGES + (1 if prior else 0)) or
+                (pages_used + 1) * PAGE_CREDIT_RESERVE > max_total_credits):
             document["status"] = "stopped_static_spend_bound"
             return
         if sum(current.values()) - PAGE_CREDIT_RESERVE < min_balance_credits or sum(before.values()) - sum(current.values()) + PAGE_CREDIT_RESERVE > max_total_credits:
@@ -124,6 +195,7 @@ async def run_engagement_recall_probe(
                                "business_status": payload.get("status") if isinstance(payload, dict) else None,
                                "response": payload})
         pages_used += 1
+        resume_pages += 1
         _save(path, document)  # save the full paid response before examining any post
         if (not 200 <= response.status_code < 300 or not isinstance(payload, dict)
                 or str(payload.get("status") or "").lower() == "error"):
@@ -198,6 +270,8 @@ async def run_engagement_recall_probe(
         for name, expression in SEED_QUERIES:
             if document["status"] != "collecting":
                 break
+            if prior and name == "pet_share":
+                continue
             params = {"query": f"{expression} since_time:{since} until_time:{until}",
                       "queryType": "Latest", "cursor": ""}
             await one_page(name, "seed" if name == "product_thread_seed" else "candidate",
@@ -252,9 +326,13 @@ async def run_engagement_recall_probe(
                     if d.get("intent", {}).get("tier") == "exploratory"]
         document["summary"] = {
             "archive_id": archive_id, "archive_path": str(path), "status": document["status"],
-            "search_pages": pages_used, "seed_search_pages": 3,
+            "search_pages": pages_used, "new_request_pages": resume_pages,
+            "reused_success_pages": 1 if prior else 0,
+            "seed_search_pages": sum(q["role"] in {"candidate", "seed"} for q in document["queries"]),
             "thread_reply_pages": sum(q["role"] == "participant" for q in document["queries"]),
             "retrieved_new_posts": len(seen_posts), "unique_new_authors": len(seen_authors),
+            "reused_post_ids": reused_post_ids,
+            "resume_new_posts": len(seen_posts) - reused_post_ids,
             "prior_archive_authors": sum(q["counts"]["prior_authors"] for q in document["queries"]),
             "group_authors": {key: len(value) for key, value in author_by_group.items()},
             "text_tiers": dict(tier_counts), "review_pool_posts": len(selected),

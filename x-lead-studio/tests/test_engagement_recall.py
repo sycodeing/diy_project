@@ -155,3 +155,60 @@ def test_five_paid_pages_archive_seed_and_actual_replies(tmp_path):
     assert by_id["402"]["intent"]["direct_parent_status"] == "thread_context_known_direct_parent_unknown"
     assert by_id["400"]["classifierTier"] == "excluded"
     assert all(row["intent"]["draft_ready"] is False for row in rows)
+
+
+def test_resume_reuses_first_page_and_caps_all_six_attempts(tmp_path):
+    now = datetime(2026, 11, 21, 12, tzinfo=timezone.utc)
+    stamp = now.isoformat()
+    calls = []
+    fail_seed_once = True
+
+    def post(id, author, text, **extra):
+        return {"id": str(id), "text": text, "createdAt": stamp,
+                "author": {"id": str(author), "userName": f"person{author}"}, **extra}
+
+    def handler(request):
+        nonlocal fail_seed_once
+        if request.url.path == "/oapi/my/info":
+            return httpx.Response(200, json={"recharge_credits": 25000, "total_bonus_credits": 0})
+        calls.append((request.url.path, str(request.url.params.get("query") or "")))
+        if "custom pet pillow" in calls[-1][1] and fail_seed_once:
+            fail_seed_once = False
+            return httpx.Response(503, json={"detail": "Please retry; not charged"})
+        if "custom pet pillow" in calls[-1][1]:
+            posts = [post(200, 20, "Custom pet pillow thread", replyCount=4),
+                     post(201, 21, "Photo pillow cover thread", replyCount=3)]
+        elif "I made" in calls[-1][1]:
+            posts = [post(300, 30, "I drew my dog for myself")]
+        elif request.url.path.endswith("/replies"):
+            posts = [post(400 + len(calls), 40 + len(calls), "Here is my dog Bella",
+                          isReply=True, inReplyToId=request.url.params["tweetId"])]
+        else:
+            posts = [post(100, 10, "My cat sleeps on my sofa")]
+        return httpx.Response(200, json={"tweets": posts})
+
+    async def run(resume_from=None):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await run_engagement_recall_probe(client,
+                Settings(twitterapi_api_key="test", pet_image_verifier="manual"),
+                contacted_snapshot={"snapshot_at": stamp, "post_ids": [],
+                                    "author_ids": [], "handles": []},
+                archive_dir=tmp_path, now=now, resume_from=resume_from)
+
+    first = asyncio.run(run())
+    assert first["status"] == "stopped_provider_error" and len(calls) == 2
+    first_path = tmp_path / f'{first["archive_id"]}.json'
+    original_bytes = first_path.read_bytes()
+    resumed = asyncio.run(run(first_path))
+    assert resumed["status"] == "completed"
+    assert resumed["search_pages"] == 6 and resumed["new_request_pages"] == 4
+    assert resumed["reused_post_ids"] == 1 and resumed["resume_new_posts"] == 3
+    assert resumed["max_static_provider_cost"] == 1800
+    assert len(calls) == 6 and sum("my dog" in query for _, query in calls) == 1
+    assert first_path.read_bytes() == original_bytes
+    new_path = tmp_path / f'{resumed["archive_id"]}.json'
+    document = json.loads(new_path.read_text(encoding="utf-8"))
+    assert document["resume_of"] == first["archive_id"]
+    assert document["queries"][0]["role"] == "reused"
+    assert "100" not in {row["postId"] for row in extract_raw_reviews([new_path])}
+    assert "100" in {row["postId"] for row in extract_raw_reviews([first_path])}

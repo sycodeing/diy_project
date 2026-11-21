@@ -21,7 +21,7 @@ export async function runEngagementLeadSearch() {
   if (workerError) throw new Error(workerError.message);
   if (!worker || Date.now() - new Date(worker.last_seen_at).getTime() > 120_000
       || !supportsEngagementRecall(worker.worker_version ?? undefined)) {
-    throw new Error("对话来源召回需要在线的 1.18.0 或更高版本发现执行器。");
+    throw new Error("对话来源召回需要在线的 1.18.1 或更高版本发现执行器。");
   }
   const { data: active, error: activeError } = await supabase.from("x_lead_search_jobs")
     .select("id").in("status", ["queued", "running"]).limit(1).maybeSingle();

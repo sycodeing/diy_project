@@ -38,7 +38,7 @@ async def run_x_lead_worker(settings: Settings) -> None:
                     json={
                         "workerId": worker_id,
                         "cookieConfigured": _provider_is_configured(settings, provider),
-                        "version": "1.18.0",
+                        "version": "1.18.1",
                     },
                 )
                 if response.status_code == 204:
@@ -333,7 +333,13 @@ async def _execute_recall_job(
             snapshot_response.raise_for_status()
             snapshot = snapshot_response.json()
             if engagement_mode:
-                summary = await run_engagement_recall_probe(client, settings, contacted_snapshot=snapshot)
+                resume_id = config.get("resumeArchiveId")
+                if resume_id is not None and (not isinstance(resume_id, str) or
+                    not resume_id.startswith("engagement-recall-") or
+                    not all(char.isalnum() or char in "-_" for char in resume_id)):
+                    raise ValueError("Invalid engagement resume archive ID")
+                summary = await run_engagement_recall_probe(client, settings, contacted_snapshot=snapshot,
+                    resume_from=(TWITTERAPI_ARCHIVE_DIR / f"{resume_id}.json") if resume_id else None)
             else:
                 summary = await run_consumer_recall_probe(
                     client, settings, contacted_snapshot=snapshot,
@@ -372,7 +378,9 @@ async def _execute_recall_job(
         json={
             "workerId": worker_id, "status": status,
             "receivedCount": min(1000, int(metrics.get(
-                "retrieved_new_posts" if (consumer_mode or engagement_mode) else "shopping_query_new_posts_vs_baseline", 0))),
+                "resume_new_posts" if engagement_mode and config.get("resumeArchiveId") else
+                "retrieved_new_posts" if (consumer_mode or engagement_mode) else
+                "shopping_query_new_posts_vs_baseline", 0))),
             "errorCode": error_code, "errorMessage": error_message,
             "metrics": {**metrics, "provider": "twitterapi", "scope": "raw_review_only",
                         "raw_review_rows": len(rows), "strict_qualified": 0},

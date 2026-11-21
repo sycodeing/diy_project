@@ -194,7 +194,7 @@ def extract_raw_reviews(archive_paths: list[Path]) -> list[dict[str, Any]]:
         stages: list[tuple[str, list[dict[str, Any]], set[str] | None]] = []
         consumer_archive = document.get("kind") in {"query_only_consumer_recall", "query_only_engagement_recall"}
         for query in document.get("queries", []):
-            if query.get("role") in {"control", "seed"}:
+            if query.get("role") in {"control", "seed", "reused"}:
                 continue
             accepted = {str(decision.get("post_id")): decision["intent"]
                         for decision in query.get("decisions") or []

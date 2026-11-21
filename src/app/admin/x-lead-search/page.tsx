@@ -115,7 +115,7 @@ export default async function XLeadSearchPage({
             <button className="focus-ring rounded-lg bg-accent px-4 py-3 font-bold text-accent-ink" type="submit">启动一次有界对话来源测试</button>
             <Link className="focus-ring rounded-lg border border-line px-4 py-3 font-bold" href="/admin/x-leads?mode=raw_review">查看原始待筛</Link>
           </form>
-          <p className="mt-2 text-xs text-muted">最近 3 天；3 搜索页、最多 2 个线程回复首页；每组最多 20 个独立账号。TwitterAPI 总预算 1800 credits，余额保底 3000。仅原始待审，不生成严格候选或发送任务；需在线 1.18.0 执行器。</p>
+          <p className="mt-2 text-xs text-muted">最近 3 天；3 搜索页、最多 2 个线程回复首页；每组最多 20 个独立账号。TwitterAPI 总预算 1800 credits，余额保底 3000。仅原始待审，不生成严格候选或发送任务；需在线 1.18.1 执行器。</p>
         </section>
 
         <section className="mt-6 rounded-xl border border-line bg-panel/90 p-5">
