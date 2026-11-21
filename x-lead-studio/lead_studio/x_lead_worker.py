@@ -38,7 +38,7 @@ async def run_x_lead_worker(settings: Settings) -> None:
                     json={
                         "workerId": worker_id,
                         "cookieConfigured": _provider_is_configured(settings, provider),
-                        "version": "1.17.3",
+                        "version": "1.18.0",
                     },
                 )
                 if response.status_code == 204:
@@ -64,7 +64,7 @@ async def _execute_job(
     if (job.get("configuration") or {}).get("discoveryMode") == "purchase_recall":
         await _execute_recall_job(client, headers, settings, worker_id, job)
         return
-    if (job.get("configuration") or {}).get("discoveryMode") == "consumer_recall":
+    if (job.get("configuration") or {}).get("discoveryMode") in {"consumer_recall", "engagement_recall"}:
         await _execute_recall_job(client, headers, settings, worker_id, job)
         return
     received_count = 0
@@ -314,9 +314,11 @@ async def _execute_recall_job(
     """Paid bounded search, raw review only; no photo, lead, or send path."""
     from probe_purchase_recall import extract_raw_reviews, run_recall_probe
     from probe_consumer_recall import run_consumer_recall_probe
+    from probe_engagement_recall import run_engagement_recall_probe
 
     config = job.get("configuration") or {}
     consumer_mode = config.get("discoveryMode") == "consumer_recall"
+    engagement_mode = config.get("discoveryMode") == "engagement_recall"
     status = "completed"
     error_code = None
     error_message = None
@@ -325,16 +327,19 @@ async def _execute_recall_job(
     try:
         if _selected_provider(settings) != "twitterapi":
             raise ValueError("Purchase recall requires TwitterAPI")
-        if consumer_mode:
+        if consumer_mode or engagement_mode:
             snapshot_response = await client.get(
                 f"{settings.diy_site_url}/api/x-leads/worker/contacted-snapshot", headers=headers)
             snapshot_response.raise_for_status()
             snapshot = snapshot_response.json()
-            summary = await run_consumer_recall_probe(
-                client, settings, contacted_snapshot=snapshot,
-                lookback_days=int(config.get("lookbackDays", 3)),
-                max_pages=int(config.get("maxPages", 6)),
-            )
+            if engagement_mode:
+                summary = await run_engagement_recall_probe(client, settings, contacted_snapshot=snapshot)
+            else:
+                summary = await run_consumer_recall_probe(
+                    client, settings, contacted_snapshot=snapshot,
+                    lookback_days=int(config.get("lookbackDays", 3)),
+                    max_pages=int(config.get("maxPages", 6)),
+                )
         else:
             summary = await run_recall_probe(
                 client, settings,
@@ -367,7 +372,7 @@ async def _execute_recall_job(
         json={
             "workerId": worker_id, "status": status,
             "receivedCount": min(1000, int(metrics.get(
-                "retrieved_new_posts" if consumer_mode else "shopping_query_new_posts_vs_baseline", 0))),
+                "retrieved_new_posts" if (consumer_mode or engagement_mode) else "shopping_query_new_posts_vs_baseline", 0))),
             "errorCode": error_code, "errorMessage": error_message,
             "metrics": {**metrics, "provider": "twitterapi", "scope": "raw_review_only",
                         "raw_review_rows": len(rows), "strict_qualified": 0},

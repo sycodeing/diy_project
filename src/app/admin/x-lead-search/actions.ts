@@ -9,7 +9,33 @@ import {
   demandSearchConfigurationSchema,
   type XSearchConfiguration,
 } from "@/lib/x-lead";
-import { supportsConsumerRecall, supportsDiscussionSearch, supportsPurchaseRecall } from "@/lib/x-lead-worker-version";
+import { supportsConsumerRecall, supportsDiscussionSearch, supportsEngagementRecall, supportsPurchaseRecall } from "@/lib/x-lead-worker-version";
+
+export async function runEngagementLeadSearch() {
+  const user = await requireAdmin("/admin/x-lead-search");
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) throw new Error("Supabase 服务端配置缺失。");
+  const { data: worker, error: workerError } = await supabase.from("x_lead_workers")
+    .select("worker_version,last_seen_at").eq("status", "online")
+    .order("last_seen_at", { ascending: false }).limit(1).maybeSingle();
+  if (workerError) throw new Error(workerError.message);
+  if (!worker || Date.now() - new Date(worker.last_seen_at).getTime() > 120_000
+      || !supportsEngagementRecall(worker.worker_version ?? undefined)) {
+    throw new Error("对话来源召回需要在线的 1.18.0 或更高版本发现执行器。");
+  }
+  const { data: active, error: activeError } = await supabase.from("x_lead_search_jobs")
+    .select("id").in("status", ["queued", "running"]).limit(1).maybeSingle();
+  if (activeError) throw new Error(activeError.message);
+  if (active) redirect("/admin/x-lead-search?notice=active");
+  const { error } = await supabase.from("x_lead_search_jobs").insert({
+    trigger_type: "manual", status: "queued", created_by: user.id,
+    configuration: { discoveryMode: "engagement_recall", lookbackDays: 3,
+      searchPages: 3, maxReplyPages: 2, maxCredits: 1800 },
+  });
+  if (error) throw new Error(error.message);
+  revalidatePath("/admin/x-lead-search");
+  redirect("/admin/x-lead-search?notice=engagement-queued");
+}
 
 export async function runConsumerLeadSearch(formData: FormData) {
   const user = await requireAdmin("/admin/x-lead-search");

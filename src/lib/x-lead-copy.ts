@@ -31,6 +31,13 @@ export function createXLeadFirstContactDraft(context: XLeadDraftContext) {
   const intent = context.targetingData?.purchase_intent;
   if (intent && typeof intent === "object" && !Array.isArray(intent)) {
     const signal = intent as Record<string, unknown>;
+    if (["pet_share", "thread_participant", "personal_make"].includes(String(signal.persona))
+        && signal.draft_ready === true && signal.contact_permission === false) {
+      const subject = signal.persona === "thread_participant" ? "your reply in the photo-product discussion"
+        : signal.persona === "personal_make" ? "your personal photo project" : "your pet photo story";
+      return { variantKey: "engagement_example_v1" as const, contentMode: "first_contact_text" as const,
+        text: `I saw ${subject}. I make personalized photo pillow covers and could share an example from my own work if that fits what you have in mind.${offer}` };
+    }
     if (signal.persona === "pet_owner") {
       return { variantKey: "life_pet_owner_v1" as const, contentMode: "first_contact_text" as const,
         text: `I saw your pet story. I make personalized photo pillow covers and can share an example from my own work if that feels relevant.${offer}` };

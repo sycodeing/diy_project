@@ -192,9 +192,9 @@ def extract_raw_reviews(archive_paths: list[Path]) -> list[dict[str, Any]]:
                                                               3000), path.name)
             continue
         stages: list[tuple[str, list[dict[str, Any]], set[str] | None]] = []
-        consumer_archive = document.get("kind") == "query_only_consumer_recall"
+        consumer_archive = document.get("kind") in {"query_only_consumer_recall", "query_only_engagement_recall"}
         for query in document.get("queries", []):
-            if query.get("role") == "control":
+            if query.get("role") in {"control", "seed"}:
                 continue
             accepted = {str(decision.get("post_id")): decision["intent"]
                         for decision in query.get("decisions") or []
@@ -230,6 +230,8 @@ def extract_raw_reviews(archive_paths: list[Path]) -> list[dict[str, Any]]:
                                                    else "no_original_post_photo")
                     parent_id = str(post.get("inReplyToId") or "") or None
                     is_reply = bool(parent_id or post.get("isReply"))
+                    seed_text = next((str(query.get("seed_text") or "") for query in document.get("queries", [])
+                                      if query.get("name") == stage), "") if document.get("kind") == "query_only_engagement_recall" else ""
                     rows[post_id] = {
                         "postId": post_id, "authorId": _author_id(post),
                         "handle": handle, "postUrl": f"https://x.com/{handle}/status/{post_id}",
@@ -244,7 +246,8 @@ def extract_raw_reviews(archive_paths: list[Path]) -> list[dict[str, Any]]:
                                            bool(PET_BODY.search(text) and PRODUCT_BODY.search(text))),
                         "isReply": is_reply, "parentPostId": parent_id,
                         "parentStatus": "unresolved" if is_reply else "not_applicable",
-                        "parentEvidence": None, "parentSourceArchive": None,
+                        "parentEvidence": _truncate_utf16(seed_text, 3000) if seed_text and is_reply and intent.get("direct_parent_status") == "seed_is_direct_parent" else None,
+                        "parentSourceArchive": path.name if seed_text and is_reply and intent.get("direct_parent_status") == "seed_is_direct_parent" else None,
                     }
     for post_id, (parent_id, parent_text, archive_name) in resolved_parents.items():
         if post_id in rows and parent_id == rows[post_id]["parentPostId"]:
