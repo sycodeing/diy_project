@@ -10,7 +10,7 @@ import httpx
 from lead_studio.config import Settings
 from lead_studio.engagement_profiles import assess_engagement_post, finalize_draft_gate, merge_semantic_review
 from lead_studio.engagement_semantics import review_text
-from probe_engagement_recall import run_engagement_recall_probe
+from probe_engagement_recall import QUERY_REVISION, SEED_QUERIES, _eligible_seed, run_engagement_recall_probe
 from probe_purchase_recall import extract_raw_reviews
 
 
@@ -123,6 +123,16 @@ def test_non_object_model_json_stays_pending():
     assert finalize_draft_gate(reviewed)["draft_ready"] is False
 
 
+def test_seed_query_uses_local_reply_count_and_rejects_imaginary_pet_challenge():
+    assert all("min_replies:" not in query for _, query in SEED_QUERIES[:2])
+    assert _eligible_seed({"text": "Show me your cats! I used an AI tool for the poster."},
+                          "pet_photo_invite_seed")
+    assert not _eligible_seed({"text": "Show me your cat the way you imagine below. Try my AI prompt in different AI models."},
+                              "pet_photo_invite_seed")
+    assert _eligible_seed({"text": "I painted this AI cat portrait. Thoughts?"},
+                          "pet_art_discussion_seed")
+
+
 def test_five_paid_pages_archive_seed_and_actual_replies(tmp_path):
     now = datetime(2026, 11, 21, 12, tzinfo=timezone.utc)
     stamp = now.isoformat()
@@ -141,7 +151,8 @@ def test_five_paid_pages_archive_seed_and_actual_replies(tmp_path):
         if path.endswith("/advanced_search"):
             query = str(request.url.params.get("query") or "")
             if "show me" in query:
-                posts = [post(100, 10, "Show me your cats! Drop your pet photo", replyCount=4)]
+                posts = [post(99, 9, "Show me your dog!", replyCount=0),
+                         post(100, 10, "Show me your cats! Drop your pet photo", replyCount=4)]
             elif "pet portrait" in query:
                 posts = [post(200, 20, "I painted this dog portrait. Thoughts?", replyCount=3)]
             elif "I drew my" in query:
@@ -178,6 +189,9 @@ def test_five_paid_pages_archive_seed_and_actual_replies(tmp_path):
     archive = json.loads((tmp_path / f'{summary["archive_id"]}.json').read_text(encoding="utf-8"))
     assert len(archive["queries"]) == 5
     assert archive["queries"][0]["role"] == "seed"
+    assert archive["configuration"]["queryRevision"] == QUERY_REVISION
+    assert all("min_replies:" not in q["query"] for q in archive["queries"][:2])
+    assert all(q["seed_post_id"] != "99" for q in archive["queries"] if q["role"] == "participant")
     rows = extract_raw_reviews([tmp_path / f'{summary["archive_id"]}.json'])
     by_id = {row["postId"]: row for row in rows}
     assert "100" not in by_id and "200" not in by_id

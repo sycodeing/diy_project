@@ -24,15 +24,17 @@ from probe_purchase_recall import (CREDITS_PATH, SEARCH_PATH, RecallProbeError,
                                    extract_post_photo_urls, historical_ids)
 
 VERSION = "consumer-engagement-v1"
+QUERY_REVISION = "engagement-seed-v2-local-reply-count"
 REPLIES_PATH = "/twitter/tweet/replies"
 SEED_QUERIES = (
-    ("pet_photo_invite_seed", '("show me" OR "show us" OR "drop") (pet OR pets OR dog OR dogs OR cat OR cats) min_replies:1 -filter:replies lang:en'),
-    ("pet_art_discussion_seed", '("pet portrait" OR "dog portrait" OR "cat portrait" OR "photo pillow") min_replies:1 -filter:replies lang:en'),
+    ("pet_photo_invite_seed", '("show me" OR "show us" OR "drop") (pet OR pets OR dog OR dogs OR cat OR cats) -filter:replies lang:en'),
+    ("pet_art_discussion_seed", '("pet portrait" OR "dog portrait" OR "cat portrait" OR "photo pillow") -filter:replies lang:en'),
     ("personal_make", '("I drew my" OR "I painted my" OR "I made this") (dog OR cat OR pet OR pillow OR portrait) -filter:replies lang:en'),
 )
 MAX_PAID_PAGES = 5  # 3 search + 2 reply pages, each documented <=20 tweets.
 PAGE_CREDIT_RESERVE = 300  # 20 returned tweets * 15 credits; no paid profile/parent fetch.
 INVITE = re.compile(r"\b(?:show\s+(?:me|us)|drop|share|post)\b.{0,90}\b(?:your|yr)\s+(?:pet|pets|dog|dogs|cat|cats|pet\s+photo|dog\s+photo|cat\s+photo)\b", re.I)
+IMAGINARY_PET_INVITE = re.compile(r"\b(?:your|yr)\s+(?:pet|pets|dog|dogs|cat|cats)\b.{0,50}\b(?:the\s+way\s+you\s+imagine|as\s+you\s+imagine|imaginary|ai[- ]generated|generated\s+(?:with|by)\s+ai)\b", re.I)
 ART_DISCUSSION = re.compile(r"\b(?:pet|dog|cat)\s+(?:portrait|art|photo)|\bphoto\s+pillow\b", re.I)
 DISCUSSION = re.compile(r"\?|\b(?:thoughts|which|show|share|made|drew|painted|design)\b", re.I)
 SEED_AD = re.compile(r"\b(?:shop now|order now|buy now|commissions? open|dm to order|limited sale|giveaway|airdrop|nft)\b", re.I)
@@ -44,7 +46,7 @@ def _eligible_seed(post: dict[str, Any], kind: str) -> bool:
     if SEED_AD.search(text) or SEED_SENSITIVE.search(text):
         return False
     if kind == "pet_photo_invite_seed":
-        return bool(INVITE.search(text))
+        return bool(INVITE.search(text) and not IMAGINARY_PET_INVITE.search(text))
     return bool(ART_DISCUSSION.search(text) and DISCUSSION.search(text))
 
 
@@ -103,7 +105,8 @@ async def run_engagement_recall_probe(
                (now or datetime.now(timezone.utc))).astimezone(timezone.utc)
     since = int((started - timedelta(days=3)).timestamp())
     until = int(started.timestamp())
-    query_fingerprint = sha256(json.dumps({"version": VERSION, "queries": SEED_QUERIES},
+    query_fingerprint = sha256(json.dumps({"version": VERSION, "query_revision": QUERY_REVISION,
+                                          "queries": SEED_QUERIES},
                                          sort_keys=True).encode("utf-8")).hexdigest()
     if prior:
         for index, (_, expression) in enumerate(SEED_QUERIES[:2]):
@@ -120,7 +123,8 @@ async def run_engagement_recall_probe(
         "configuration": {"lookbackDays": 3, "searchPages": 3, "maxReplyPages": 2,
                           "maxPaidPages": MAX_PAID_PAGES, "maxTotalCredits": max_total_credits,
                           "strictImport": False, "outreach": False,
-                          "queryFingerprint": query_fingerprint},
+                          "queryFingerprint": query_fingerprint,
+                          "queryRevision": QUERY_REVISION},
         "baseline_archives": archive_count, "baseline_post_ids": len(historical_posts),
         "baseline_author_ids": len(historical_authors),
         "contacted_snapshot": {"snapshot_at": contacted_snapshot["snapshot_at"],

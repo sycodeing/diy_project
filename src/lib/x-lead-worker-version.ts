@@ -34,5 +34,5 @@ export function supportsEngagementRecall(version: string | undefined) {
   const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version ?? "");
   if (!match) return false;
   const [major, minor, patch] = [Number(match[1]), Number(match[2]), Number(match[3])];
-  return major > 1 || (major === 1 && (minor > 18 || (minor === 18 && patch >= 2)));
+  return major > 1 || (major === 1 && (minor > 18 || (minor === 18 && patch >= 3)));
 }

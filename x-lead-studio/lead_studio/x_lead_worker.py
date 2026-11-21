@@ -38,7 +38,7 @@ async def run_x_lead_worker(settings: Settings) -> None:
                     json={
                         "workerId": worker_id,
                         "cookieConfigured": _provider_is_configured(settings, provider),
-                        "version": "1.18.2",
+                        "version": "1.18.3",
                     },
                 )
                 if response.status_code == 204:
@@ -314,7 +314,7 @@ async def _execute_recall_job(
     """Paid bounded search, raw review only; no photo, lead, or send path."""
     from probe_purchase_recall import extract_raw_reviews, run_recall_probe
     from probe_consumer_recall import run_consumer_recall_probe
-    from probe_engagement_recall import run_engagement_recall_probe
+    from probe_engagement_recall import QUERY_REVISION, run_engagement_recall_probe
 
     config = job.get("configuration") or {}
     consumer_mode = config.get("discoveryMode") == "consumer_recall"
@@ -325,6 +325,8 @@ async def _execute_recall_job(
     metrics: dict[str, Any] = {"discovery_mode": config.get("discoveryMode"), "scope": "raw_review_only"}
     rows: list[dict[str, Any]] = []
     try:
+        if engagement_mode and config.get("queryRevision") != QUERY_REVISION:
+            raise ValueError("Unsupported engagement query revision")
         if _selected_provider(settings) != "twitterapi":
             raise ValueError("Purchase recall requires TwitterAPI")
         if consumer_mode or engagement_mode:

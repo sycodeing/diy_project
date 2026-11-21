@@ -21,7 +21,7 @@ export async function runEngagementLeadSearch() {
   if (workerError) throw new Error(workerError.message);
   if (!worker || Date.now() - new Date(worker.last_seen_at).getTime() > 120_000
       || !supportsEngagementRecall(worker.worker_version ?? undefined)) {
-    throw new Error("对话来源召回需要在线的 1.18.2 或更高版本发现执行器。");
+    throw new Error("对话来源召回需要在线的 1.18.3 或更高版本发现执行器。");
   }
   const { data: active, error: activeError } = await supabase.from("x_lead_search_jobs")
     .select("id").in("status", ["queued", "running"]).limit(1).maybeSingle();
@@ -29,7 +29,7 @@ export async function runEngagementLeadSearch() {
   if (active) redirect("/admin/x-lead-search?notice=active");
   const { error } = await supabase.from("x_lead_search_jobs").insert({
     trigger_type: "manual", status: "queued", created_by: user.id,
-    configuration: { discoveryMode: "engagement_recall", lookbackDays: 3,
+    configuration: { discoveryMode: "engagement_recall", queryRevision: "engagement-seed-v2-local-reply-count", lookbackDays: 3,
       searchPages: 3, maxReplyPages: 2, maxCredits: 1800 },
   });
   if (error) throw new Error(error.message);
