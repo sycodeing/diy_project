@@ -33,3 +33,5 @@
 管理员可直接查看[原任务宠物原始 20 帖](https://www.thebestdiyshop.com/admin/x-leads?mode=raw_review&tier=all&field=archive&query=engagement-recall-20261121T063722Z-a98ecf18.json)、[续跑作品原始 20 帖](https://www.thebestdiyshop.com/admin/x-leads?mode=raw_review&tier=all&field=archive&query=engagement-recall-20261121T063722Z-3ca48e47.json)、[新三组当前待筛池](https://www.thebestdiyshop.com/admin/x-leads?mode=raw_review)及[旧生活画像优先](https://www.thebestdiyshop.com/admin/x-leads?mode=raw_review&tier=valuable)。档案筛选 URL 仅按 `source_archive` 查各 20 行；复用页不会重复显示在续跑来源中。后台需管理员登录。
 
 本批可证明归档、受控续跑、分层留存与人工待核实边界可运行；不能证明线程参与者发现有效，不能证明具体商品兴趣、成交可能性或长期筛选精度。
+
+归档整理说明：逐账号 AI 文字复核 TSV 曾随报告进入提交 `8794e0b`；随后以普通提交 `4073118` 从当前跟踪版本移除，保存在本机被忽略的 `.data/purchase-discussion-evaluation/`。未改写 Git 历史。
