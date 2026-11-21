@@ -26,12 +26,26 @@ from probe_purchase_recall import (CREDITS_PATH, SEARCH_PATH, RecallProbeError,
 VERSION = "consumer-engagement-v1"
 REPLIES_PATH = "/twitter/tweet/replies"
 SEED_QUERIES = (
-    ("pet_share", '("my dog" OR "my cat") filter:images -filter:replies lang:en'),
-    ("product_thread_seed", '("custom pet pillow" OR "photo pillow cover" OR "custom photo gift") -filter:replies lang:en'),
-    ("personal_make", '("I made" OR "I designed") (pillow OR cushion OR "photo gift" OR portrait) lang:en'),
+    ("pet_photo_invite_seed", '("show me" OR "show us" OR "drop") (pet OR pets OR dog OR dogs OR cat OR cats) min_replies:1 -filter:replies lang:en'),
+    ("pet_art_discussion_seed", '("pet portrait" OR "dog portrait" OR "cat portrait" OR "photo pillow") min_replies:1 -filter:replies lang:en'),
+    ("personal_make", '("I drew my" OR "I painted my" OR "I made this") (dog OR cat OR pet OR pillow OR portrait) -filter:replies lang:en'),
 )
 MAX_PAID_PAGES = 5  # 3 search + 2 reply pages, each documented <=20 tweets.
 PAGE_CREDIT_RESERVE = 300  # 20 returned tweets * 15 credits; no paid profile/parent fetch.
+INVITE = re.compile(r"\b(?:show\s+(?:me|us)|drop|share|post)\b.{0,90}\b(?:your|yr)\s+(?:pet|pets|dog|dogs|cat|cats|pet\s+photo|dog\s+photo|cat\s+photo)\b", re.I)
+ART_DISCUSSION = re.compile(r"\b(?:pet|dog|cat)\s+(?:portrait|art|photo)|\bphoto\s+pillow\b", re.I)
+DISCUSSION = re.compile(r"\?|\b(?:thoughts|which|show|share|made|drew|painted|design)\b", re.I)
+SEED_AD = re.compile(r"\b(?:shop now|order now|buy now|commissions? open|dm to order|limited sale|giveaway|airdrop|nft)\b", re.I)
+SEED_SENSITIVE = re.compile(r"\b(?:passed away|died|rip|terminal|very sick|put (?:him|her|them) to sleep)\b", re.I)
+
+
+def _eligible_seed(post: dict[str, Any], kind: str) -> bool:
+    text = str(post.get("text") or "")
+    if SEED_AD.search(text) or SEED_SENSITIVE.search(text):
+        return False
+    if kind == "pet_photo_invite_seed":
+        return bool(INVITE.search(text))
+    return bool(ART_DISCUSSION.search(text) and DISCUSSION.search(text))
 
 
 def _post_time(post: dict[str, Any], since: int, until: int) -> str | None:
@@ -72,11 +86,11 @@ async def run_engagement_recall_probe(
         if (prior.get("kind") != "query_only_engagement_recall"
                 or prior.get("status") != "stopped_provider_error"
                 or len(old_queries) != 2
-                or old_queries[0].get("name") != "pet_share"
-                or old_queries[0].get("role") != "candidate"
+                or old_queries[0].get("name") != SEED_QUERIES[0][0]
+                or old_queries[0].get("role") != "seed"
                 or len(old_queries[0].get("pages") or []) != 1
                 or old_queries[0]["pages"][0].get("http_status") != 200
-                or old_queries[1].get("name") != "product_thread_seed"
+                or old_queries[1].get("name") != SEED_QUERIES[1][0]
                 or len(old_queries[1].get("pages") or []) != 1
                 or old_queries[1]["pages"][0].get("http_status") != 503
                 or not isinstance(prior.get("credits_before"), dict)
@@ -142,7 +156,8 @@ async def run_engagement_recall_probe(
                                             ("pet_share", "thread_participant", "personal_make")}
     tier_counts: Counter[str] = Counter()
     candidate_decisions: list[tuple[dict[str, Any], dict[str, Any], str, str]] = []
-    seed_posts: list[dict[str, Any]] = []
+    seed_posts: dict[str, list[dict[str, Any]]] = {name: [] for name, _ in SEED_QUERIES[:2]}
+    selected_seed_authors: set[str] = set()
     pages_used = 2 if prior else 0
     resume_pages = 0
     reused_post_ids = 0
@@ -151,6 +166,12 @@ async def run_engagement_recall_probe(
         first_posts = {str(p.get("id") or p.get("id_str")): p
                        for p in first_query["pages"][0]["response"].get("tweets", [])
                        if isinstance(p, dict)}
+        for post in first_posts.values():
+            if (_post_time(post, since, until) and not is_repost(post)
+                    and not post.get("isReply") and not post.get("inReplyToId")
+                    and int(post.get("replyCount") or 0) > 0
+                    and _eligible_seed(post, SEED_QUERIES[0][0])):
+                seed_posts[SEED_QUERIES[0][0]].append(post)
         for decision in first_query["decisions"]:
             if not isinstance(decision, dict) or "intent" not in decision:
                 continue
@@ -158,7 +179,7 @@ async def run_engagement_recall_probe(
             author = str(decision.get("author_id") or "")
             if author:
                 seen_authors.add(author)
-                author_by_group["pet_share"].add(author)
+                author_by_group["thread_participant"].add(author)
             tier_counts[decision["intent"]["tier"]] += 1
             post = first_posts.get(str(decision["post_id"]))
             if decision["intent"]["tier"] == "exploratory" and post:
@@ -215,9 +236,8 @@ async def run_engagement_recall_probe(
                 if (post_id and posted_at and not is_repost(post)
                         and not post.get("isReply") and not post.get("inReplyToId")
                         and int(post.get("replyCount") or 0) > 0
-                        and any(token in str(post.get("text") or "").lower()
-                                for token in ("pillow", "cover", "photo gift"))):
-                    seed_posts.append(post)
+                        and _eligible_seed(post, name)):
+                    seed_posts[name].append(post)
                 continue  # seed authors are context, never candidate accounts
             if not post_id or post_id in historical_posts or post_id in seen_posts:
                 continue
@@ -228,10 +248,11 @@ async def run_engagement_recall_probe(
                 entry["decisions"].append({"post_id": post_id, "reason": "invalid_or_out_of_window"})
                 continue
             author = _author_id(post)
-            if seed and author == _author_id(seed):
+            if seed and author in selected_seed_authors:
                 entry["decisions"].append({"post_id": post_id, "reason": "seed_author_not_participant"})
                 continue
-            if not author or author in seen_authors or len(author_by_group[source]) >= 20:
+            seed_group_count = sum(1 for d in entry["decisions"] if d.get("author_id") and d.get("intent"))
+            if not author or author in seen_authors or len(author_by_group[source]) >= 20 or (seed and seed_group_count >= 10):
                 entry["decisions"].append({"post_id": post_id, "reason": "duplicate_or_group_limit"})
                 continue
             seen_authors.add(author)
@@ -243,7 +264,9 @@ async def run_engagement_recall_probe(
             direct_parent = bool(seed and str(post.get("inReplyToId") or "") == str(seed.get("id")))
             intent = assess_engagement_post(str(post.get("text") or ""), bio=_author_bio(post),
                                             source=source, seed_text=seed_text,
-                                            direct_parent=direct_parent, is_repost=is_repost(post))
+                                            direct_parent=direct_parent, is_repost=is_repost(post),
+                                            verified_pet_invitation=bool(seed and name == "thread_participant_1"),
+                                            own_photo_count=len(extract_post_photo_urls(post)))
             if _contact_match(post, snapshot):
                 intent.update(tier="excluded", persona=None, priority="none",
                               exclusion_reasons=[*intent["exclusion_reasons"], "previously_contacted"],
@@ -253,6 +276,7 @@ async def run_engagement_recall_probe(
                 intent["contact_status"] = "not_seen_in_snapshot"
             tier_counts[intent["tier"]] += 1
             decision = {"post_id": post_id, "author_id": author, "posted_at": posted_at,
+                        "source_stage": name,
                         "in_reply_to_id": str(post.get("inReplyToId") or "") or None,
                         "seed_post_id": str(seed.get("id")) if seed else None,
                         "intent": intent}
@@ -270,34 +294,69 @@ async def run_engagement_recall_probe(
         for name, expression in SEED_QUERIES:
             if document["status"] != "collecting":
                 break
-            if prior and name == "pet_share":
+            if prior and name == SEED_QUERIES[0][0]:
                 continue
             params = {"query": f"{expression} since_time:{since} until_time:{until}",
                       "queryType": "Latest", "cursor": ""}
-            await one_page(name, "seed" if name == "product_thread_seed" else "candidate",
+            await one_page(name, "seed" if name != "personal_make" else "candidate",
                            SEARCH_PATH, params, name)
-        used_seed_authors: set[str] = set()
-        for seed in sorted(seed_posts, key=lambda p: -int(p.get("replyCount") or 0)):
-            if document["status"] != "collecting" or len(used_seed_authors) >= 2:
+        selected_seeds: list[tuple[str, dict[str, Any]]] = []
+        for seed_kind, _ in SEED_QUERIES[:2]:
+            if document["status"] != "collecting":
                 break
-            author = _author_id(seed)
-            if author in used_seed_authors:
+            seed = next((p for p in sorted(seed_posts[seed_kind], key=lambda p: -int(p.get("replyCount") or 0))
+                         if _author_id(p) and _author_id(p) not in selected_seed_authors), None)
+            if seed is None:
                 continue
-            used_seed_authors.add(author)
-            await one_page(f"thread_participant_{len(used_seed_authors)}", "participant",
+            selected_seed_authors.add(_author_id(seed))
+            selected_seeds.append((seed_kind, seed))
+        # A seed is context only, even if its author also appeared in the
+        # independent works search before seed selection was finalized.
+        retained_candidates = []
+        for item in candidate_decisions:
+            decision = item[0]
+            if decision.get("author_id") in selected_seed_authors:
+                intent = decision["intent"]
+                intent.update(tier="excluded", persona=None, priority="none",
+                              exclusion_reasons=[*intent["exclusion_reasons"], "seed_author_context_only"],
+                              draft_ready=False)
+                tier_counts["exploratory"] -= 1
+                tier_counts["excluded"] += 1
+            else:
+                retained_candidates.append(item)
+        candidate_decisions = retained_candidates
+        for seed_kind, seed in selected_seeds:
+            if document["status"] != "collecting":
+                break
+            stage = "thread_participant_1" if seed_kind == SEED_QUERIES[0][0] else "thread_participant_2"
+            await one_page(stage, "participant",
                            REPLIES_PATH, {"tweetId": str(seed["id"]), "sinceTime": str(since),
                                           "untilTime": str(until), "cursor": ""},
                            "thread_participant", seed)
         # Local inference has no provider requests. It is optional, bounded, and never
         # upgrades a raw review to strict lead or proof of image ownership.
         if document["status"] == "collecting":
-            quotas = {"pet_share": 3, "thread_participant": 4, "personal_make": 3}
+            quotas = {"thread_participant_1": 3, "thread_participant_2": 3,
+                      "personal_make": 4}
             selected_for_review: list[tuple[dict[str, Any], dict[str, Any], str, str]] = []
+            selected_ids: set[str] = set()
             for item in candidate_decisions:
-                persona = item[0]["intent"]["persona"]
-                if quotas.get(persona, 0) > 0:
+                stage = item[0].get("source_stage", "personal_make")
+                if quotas.get(stage, 0) > 0:
                     selected_for_review.append(item)
-                    quotas[persona] -= 1
+                    selected_ids.add(str(item[0]["post_id"]))
+                    quotas[stage] -= 1
+            # If exactly one seed has participants, its otherwise unused three slots
+            # can review more of that seed; never borrow slots from works.
+            populated = [stage for stage in ("thread_participant_1", "thread_participant_2")
+                         if any(item[0].get("source_stage") == stage for item in candidate_decisions)]
+            if len(populated) == 1:
+                for item in candidate_decisions:
+                    if len([v for v in selected_for_review if v[0].get("source_stage") == populated[0]]) >= 6:
+                        break
+                    if item[0].get("source_stage") == populated[0] and str(item[0]["post_id"]) not in selected_ids:
+                        selected_for_review.append(item)
+                        selected_ids.add(str(item[0]["post_id"]))
             model_deadline = time.monotonic() + 240
             for decision, post, bio, seed_text in selected_for_review:
                 if time.monotonic() >= model_deadline:

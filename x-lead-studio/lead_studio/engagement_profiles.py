@@ -17,7 +17,8 @@ SELF_USE = re.compile(r"\b(?:for myself|for my own|our home|my home|my room|our 
 
 def assess_engagement_post(text: str, *, bio: str = "", source: str,
                            seed_text: str = "", direct_parent: bool = False,
-                           is_repost: bool = False) -> dict[str, Any]:
+                           is_repost: bool = False, verified_pet_invitation: bool = False,
+                           own_photo_count: int = 0) -> dict[str, Any]:
     """A raw pool decision. Seed context never grants the reply's personal evidence."""
     own = text[:3000]
     seller = bool(SELLER.search(own) or SELLER.search(bio))
@@ -30,7 +31,12 @@ def assess_engagement_post(text: str, *, bio: str = "", source: str,
         if not has_person and not excluded:
             reasons.append("no_clear_personal_pet_evidence")
     elif source == "thread_participant":
-        has_person = bool(personal)
+        caption = re.sub(r"https?://t\.co/\w+", "", own, flags=re.I)
+        caption = re.sub(r"^(?:\s*@\w+)+", "", caption).strip()
+        generic_reaction = bool(re.fullmatch(r"(?:cute|love|nice|wow|lol|adorable)[!. ]*", caption, re.I))
+        contextual_self_report = bool(verified_pet_invitation and direct_parent and own_photo_count > 0
+                                      and not personal and not generic_reaction)
+        has_person = bool(personal or contextual_self_report)
         if not has_person and not excluded:
             reasons.append("participant_personal_evidence_pending")
     elif source == "personal_make":
@@ -39,6 +45,8 @@ def assess_engagement_post(text: str, *, bio: str = "", source: str,
             reasons.append("personal_use_not_established")
     else:
         raise ValueError("Unknown source")
+    if source != "thread_participant":
+        contextual_self_report = False
     tier = "excluded" if excluded or not has_person else "exploratory"
     own_product = CATALOG_PRODUCT.search(own) or PRODUCT.search(own)
     relation = "direct_text" if own_product else ("thread_context_only" if seed_text and PRODUCT.search(seed_text) else "unknown")
@@ -50,15 +58,18 @@ def assess_engagement_post(text: str, *, bio: str = "", source: str,
     return {
         "version": VERSION, "tier": tier, "persona": source if tier != "excluded" else None,
         "priority": "low", "exclusion_reasons": reasons,
-        "personal_evidence": personal.group(0) if personal and tier != "excluded" else None,
+        "personal_evidence": (personal.group(0) if personal else
+                              "direct_reply_to_pet_photo_invitation + own_post_photo_metadata"
+                              if contextual_self_report else None) if tier != "excluded" else None,
+        "contextual_self_report_pending": contextual_self_report,
         "self_use_evidence": SELF_USE.search(own).group(0) if source == "personal_make" and SELF_USE.search(own) else None,
         "product_relation": relation, "product_evidence": own_product.group(0) if own_product else None,
         "conversation_entry": entry, "current_need": "resolved_same_catalog_product" if finished else "unknown",
         "direct_parent_status": ("seed_is_direct_parent" if direct_parent else
                                  "thread_context_known_direct_parent_unknown" if seed_text else "not_applicable"),
         "seed_evidence": seed_text[:500] if seed_text else None,
-        "needs_context_review": sensitive, "semantic_status": "pending",
-        "media_semantic_status": "pending", "media_eligibility": "unverified",
+        "needs_context_review": sensitive or contextual_self_report, "semantic_status": "pending",
+        "media_semantic_status": "pending", "media_eligibility": "pending_ownership" if contextual_self_report else "unverified",
         "draft_ready": False, "human_approved": False, "contact_permission": False,
         "verification": ["account_identity", "product_fit", "photo_ownership"],
     }

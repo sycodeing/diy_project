@@ -29,6 +29,31 @@ def test_personal_reply_does_not_inherit_seed_purchase_or_draft():
     assert nested["direct_parent_status"] == "thread_context_known_direct_parent_unknown"
 
 
+def test_direct_pet_invitation_short_photo_caption_stays_ownership_pending():
+    invited = assess_engagement_post("Milo", source="thread_participant",
+        seed_text="Show me your cats!", direct_parent=True,
+        verified_pet_invitation=True, own_photo_count=1)
+    assert invited["tier"] == "exploratory"
+    assert invited["contextual_self_report_pending"] is True
+    assert invited["needs_context_review"] is True
+    assert invited["media_eligibility"] == "pending_ownership"
+    assert finalize_draft_gate(invited)["draft_ready"] is False
+    for caption in ("Milo https://t.co/abc", "@seed Milo https://t.co/abc", "https://t.co/abc"):
+        contextual = assess_engagement_post(caption, source="thread_participant",
+            seed_text="Show me your cats!", direct_parent=True,
+            verified_pet_invitation=True, own_photo_count=1)
+        assert contextual["tier"] == "exploratory"
+        assert contextual["draft_ready"] is False
+    for kwargs, caption in [({"own_photo_count": 0}, "Milo"),
+                            ({"direct_parent": False, "own_photo_count": 1}, "Milo"),
+                            ({"own_photo_count": 0}, "😍"),
+                            ({"own_photo_count": 1}, "Cute!")]:
+        result = assess_engagement_post(caption, source="thread_participant",
+            seed_text="Show me your cats!", verified_pet_invitation=True,
+            **{"direct_parent": True, **kwargs})
+        assert result["tier"] == "excluded"
+
+
 def test_personal_make_and_model_evidence_fail_closed():
     assert assess_engagement_post("I drew my dog for myself", source="personal_make")["tier"] == "exploratory"
     assert assess_engagement_post("I draw pet portraits, commissions open", source="personal_make",
@@ -115,19 +140,24 @@ def test_five_paid_pages_archive_seed_and_actual_replies(tmp_path):
         calls.append(path)
         if path.endswith("/advanced_search"):
             query = str(request.url.params.get("query") or "")
-            if "custom pet pillow" in query:
-                posts = [post(200, 20, "Our shop sells custom pet pillows", replyCount=4),
-                         post(201, 21, "Custom photo gift ideas", replyCount=3)]
-            elif "I made" in query:
-                posts = [post(300, 30, "I drew my dog for myself")]
+            if "show me" in query:
+                posts = [post(100, 10, "Show me your cats! Drop your pet photo", replyCount=4)]
+            elif "pet portrait" in query:
+                posts = [post(200, 20, "I painted this dog portrait. Thoughts?", replyCount=3)]
+            elif "I drew my" in query:
+                posts = [post(300, 30, "I drew my dog for myself"),
+                         post(301, 10, "I drew my cat for myself")]
             else:
-                posts = [post(100, 10, "My cat sleeps on my sofa")]
+                posts = []
         else:
             seed = request.url.params["tweetId"]
             posts = ([post(400, 40, "Cute!", isReply=True, inReplyToId=seed),
-                      post(401, 41, "Here is my dog Bella", isReply=True, inReplyToId=seed)]
-                     if seed == "200" else
-                     [post(402, 42, "Here is my cat", isReply=True, inReplyToId="399")])
+                      post(401, 41, "Milo", isReply=True, inReplyToId=seed,
+                           extendedEntities={"media": [{"type": "photo", "media_url_https": "https://pbs.twimg.com/media/abc.jpg"}]})]
+                     + [post(410+i, 50+i, "Here is my dog", isReply=True, inReplyToId=seed) for i in range(10)]
+                     if seed == "100" else
+                     [post(402, 42, "Here is my cat", isReply=True, inReplyToId="399")]
+                     + [post(430+i, 70+i, "Here is my cat", isReply=True, inReplyToId=seed) for i in range(10)])
         return httpx.Response(200, json={"status": "success", "tweets": posts,
                                          "has_next_page": True, "next_cursor": "ignored"})
 
@@ -144,16 +174,22 @@ def test_five_paid_pages_archive_seed_and_actual_replies(tmp_path):
     assert summary["search_pages"] == 5
     assert len(calls) == 5 and sum(path.endswith("/replies") for path in calls) == 2
     assert summary["max_static_provider_cost"] == 1500
+    assert summary["group_authors"]["thread_participant"] == 20
     archive = json.loads((tmp_path / f'{summary["archive_id"]}.json').read_text(encoding="utf-8"))
     assert len(archive["queries"]) == 5
-    assert archive["queries"][1]["role"] == "seed"
+    assert archive["queries"][0]["role"] == "seed"
     rows = extract_raw_reviews([tmp_path / f'{summary["archive_id"]}.json'])
     by_id = {row["postId"]: row for row in rows}
-    assert "200" not in by_id and "201" not in by_id
-    assert by_id["401"]["parentEvidence"] == "Our shop sells custom pet pillows"
+    assert "100" not in by_id and "200" not in by_id
+    assert by_id["401"]["parentEvidence"] == "Show me your cats! Drop your pet photo"
+    assert by_id["401"]["intent"]["contextual_self_report_pending"] is True
+    assert by_id["401"]["intent"]["media_eligibility"] == "pending_ownership"
     assert by_id["402"]["parentEvidence"] is None
     assert by_id["402"]["intent"]["direct_parent_status"] == "thread_context_known_direct_parent_unknown"
     assert by_id["400"]["classifierTier"] == "excluded"
+    assert by_id["301"]["classifierTier"] == "excluded"
+    assert "seed_author_context_only" in by_id["301"]["exclusionReasons"]
+    assert "418" not in by_id and "439" not in by_id  # later authors reserved beyond each seed's 10
     assert all(row["intent"]["draft_ready"] is False for row in rows)
 
 
@@ -172,19 +208,18 @@ def test_resume_reuses_first_page_and_caps_all_six_attempts(tmp_path):
         if request.url.path == "/oapi/my/info":
             return httpx.Response(200, json={"recharge_credits": 25000, "total_bonus_credits": 0})
         calls.append((request.url.path, str(request.url.params.get("query") or "")))
-        if "custom pet pillow" in calls[-1][1] and fail_seed_once:
+        if "pet portrait" in calls[-1][1] and fail_seed_once:
             fail_seed_once = False
             return httpx.Response(503, json={"detail": "Please retry; not charged"})
-        if "custom pet pillow" in calls[-1][1]:
-            posts = [post(200, 20, "Custom pet pillow thread", replyCount=4),
-                     post(201, 21, "Photo pillow cover thread", replyCount=3)]
-        elif "I made" in calls[-1][1]:
+        if "pet portrait" in calls[-1][1]:
+            posts = [post(200, 20, "I painted a dog portrait. Thoughts?", replyCount=4)]
+        elif "I drew my" in calls[-1][1]:
             posts = [post(300, 30, "I drew my dog for myself")]
         elif request.url.path.endswith("/replies"):
             posts = [post(400 + len(calls), 40 + len(calls), "Here is my dog Bella",
                           isReply=True, inReplyToId=request.url.params["tweetId"])]
         else:
-            posts = [post(100, 10, "My cat sleeps on my sofa")]
+            posts = [post(100, 10, "Show me your dog photos!", replyCount=4)]
         return httpx.Response(200, json={"tweets": posts})
 
     async def run(resume_from=None):
@@ -202,13 +237,13 @@ def test_resume_reuses_first_page_and_caps_all_six_attempts(tmp_path):
     resumed = asyncio.run(run(first_path))
     assert resumed["status"] == "completed"
     assert resumed["search_pages"] == 6 and resumed["new_request_pages"] == 4
-    assert resumed["reused_post_ids"] == 1 and resumed["resume_new_posts"] == 3
+    assert resumed["reused_success_pages"] == 1 and resumed["resume_new_posts"] == 3
     assert resumed["max_static_provider_cost"] == 1800
-    assert len(calls) == 6 and sum("my dog" in query for _, query in calls) == 1
+    assert len(calls) == 6 and sum("show me" in query for _, query in calls) == 1
     assert first_path.read_bytes() == original_bytes
     new_path = tmp_path / f'{resumed["archive_id"]}.json'
     document = json.loads(new_path.read_text(encoding="utf-8"))
     assert document["resume_of"] == first["archive_id"]
     assert document["queries"][0]["role"] == "reused"
     assert "100" not in {row["postId"] for row in extract_raw_reviews([new_path])}
-    assert "100" in {row["postId"] for row in extract_raw_reviews([first_path])}
+    assert "100" not in {row["postId"] for row in extract_raw_reviews([first_path])}

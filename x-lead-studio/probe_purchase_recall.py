@@ -226,7 +226,8 @@ def extract_raw_reviews(archive_paths: list[Path]) -> list[dict[str, Any]]:
                     intent = (accepted[post_id] if consumer_archive and accepted is not None
                               else assess_purchase_intent(text, author_bio=_author_bio(post)))
                     photo_urls = extract_post_photo_urls(post)
-                    intent["media_eligibility"] = ("original_post_photo_unverified" if photo_urls
+                    intent["media_eligibility"] = ("pending_ownership" if intent.get("contextual_self_report_pending")
+                                                   else "original_post_photo_unverified" if photo_urls
                                                    else "no_original_post_photo")
                     parent_id = str(post.get("inReplyToId") or "") or None
                     is_reply = bool(parent_id or post.get("isReply"))

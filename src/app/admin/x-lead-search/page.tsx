@@ -110,12 +110,12 @@ export default async function XLeadSearchPage({
 
         <section className="mt-6 rounded-xl border border-line bg-panel/90 p-5">
           <h2 className="text-xl font-black">个人分享 · 真实线程参与 · 自用作品</h2>
-          <p className="mt-2 text-sm text-muted">三个来源：本人宠物分享基准、相关商品原帖的真实回复者、本人制作的个性化作品。先保存原始页，再把账号证据、当前帖交流入口、商品关联分开审阅。线程种子不是候选；原帖图片与本地模型判断均不能证明归属或联系资格。</p>
+          <p className="mt-2 text-sm text-muted">本轮两类相关线程的真实回复者，以及个人视觉作品作者；历史宠物分享批次仍可单独查看。先保存原始页，再把账号证据、当前帖交流入口、商品关联分开审阅。线程种子不是候选；原帖图片与本地模型判断均不能证明归属或联系资格。</p>
           <form action={runEngagementLeadSearch} className="mt-4 flex flex-wrap gap-3">
             <button className="focus-ring rounded-lg bg-accent px-4 py-3 font-bold text-accent-ink" type="submit">启动一次有界对话来源测试</button>
             <Link className="focus-ring rounded-lg border border-line px-4 py-3 font-bold" href="/admin/x-leads?mode=raw_review">查看原始待筛</Link>
           </form>
-          <p className="mt-2 text-xs text-muted">最近 3 天；3 搜索页、最多 2 个线程回复首页；每组最多 20 个独立账号。TwitterAPI 总预算 1800 credits，余额保底 3000。仅原始待审，不生成严格候选或发送任务；需在线 1.18.1 执行器。</p>
+          <p className="mt-2 text-xs text-muted">最近 3 天；2 类线程种子和 1 类个人作品各搜索 1 页，每类种子最多取 1 个回复首页、10 位独立回复者；作品最多 20 位作者。TwitterAPI 总预算 1800 credits，余额保底 3000。仅原始待审，不生成严格候选或发送任务；需在线 1.18.2 执行器。</p>
         </section>
 
         <section className="mt-6 rounded-xl border border-line bg-panel/90 p-5">
@@ -244,11 +244,14 @@ function formatDiscoveryMetrics(metrics: Record<string, unknown> | null, recall 
       ? metrics.persona_unique_authors as Record<string, unknown> : null;
     const groups = metrics?.group_authors && typeof metrics.group_authors === "object"
       ? metrics.group_authors as Record<string, unknown> : null;
+    const newThreadExperiment = Array.isArray(metrics?.stages)
+      && metrics.stages.some((stage) => stage && typeof stage === "object"
+        && "name" in stage && stage.name === "pet_photo_invite_seed");
     return [`原始待筛 ${rawRows ?? "—"}`, `新帖 ${newPosts ?? "—"}`, `潜在 ${potential ?? "—"}`,
       ...(personas ? ("pet_owner" in personas
         ? [`宠物 ${personas.pet_owner ?? 0} 人`, `家居 ${personas.home_decorator ?? 0} 人`, `关系回忆 ${personas.relationship_memory ?? 0} 人`]
         : [`旧送礼 ${personas.gift_giver ?? 0} 人`, `旧兴趣 ${personas.identity_consumer ?? 0} 人`, `旧活动 ${personas.group_organizer ?? 0} 人`]) : []),
-      ...(groups ? [`宠物分享 ${groups.pet_share ?? 0} 人`, `线程参与 ${groups.thread_participant ?? 0} 人`, `自用作品 ${groups.personal_make ?? 0} 人`, `待审池 ${metricNumber(metrics!, "review_pool_posts") ?? 0}`, `可拟草稿 ${metricNumber(metrics!, "draft_ready_posts") ?? 0}`] : []),
+      ...(groups ? [...(newThreadExperiment ? [] : [`宠物分享 ${groups.pet_share ?? 0} 人`]), `线程参与 ${groups.thread_participant ?? 0} 人`, `自用作品 ${groups.personal_make ?? 0} 人`, `待审池 ${metricNumber(metrics!, "review_pool_posts") ?? 0}`, `可拟草稿 ${metricNumber(metrics!, "draft_ready_posts") ?? 0}`] : []),
       `明确 ${explicit ?? "—"}`, `搜索 ${pages ?? "—"} 页`, "严格资格 0"].join(" · ");
   }
   if (!metrics || typeof metrics.provider !== "string") return "—";
