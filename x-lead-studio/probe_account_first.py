@@ -19,7 +19,7 @@ from probe_purchase_recall import _credits, _save
 
 VERSION = "account-first-v1"
 SEED_PATH = "/twitter/tweets"
-REPLIES_PATH = "/twitter/tweet/replies"
+REPLIES_PATH = "/twitter/tweet/replies/v2"
 RECENT_PATH = "/twitter/user/last_tweets"
 MAX_ACCOUNTS = 4
 MAX_CREDITS = 1800
@@ -143,14 +143,17 @@ async def run_account_first_probe(
             raise ValueError("Verified seed missing or is itself a reply")
         seed_author, _ = _author(seed)
         document["seed_author_id"] = seed_author
-        replies = await fetch(REPLIES_PATH, {"tweetId": seed_post_id, "cursor": ""}, 300)
+        replies = await fetch(REPLIES_PATH, {"tweetId": seed_post_id, "cursor": "",
+                                             "queryType": "Latest"}, 300)
         groups: dict[str, dict[str, Any]] = {}
         for post in replies:
             if not isinstance(post, dict) or not _in_window(post, since, started):
                 continue
             author_id, handle = _author(post)
             post_id = str(post.get("id") or post.get("id_str") or "")
-            if (not re.fullmatch(r"\d{5,30}", author_id) or not post_id or author_id == seed_author):
+            if (not re.fullmatch(r"\d{5,30}", author_id) or not post_id
+                    or post_id == seed_post_id or author_id == seed_author
+                    or str(post.get("conversationId") or "") != seed_post_id):
                 continue
             if (author_id in contacted_ids or handle.lower() in contacted_handles
                     or post_id in contacted_posts):
@@ -204,7 +207,9 @@ async def run_account_first_probe(
     return {"status": document["status"], "archive_path": str(path), "archive_id": archive_id,
             "account_candidates": document["account_candidates"],
             "metrics": {"provider": "twitterapi", "scope": "account_review_only",
-                        "paid_requests": len(document["requests"]), "returned_replies": len(replies) if 'replies' in locals() else 0,
+                        "paid_requests": len(document["requests"]),
+                        "returned_reply_page_items": len(replies) if 'replies' in locals() else 0,
+                        "returned_replies": sum(len(group["replies"]) for group in groups.values()) if 'groups' in locals() else 0,
                         "distinct_reply_authors": len(groups) if 'groups' in locals() else 0,
                         "accounts_enriched": sum(r["accountEvidence"]["timeline_status"] == "complete"
                                                  for r in document["account_candidates"]),

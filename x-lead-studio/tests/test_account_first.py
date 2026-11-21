@@ -17,7 +17,7 @@ def post(post_id: str, author_id: str, text: str, *, parent: str | None = None,
     return {"id": post_id, "text": text, "createdAt": "Sat Nov 21 05:00:00 +0000 2026",
             "author": {"id": author_id, "userName": handle or f"user{author_id}",
                        "profile_bio": {"description": bio}},
-            "inReplyToId": parent, "isReply": bool(parent)}
+            "inReplyToId": parent, "conversationId": parent or post_id, "isReply": bool(parent)}
 
 
 def assessment(replies: list[dict], recent: list[dict], *, status: str = "complete") -> dict:
@@ -77,7 +77,7 @@ def test_archive_first_probe_nested_provider_payload_and_capacity(tmp_path):
         if request.url.path == SEED_PATH:
             return httpx.Response(200, json={"status": "success", "tweets": [seed]})
         if request.url.path == REPLIES_PATH:
-            return httpx.Response(200, json={"status": "success", "tweets": replies})
+            return httpx.Response(200, json={"status": "success", "tweets": [seed, *replies]})
         assert request.url.path == RECENT_PATH
         author_id = request.url.params["userId"]
         return httpx.Response(200, json={"status": "success", "data": {"tweets": [
@@ -98,8 +98,46 @@ def test_archive_first_probe_nested_provider_payload_and_capacity(tmp_path):
     assert len([path for path, _ in calls if path == RECENT_PATH]) == 4
     assert result["account_candidates"][4]["accountEvidence"]["timeline_status"] == "capacity_pending"
     assert result["metrics"]["reserved_credits"] == 1575
+    assert result["metrics"]["returned_reply_page_items"] == 6
+    assert result["metrics"]["returned_replies"] == 5
+    assert [params for path, params in calls if path == REPLIES_PATH] == ["tweetId=99999&cursor=&queryType=Latest"]
     archive = json.loads((tmp_path / f'{result["archive_id"]}.json').read_text(encoding="utf-8"))
     assert len(archive["requests"]) == 6 and archive["requests"][2]["response"]["data"]["pin_tweet"]
+
+
+def test_v2_reply_page_does_not_turn_seed_or_unrelated_thread_into_participants(tmp_path):
+    seed = post("99999", "99990", "Show me your dogs")
+    direct = post("10001", "12345", "My dog is here", parent="99999")
+    nested = post("10002", "67890", "My cat is here", parent="10001")
+    nested["conversationId"] = "99999"
+    unrelated = post("10003", "54321", "My dog is here", parent="77777")
+    seed_author_reply = post("10004", "99990", "My dog is here", parent="99999")
+    calls = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oapi/my/info":
+            return httpx.Response(200, json={"recharge_credits": 10000})
+        calls.append(request.url.path)
+        if request.url.path == SEED_PATH:
+            return httpx.Response(200, json={"tweets": [seed]})
+        if request.url.path == REPLIES_PATH:
+            return httpx.Response(200, json={"tweets": [seed, direct, direct, nested, unrelated, seed_author_reply]})
+        return httpx.Response(200, json={"data": {"tweets": []}})
+
+    settings = replace(Settings(), twitterapi_api_key="test", twitterapi_base_url="https://provider.test")
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            return await run_account_first_probe(client, settings, seed_post_id="99999",
+                verification_note="Verified original seed with real direct replies",
+                contacted_snapshot={"snapshot_at": "now", "post_ids": [], "author_ids": [], "handles": []},
+                archive_dir=tmp_path, now=datetime(2026, 11, 21, 6, tzinfo=timezone.utc))
+    result = asyncio.run(run())
+    assert result["status"] == "completed"
+    assert {row["authorId"] for row in result["account_candidates"]} == {"12345", "67890"}
+    assert result["metrics"]["returned_replies"] == 2
+    by_author = {row["authorId"]: row for row in result["account_candidates"]}
+    assert by_author["67890"]["entryStatus"] == "context_pending"
+    assert calls == [SEED_PATH, REPLIES_PATH, RECENT_PATH, RECENT_PATH]
 
 
 def test_provider_business_error_is_not_empty_success(tmp_path):
