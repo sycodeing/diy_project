@@ -9,7 +9,40 @@ import {
   demandSearchConfigurationSchema,
   type XSearchConfiguration,
 } from "@/lib/x-lead";
-import { supportsConsumerRecall, supportsDiscussionSearch, supportsEngagementRecall, supportsPurchaseRecall } from "@/lib/x-lead-worker-version";
+import { supportsAccountFirst, supportsConsumerRecall, supportsDiscussionSearch, supportsEngagementRecall, supportsPurchaseRecall } from "@/lib/x-lead-worker-version";
+
+export async function runAccountFirstSearch(formData: FormData) {
+  const user = await requireAdmin("/admin/x-lead-search");
+  const rawSeed = String(formData.get("seedPost") ?? "").trim();
+  const match = /^https:\/\/(?:www\.)?(?:x|twitter)\.com\/[A-Za-z0-9_]+\/status\/(\d{5,30})(?:[/?#].*)?$/.exec(rawSeed);
+  const seedPostId = match?.[1] ?? (/^\d{5,30}$/.test(rawSeed) ? rawSeed : "");
+  const seedVerificationNote = String(formData.get("seedVerificationNote") ?? "").trim();
+  if (!seedPostId || seedVerificationNote.length < 12 || seedVerificationNote.length > 1000) {
+    throw new Error("请填写已核实的原帖链接或 ID，并说明核实依据（12–1000 字）。");
+  }
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) throw new Error("Supabase 服务端配置缺失。");
+  const { data: worker, error: workerError } = await supabase.from("x_lead_workers")
+    .select("worker_version,last_seen_at").eq("status", "online")
+    .order("last_seen_at", { ascending: false }).limit(1).maybeSingle();
+  if (workerError) throw new Error(workerError.message);
+  if (!worker || Date.now() - new Date(worker.last_seen_at).getTime() > 120_000
+      || !supportsAccountFirst(worker.worker_version ?? undefined)) {
+    throw new Error("账号证据模式需要在线的 1.19.0 或更高版本发现执行器。");
+  }
+  const { data: active, error: activeError } = await supabase.from("x_lead_search_jobs")
+    .select("id").in("status", ["queued", "running"]).limit(1).maybeSingle();
+  if (activeError) throw new Error(activeError.message);
+  if (active) redirect("/admin/x-lead-search?notice=active");
+  const { error } = await supabase.from("x_lead_search_jobs").insert({
+    trigger_type: "manual", status: "queued", created_by: user.id,
+    configuration: { discoveryMode: "account_first", classifierVersion: "account-first-v1",
+      seedPostId, seedVerificationNote, maxAccounts: 4, maxCredits: 1800 },
+  });
+  if (error) throw new Error(error.message);
+  revalidatePath("/admin/x-lead-search");
+  redirect("/admin/x-lead-search?notice=account-queued");
+}
 
 export async function runEngagementLeadSearch() {
   const user = await requireAdmin("/admin/x-lead-search");

@@ -11,6 +11,7 @@ import {
 } from "@/lib/x-lead-discovery-upsert";
 import { X_LEAD_DISCOVERY_SEGMENTS } from "@/lib/x-lead";
 import { keepResolvedParentEvidence, preserveOmittedRawPhotos, toRawReviewRow, xLeadRawReviewSchema } from "@/lib/x-lead-raw-review";
+import { accountCompletionIsIsolated, toAccountReviewRow, xLeadAccountReviewSchema } from "@/lib/x-lead-account-review";
 
 export const runtime = "nodejs";
 
@@ -51,6 +52,7 @@ const requestSchema = z.object({
   metrics: z.record(z.string(), z.unknown()).default({}),
   candidates: z.array(candidateSchema).max(100).default([]),
   rawCandidates: z.array(xLeadRawReviewSchema).max(200).default([]),
+  accountCandidates: z.array(xLeadAccountReviewSchema).max(20).default([]),
 });
 
 export async function POST(request: Request, context: RouteContext<"/api/x-leads/worker/jobs/[id]/complete">) {
@@ -73,7 +75,7 @@ export async function POST(request: Request, context: RouteContext<"/api/x-leads
   if (!supabase) return NextResponse.json({ error: "Supabase is not configured." }, { status: 503 });
   const { data: job, error: jobError } = await supabase
     .from("x_lead_search_jobs")
-    .select("id,status,worker_id,configuration")
+    .select("id,status,worker_id,configuration,created_at")
     .eq("id", id)
     .maybeSingle();
   if (jobError || !job) return NextResponse.json({ error: jobError?.message ?? "Job not found." }, { status: 404 });
@@ -82,6 +84,12 @@ export async function POST(request: Request, context: RouteContext<"/api/x-leads
   }
   const recallJob = job.configuration && typeof job.configuration === "object"
     && !Array.isArray(job.configuration) && ["purchase_recall", "consumer_recall", "engagement_recall"].includes(String(job.configuration.discoveryMode));
+  const accountJob = job.configuration && typeof job.configuration === "object"
+    && !Array.isArray(job.configuration) && job.configuration.discoveryMode === "account_first";
+  if (!accountCompletionIsIsolated(job.configuration?.discoveryMode, parsed.data.candidates.length,
+                                   parsed.data.rawCandidates.length, parsed.data.accountCandidates.length)) {
+    return NextResponse.json({ error: "Account review rows belong only to account-first jobs." }, { status: 422 });
+  }
   if ((recallJob && parsed.data.candidates.length) || (!recallJob && parsed.data.rawCandidates.length)) {
     return NextResponse.json({ error: "Raw review rows and strict lead candidates must stay in separate jobs." }, { status: 422 });
   }
@@ -101,6 +109,13 @@ export async function POST(request: Request, context: RouteContext<"/api/x-leads
     }));
     const { error: rawError } = await supabase.from("x_lead_raw_reviews").upsert(rows, { onConflict: "post_id" });
     if (rawError) return NextResponse.json({ error: rawError.message }, { status: 500 });
+  }
+  if (accountJob && parsed.data.accountCandidates.length) {
+    const rows = parsed.data.accountCandidates.map((candidate) => toAccountReviewRow(candidate));
+    const { error: accountError } = await supabase.rpc("upsert_x_lead_account_reviews", {
+      p_rows: rows, p_job_id: id, p_job_created_at: job.created_at,
+    });
+    if (accountError) return NextResponse.json({ error: accountError.message }, { status: 500 });
   }
 
   let insertedCount = 0;
@@ -162,6 +177,7 @@ export async function POST(request: Request, context: RouteContext<"/api/x-leads
         ...parsed.data.metrics,
         submitted_candidates: parsed.data.candidates.length,
         raw_review_rows: parsed.data.rawCandidates.length,
+        account_review_rows: parsed.data.accountCandidates.length,
         accepted_candidates: acceptedCandidateCount,
         blacklisted_candidates: blacklistedCandidateCount,
         duplicate_account_candidates: duplicateAccountCandidateCount,

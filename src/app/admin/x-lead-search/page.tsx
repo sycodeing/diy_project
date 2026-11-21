@@ -11,7 +11,8 @@ import {
   X_SEARCH_INTERVAL_LABELS,
   X_SEARCH_PRODUCT_LABELS,
 } from "@/lib/x-lead";
-import { runConsumerLeadSearch, runEngagementLeadSearch, runRecallLeadSearch, saveXLeadSearchConfiguration } from "./actions";
+import { runAccountFirstSearch, runConsumerLeadSearch, runEngagementLeadSearch, runRecallLeadSearch, saveXLeadSearchConfiguration } from "./actions";
+import { supportsAccountFirst } from "@/lib/x-lead-worker-version";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +47,7 @@ type SearchJob = {
 
 type Worker = {
   worker_id: string;
+  worker_version: string | null;
   status: string;
   cookie_configured: boolean;
   last_error: string | null;
@@ -80,14 +82,14 @@ export default async function XLeadSearchPage({
   const [{ data: configData }, { data: jobsData }, { data: workersData }] = await Promise.all([
     supabase.from("x_lead_search_configs").select("*").eq("config_key", "default").maybeSingle(),
     supabase.from("x_lead_search_jobs").select("id,trigger_type,status,received_count,inserted_count,worker_id,error_message,metrics,configuration,started_at,finished_at,created_at").order("created_at", { ascending: false }).limit(20),
-    supabase.from("x_lead_workers").select("worker_id,status,cookie_configured,last_error,last_seen_at").order("last_seen_at", { ascending: false }).limit(1),
+    supabase.from("x_lead_workers").select("worker_id,worker_version,status,cookie_configured,last_error,last_seen_at").order("last_seen_at", { ascending: false }).limit(1),
   ]);
   const config = (configData ?? defaults) as SearchConfig;
   const jobs = (jobsData ?? []) as SearchJob[];
   const worker = ((workersData ?? [])[0] ?? null) as Worker | null;
   const workerOnline = Boolean(worker && getServerNowMillis() - new Date(worker.last_seen_at).getTime() < 120_000);
   const { notice } = await searchParams;
-  const noticeText = notice === "consumer-queued" ? "三画像召回任务已入队。帖子仅进入原始待筛，不会发送或生成预览。" : notice === "recall-queued" ? "宽召回任务已入队。原始帖子仅进入待筛视图，不会生成预览或发送消息。" : notice === "queued"
+  const noticeText = notice === "account-queued" ? "账号证据任务已手动入队；仅写独立待审账号，不发送。" : notice === "consumer-queued" ? "三画像召回任务已入队。帖子仅进入原始待筛，不会发送或生成预览。" : notice === "recall-queued" ? "宽召回任务已入队。原始帖子仅进入待筛视图，不会生成预览或发送消息。" : notice === "queued"
     ? "筛选任务已加入队列，本机执行器会自动领取。"
     : notice === "saved"
       ? "筛选与定时配置已保存。"
@@ -107,6 +109,17 @@ export default async function XLeadSearchPage({
         </div>
 
         {noticeText ? <p className="mt-5 rounded-lg border border-line bg-panel p-3 text-sm font-bold">{noticeText}</p> : null}
+
+        <section className="mt-6 rounded-xl border border-line bg-panel/90 p-5">
+          <h2 className="text-xl font-black">账号证据 · 已核实讨论种子</h2>
+          <p className="mt-2 text-sm text-muted">手动输入已核实的原帖，读取真实回复者和最多四位作者的近期本人内容。按账号分开记录个人证据、商品行为与当前交流入口；仅晒宠进入观察，不等于商品需求。原帖与图片元数据不能证明归属。任务仅写账号待审，不进严格候选或发送队列。</p>
+          <form action={runAccountFirstSearch} className="mt-4 grid gap-3 sm:grid-cols-2">
+            <label className="text-sm font-bold">种子原帖链接或 ID<input className="mt-1 w-full rounded-lg border border-line bg-surface p-3" name="seedPost" placeholder="https://x.com/user/status/…" required /></label>
+            <label className="text-sm font-bold">核实依据<input className="mt-1 w-full rounded-lg border border-line bg-surface p-3" name="seedVerificationNote" minLength={12} maxLength={1000} placeholder="原帖确有相关回复；仅作为上下文" required /></label>
+            <div className="flex flex-wrap items-center gap-3 sm:col-span-2"><button className="focus-ring rounded-lg bg-accent px-4 py-3 font-bold text-accent-ink" type="submit" disabled={!workerOnline || !supportsAccountFirst(worker?.worker_version ?? undefined)}>手动开始账号证据任务</button><Link className="font-bold text-accent underline" href="/admin/x-leads?mode=account_review">查看账号待审</Link></div>
+          </form>
+          <p className="mt-2 text-xs text-muted">需在线 1.19.0 执行器；最坏预留 1575 credits，硬上限 1800、余额保底 3000。当前不会自动启动任务。</p>
+        </section>
 
         <section className="mt-6 rounded-xl border border-line bg-panel/90 p-5">
           <h2 className="text-xl font-black">个人分享 · 真实线程参与 · 自用作品</h2>
@@ -204,12 +217,12 @@ export default async function XLeadSearchPage({
         <section className="mt-6 overflow-x-auto rounded-xl border border-line bg-panel/90 p-5">
           <h2 className="text-xl font-black">最近任务</h2>
           <table className="mt-4 w-full min-w-[860px] text-left text-sm">
-            <thead className="text-muted"><tr><th className="pb-3">创建时间</th><th>触发方式</th><th>状态</th><th>帖子数</th><th>发现漏斗</th><th>严格候选入库</th><th>执行器</th><th>结果</th></tr></thead>
+            <thead className="text-muted"><tr><th className="pb-3">创建时间</th><th>触发方式</th><th>状态</th><th>帖子/账号数</th><th>发现漏斗</th><th>严格候选入库</th><th>执行器</th><th>结果</th></tr></thead>
             <tbody>{jobs.map((job) => <tr className="border-t border-line" key={job.id}>
               <td className="py-3">{formatAdminDate(job.created_at)}</td>
-              <td>{job.configuration?.discoveryMode === "engagement_recall" ? "对话来源待筛 · " : job.configuration?.discoveryMode === "consumer_recall" ? "生活场景待筛 · " : job.configuration?.discoveryMode === "purchase_recall" ? "宽召回待筛 · " : job.configuration?.discoveryMode === "purchase_intent" ? "需求验证 · " : "原模式 · "}{job.trigger_type === "manual" ? "手动" : "定时"}</td>
+              <td>{job.configuration?.discoveryMode === "account_first" ? "账号证据待审 · " : job.configuration?.discoveryMode === "engagement_recall" ? "对话来源待筛 · " : job.configuration?.discoveryMode === "consumer_recall" ? "生活场景待筛 · " : job.configuration?.discoveryMode === "purchase_recall" ? "宽召回待筛 · " : job.configuration?.discoveryMode === "purchase_intent" ? "需求验证 · " : "原模式 · "}{job.trigger_type === "manual" ? "手动" : "定时"}</td>
               <td className="font-bold">{X_JOB_STATUS_LABELS[job.status] ?? job.status}</td>
-              <td>{["purchase_recall", "consumer_recall", "engagement_recall"].includes(job.configuration?.discoveryMode ?? "") ? `${job.received_count} 新帖` : job.received_count}</td><td className="min-w-52 text-xs leading-5 text-muted">{formatDiscoveryMetrics(job.metrics, ["purchase_recall", "consumer_recall", "engagement_recall"].includes(job.configuration?.discoveryMode ?? ""))}{["purchase_recall", "consumer_recall", "engagement_recall"].includes(job.configuration?.discoveryMode ?? "") ? <Link className="mt-1 block font-bold text-accent underline" href={rawReviewHref(job.metrics)}>{hasRawReviewArchive(job.metrics) ? "查看本任务原始帖" : "查看全部原始帖"}</Link> : null}</td><td>{job.inserted_count}</td><td>{job.worker_id ?? "—"}</td>
+              <td>{job.configuration?.discoveryMode === "account_first" ? `${job.received_count} 账号` : ["purchase_recall", "consumer_recall", "engagement_recall"].includes(job.configuration?.discoveryMode ?? "") ? `${job.received_count} 新帖` : job.received_count}</td><td className="min-w-52 text-xs leading-5 text-muted">{job.configuration?.discoveryMode === "account_first" ? <>真实回复 {metricNumber(job.metrics ?? {}, "returned_replies") ?? "—"} · 独立账号 {metricNumber(job.metrics ?? {}, "distinct_reply_authors") ?? "—"} · 近期补证 {metricNumber(job.metrics ?? {}, "accounts_enriched") ?? "—"}<Link className="mt-1 block font-bold text-accent underline" href={`/admin/x-leads?mode=account_review&job=${job.id}`}>查看本任务账号</Link></> : <>{formatDiscoveryMetrics(job.metrics, ["purchase_recall", "consumer_recall", "engagement_recall"].includes(job.configuration?.discoveryMode ?? ""))}{["purchase_recall", "consumer_recall", "engagement_recall"].includes(job.configuration?.discoveryMode ?? "") ? <Link className="mt-1 block font-bold text-accent underline" href={rawReviewHref(job.metrics)}>{hasRawReviewArchive(job.metrics) ? "查看本任务原始帖" : "查看全部原始帖"}</Link> : null}</>}</td><td>{job.inserted_count}</td><td>{job.worker_id ?? "—"}</td>
               <td className="max-w-80 text-muted">{job.error_message ?? (job.finished_at ? `完成于 ${formatAdminDate(job.finished_at)}` : "—")}</td>
             </tr>)}</tbody>
           </table>

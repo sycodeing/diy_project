@@ -38,7 +38,7 @@ async def run_x_lead_worker(settings: Settings) -> None:
                     json={
                         "workerId": worker_id,
                         "cookieConfigured": _provider_is_configured(settings, provider),
-                        "version": "1.18.3",
+                        "version": "1.19.0",
                     },
                 )
                 if response.status_code == 204:
@@ -63,6 +63,9 @@ async def _execute_job(
 ) -> None:
     if (job.get("configuration") or {}).get("discoveryMode") == "purchase_recall":
         await _execute_recall_job(client, headers, settings, worker_id, job)
+        return
+    if (job.get("configuration") or {}).get("discoveryMode") == "account_first":
+        await _execute_account_first_job(client, headers, settings, worker_id, job)
         return
     if (job.get("configuration") or {}).get("discoveryMode") in {"consumer_recall", "engagement_recall"}:
         await _execute_recall_job(client, headers, settings, worker_id, job)
@@ -388,6 +391,50 @@ async def _execute_recall_job(
                         "raw_review_rows": len(rows), "strict_qualified": 0},
             "candidates": [], "rawCandidates": rows[:200],
         },
+    )
+    response.raise_for_status()
+
+
+async def _execute_account_first_job(
+    client: httpx.AsyncClient, headers: dict[str, str], settings: Settings,
+    worker_id: str, job: dict[str, Any],
+) -> None:
+    """Manual seed-to-account path; writes only the independent account review table."""
+    from probe_account_first import run_account_first_probe
+
+    config = job.get("configuration") or {}
+    rows: list[dict[str, Any]] = []
+    metrics: dict[str, Any] = {"scope": "account_review_only", "provider": "twitterapi"}
+    status = "completed"
+    error_code = None
+    error_message = None
+    try:
+        if _selected_provider(settings) != "twitterapi" or config.get("classifierVersion") != "account-first-v1":
+            raise ValueError("Unsupported account-first configuration")
+        snapshot_response = await client.get(
+            f"{settings.diy_site_url}/api/x-leads/worker/contacted-snapshot", headers=headers)
+        snapshot_response.raise_for_status()
+        summary = await run_account_first_probe(
+            client, settings, seed_post_id=str(config["seedPostId"]),
+            verification_note=str(config["seedVerificationNote"]),
+            contacted_snapshot=snapshot_response.json(), source_job_id=str(job["id"]))
+        rows = summary["account_candidates"]
+        metrics.update(summary["metrics"])
+        if summary["status"] != "completed":
+            status = "blocked"
+            error_code = str(summary["status"])
+            error_message = "Bounded account discovery stopped; raw pages remain archived."
+    except Exception as error:
+        status = "blocked" if isinstance(error, (httpx.HTTPError, RuntimeError)) else "failed"
+        error_code = "account_source_blocked" if status == "blocked" else "account_probe_failed"
+        error_message = f"Account discovery failed: {type(error).__name__}"
+    response = await client.post(
+        f"{settings.diy_site_url}/api/x-leads/worker/jobs/{job['id']}/complete",
+        headers=headers,
+        json={"workerId": worker_id, "status": status, "receivedCount": len(rows),
+              "errorCode": error_code, "errorMessage": error_message,
+              "metrics": {**metrics, "account_review_rows": len(rows), "strict_qualified": 0},
+              "candidates": [], "rawCandidates": [], "accountCandidates": rows},
     )
     response.raise_for_status()
 
