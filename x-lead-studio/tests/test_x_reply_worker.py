@@ -260,3 +260,40 @@ def test_explicit_text_only_contract_without_media_download(monkeypatch, patch, 
     assert len(sent) == expected_sends
     assert len(completions) == 1
     assert result.status == ("sent" if expected_sends else "failed")
+
+
+@pytest.mark.parametrize("mode,text,approved_link,expected_sends", [
+    ("account_product_link", "A custom cover could suit your room. https://www.thebestdiyshop.com/g/abcdefghij", "https://www.thebestdiyshop.com/g/abcdefghij", 1),
+    ("account_product_link", "A custom cover could suit your room. https://www.thebestdiyshop.com/g/abcdefghij", "https://www.thebestdiyshop.com/g/other12345", 0),
+    ("account_product_link", "A custom cover could suit your room. https://www.thebestdiyshop.com/g/abcdefghij", "", 0),
+    ("first_contact_text", "A custom cover could suit your room. https://www.thebestdiyshop.com/g/abcdefghij", "https://www.thebestdiyshop.com/g/abcdefghij", 0),
+    ("legacy_preview", "A custom cover could suit your room.", "", 0),
+])
+def test_v2_product_link_is_text_only_and_bound_to_claim(monkeypatch, mode, text, approved_link, expected_sends):
+    sent = []
+    completions = []
+
+    async def forbidden_download(*_args):
+        raise AssertionError("V2 and rejected legacy jobs must not download media")
+
+    async def fake_send(**kwargs):
+        assert kwargs["media"] == []
+        assert kwargs["text"] == text
+        sent.append(kwargs)
+        return ReplyResult(status="sent", result_url="https://x.com/owner/status/2")
+
+    class FakeClient:
+        async def post(self, url, **kwargs):
+            completions.append(kwargs["json"])
+            return httpx.Response(200, json={"ok": True}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(x_reply_worker, "download_image", forbidden_download)
+    monkeypatch.setattr(x_reply_worker, "send_approved_action", fake_send)
+    result = asyncio.run(x_reply_worker._execute_job(Settings(), FakeClient(), {
+        "id": "job-v2", "accountKey": "pet_account", "actionType": "reply",
+        "targetPostUrl": "https://x.com/owner/status/1", "postText": text,
+        "contentMode": mode, "productLinkUrl": approved_link, "networkMode": "vpn_direct",
+    }))
+    assert len(sent) == expected_sends
+    assert len(completions) == 1
+    assert result.status == ("sent" if expected_sends else "failed")

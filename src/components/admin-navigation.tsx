@@ -14,6 +14,7 @@ const links = [
   { href: "/admin/x-leads", label: "X 候选", matches: ["/admin/x-leads", "/admin/x-lead-search"] },
   { href: "/admin/x-accounts", label: "X 账号/IP", matches: ["/admin/x-accounts"] },
   { href: "/admin/x-auto-posts", label: "X 自动发送", matches: ["/admin/x-auto-posts", "/admin/x-replies"] },
+  { href: "/admin/x-auto-posts-v2", label: "自动队列 V2", matches: ["/admin/x-auto-posts-v2"] },
   { href: "/admin/x-manual-posts", label: "X 手动发送", matches: ["/admin/x-manual-posts"] },
 ];
 
@@ -25,7 +26,7 @@ export function AdminNavigation({ mobile = false }: { mobile?: boolean }) {
       <div className="border-t border-line bg-panel px-4 sm:hidden">
         <nav aria-label="后台导航" className="flex min-w-0 gap-1 overflow-x-auto py-2">
           {links.map((link) => {
-            const active = link.matches.some((path) => pathname.startsWith(path));
+            const active = link.matches.some((path) => pathname === path || pathname.startsWith(`${path}/`));
             return (
               <Link
                 aria-current={active ? "page" : undefined}
@@ -47,7 +48,7 @@ export function AdminNavigation({ mobile = false }: { mobile?: boolean }) {
     <div className="hidden items-center gap-1 sm:flex">
       <nav aria-label="后台导航" className="flex items-center gap-1">
         {links.map((link) => {
-          const active = link.matches.some((path) => pathname.startsWith(path));
+          const active = link.matches.some((path) => pathname === path || pathname.startsWith(`${path}/`));
           return (
             <Link
               aria-current={active ? "page" : undefined}

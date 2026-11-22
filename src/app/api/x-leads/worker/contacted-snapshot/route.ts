@@ -12,7 +12,7 @@ export async function GET(request: Request) {
   const supabase = getSupabaseServiceClient();
   if (!supabase) return NextResponse.json({ error: "Supabase is not configured." }, { status: 503 });
   const leads: Array<{ post_id: string | null; x_handle: string | null; targeting_data: unknown }> = [];
-  const replies: Array<{ target_post_url: string | null }> = [];
+  const replies: Array<{ target_post_url: string | null; target_author_id: string | null }> = [];
   for (let offset = 0; offset < 10000; offset += 500) {
     const { data, error } = await supabase.from("x_leads")
       .select("post_id,x_handle,targeting_data")
@@ -25,7 +25,7 @@ export async function GET(request: Request) {
   }
   for (let offset = 0; offset < 10000; offset += 500) {
     const { data, error } = await supabase.from("x_reply_jobs")
-      .select("target_post_url").in("status", ["sent", "uncertain"])
+      .select("target_post_url,target_author_id").in("status", ["sent", "uncertain"])
       .order("id").range(offset, offset + 499);
     if (error || !data) return NextResponse.json({ error: "Reply snapshot unavailable." }, { status: 503 });
     replies.push(...data);
@@ -44,6 +44,7 @@ export async function GET(request: Request) {
     if (typeof authorId === "string" && /^\d+$/.test(authorId)) authorIds.add(authorId);
   }
   for (const reply of replies) {
+    if (reply.target_author_id) authorIds.add(reply.target_author_id);
     const url = String(reply.target_post_url ?? "");
     const match = /\/status\/(\d+)/.exec(url);
     if (match) postIds.add(match[1]);

@@ -66,6 +66,7 @@ export async function startAllXAutoSending(): Promise<XAutoApprovalResult> {
       .from("x_reply_jobs")
       .select("id", { count: "exact", head: true })
       .eq("status", "draft")
+      .eq("queue_version", 1)
       .in("preparation_status", ["pending", "processing"]);
     if (preparingError) throw new Error(preparingError.message);
     if ((preparingCount ?? 0) > 0) {
@@ -93,7 +94,8 @@ async function approveXAutoJobs(requestedJobIds: string[] | null, userId: string
   const jobIds = requestedJobIds ? [...new Set(requestedJobIds)] : null;
   let jobsQuery = supabase
     .from("x_reply_jobs")
-    .select("id,status,account_id,content_mode,scheduled_for,preparation_status,x_leads(marketing_links!x_leads_marketing_link_id_fkey(expires_at)),x_reply_accounts!inner(account_key,positioning,daily_limit,active,executor_id,network_mode,expected_egress_ip,verification_status,x_reply_account_proxies(account_id,status))");
+    .select("id,status,account_id,content_mode,scheduled_for,preparation_status,x_leads(marketing_links!x_leads_marketing_link_id_fkey(expires_at)),x_reply_accounts!inner(account_key,positioning,daily_limit,active,executor_id,network_mode,expected_egress_ip,verification_status,x_reply_account_proxies(account_id,status))")
+    .eq("queue_version", 1);
   jobsQuery = jobIds
     ? jobsQuery.in("id", jobIds)
     : jobsQuery.eq("status", "draft").eq("preparation_status", "ready").order("created_at", { ascending: true });
@@ -173,23 +175,14 @@ async function approveXAutoJobs(requestedJobIds: string[] | null, userId: string
   }
 
   for (const group of groups.values()) {
-    const { data: updated, error: updateError } = await supabase
-      .from("x_reply_jobs")
-      .update({
-        status: "queued",
-        account_key_snapshot: group.accountKey,
-        positioning_snapshot: group.positioning,
-        approved_by: userId,
-        approved_at: approvedAt.toISOString(),
-        scheduled_for: approvedAt.toISOString(),
-      })
-      .in("id", group.jobIds)
-      .eq("status", "draft")
-      .eq("preparation_status", "ready")
-      .select("id");
-    if (updateError || updated?.length !== group.jobIds.length) {
-      if (updateError) throw new Error(updateError.message);
-      throw new XAutoApprovalError("部分任务状态已经变化，请刷新页面后重试。");
+    for (const jobId of group.jobIds) {
+      const { data: updated, error: updateError } = await supabase.rpc("approve_x_reply_job", {
+        p_job_id: jobId, p_admin_id: userId, p_queue_version: 1,
+      });
+      if (updateError || updated !== true) {
+        if (updateError) throw new Error(updateError.message);
+        throw new XAutoApprovalError("部分任务状态已经变化或今日额度已满，请刷新页面后重试。");
+      }
     }
   }
   return jobs.length;
@@ -202,6 +195,7 @@ export async function rejectXAutoDraft(formData: FormData) {
     .from("x_reply_jobs")
     .update({ status: "rejected", completed_at: new Date().toISOString() })
     .eq("id", jobId)
+    .eq("queue_version", 1)
     .eq("status", "draft");
   if (error) throw new Error(error.message);
   revalidatePath(PAGE_PATH);
@@ -215,13 +209,13 @@ export async function retryXAutoPreparation(formData: FormData) {
     .from("x_reply_jobs")
     .select("id,x_lead_id,preparation_status")
     .eq("id", taskId)
-    .eq("status", "draft").eq("attempt_count", 0).is("approved_at", null)
+    .eq("status", "draft").eq("queue_version", 1).eq("attempt_count", 0).is("approved_at", null)
     .in("preparation_status", ["failed", "ready"])
     .maybeSingle();
   if (error || !task?.x_lead_id) throw new Error(error?.message ?? "该任务不能重新生成素材。");
   const { data: reset, error: resetError } = await supabase.from("x_reply_jobs").update({
     preparation_status: "pending", preparation_error: null, content_mode: "legacy_preview",
-  }).eq("id", taskId).eq("status", "draft").eq("attempt_count", 0).is("approved_at", null)
+  }).eq("id", taskId).eq("status", "draft").eq("queue_version", 1).eq("attempt_count", 0).is("approved_at", null)
     .eq("preparation_status", task.preparation_status).select("id").maybeSingle();
   if (resetError || !reset) throw new Error(resetError?.message ?? "任务状态已经变化，未修改文案。");
   after(() => prepareXLeadQueueTask({ queue: "automatic", taskId, leadId: task.x_lead_id }));

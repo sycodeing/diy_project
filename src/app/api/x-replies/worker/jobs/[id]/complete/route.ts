@@ -30,7 +30,7 @@ export async function POST(request: Request, context: RouteContext<"/api/x-repli
   if (!supabase) return NextResponse.json({ error: "Supabase is not configured." }, { status: 503 });
 
   const { data: job, error: readError } = await supabase.from("x_reply_jobs")
-    .select("id,status,worker_id,account_id,x_reply_accounts!inner(network_mode,expected_egress_ip)")
+    .select("id,status,worker_id,account_id,queue_version,x_reply_accounts!inner(network_mode,expected_egress_ip)")
     .eq("id", id)
     .maybeSingle();
   if (readError || !job) return NextResponse.json({ error: readError?.message ?? "Job not found." }, { status: 404 });
@@ -44,13 +44,15 @@ export async function POST(request: Request, context: RouteContext<"/api/x-repli
   }
 
   const completedAt = new Date().toISOString();
+  const effectiveStatus = job.queue_version === 2 && parsed.data.status === "sent" && !parsed.data.resultUrl
+    ? "uncertain" : parsed.data.status;
   const { error: updateError } = await supabase.from("x_reply_jobs").update({
-    status: parsed.data.status,
+    status: effectiveStatus,
     xuse_draft_id: parsed.data.xUseDraftId ?? null,
     action_id: parsed.data.actionId ?? null,
     result_url: parsed.data.resultUrl ?? null,
-    error_code: parsed.data.errorCode ?? null,
-    error_message: parsed.data.errorMessage ?? null,
+    error_code: effectiveStatus === "uncertain" && parsed.data.status === "sent" ? "missing_result_url" : parsed.data.errorCode ?? null,
+    error_message: effectiveStatus === "uncertain" && parsed.data.status === "sent" ? "执行器报告已发送但没有可核结果 URL，禁止自动重试。" : parsed.data.errorMessage ?? null,
     egress_ip: parsed.data.egressIp ?? null,
     completed_at: completedAt,
   }).eq("id", id).eq("status", "claimed").eq("worker_id", parsed.data.executorId);
@@ -65,10 +67,10 @@ export async function POST(request: Request, context: RouteContext<"/api/x-repli
     }).eq("account_id", job.account_id);
   }
 
-  if (parsed.data.status === "sent") {
+  if (effectiveStatus === "sent") {
     await supabase.from("x_reply_daily_gates").update({ first_sent_at: completedAt })
       .eq("account_id", job.account_id).eq("first_job_id", job.id).eq("status", "awaiting_confirmation");
-  } else if (parsed.data.status === "failed") {
+  } else if (effectiveStatus === "failed") {
     await supabase.from("x_reply_daily_gates").update({ status: "pending", first_job_id: null, first_sent_at: null })
       .eq("account_id", job.account_id).eq("first_job_id", job.id).eq("status", "awaiting_confirmation");
   } else {
@@ -80,10 +82,10 @@ export async function POST(request: Request, context: RouteContext<"/api/x-repli
     .select("batch_sent_count")
     .eq("executor_id", parsed.data.executorId)
     .maybeSingle();
-  const nextBatchCount = parsed.data.status === "sent" ? (worker?.batch_sent_count ?? 0) + 1 : (worker?.batch_sent_count ?? 0);
+  const nextBatchCount = effectiveStatus === "sent" ? (worker?.batch_sent_count ?? 0) + 1 : (worker?.batch_sent_count ?? 0);
   const startsBreak = nextBatchCount >= 12;
   await supabase.from("x_reply_workers").update({
-    status: parsed.data.status === "failed" ? "error" : "online",
+    status: effectiveStatus === "failed" ? "error" : "online",
     current_job_id: null,
     last_error: parsed.data.errorMessage ?? null,
     last_seen_at: completedAt,

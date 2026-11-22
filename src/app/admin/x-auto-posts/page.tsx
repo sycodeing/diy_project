@@ -58,7 +58,7 @@ export default async function XAutoPostsPage({ searchParams }: { searchParams: P
   if (!supabase) return <AppShell admin><main className="mx-auto w-full max-w-3xl px-4 py-10"><SetupWarning /></main></AppShell>;
   const filters = await searchParams;
   const [{ data: jobRows, error: jobsError }, { data: workerRows }, { data: accountRows }, { data: gateRows }, { count: legacySentCount }] = await Promise.all([
-    supabase.from("x_reply_jobs").select("*,x_reply_accounts(account_key,display_name,positioning),x_leads(media_url,pet_type,marketing_links!x_leads_marketing_link_id_fkey(campaign,source_hash,expires_at))").order("created_at", { ascending: false }).limit(1000),
+    supabase.from("x_reply_jobs").select("*,x_reply_accounts(account_key,display_name,positioning),x_leads(media_url,pet_type,marketing_links!x_leads_marketing_link_id_fkey(campaign,source_hash,expires_at))").eq("queue_version", 1).order("created_at", { ascending: false }).limit(1000),
     supabase.from("x_reply_workers").select("*").order("last_seen_at", { ascending: false }),
     supabase.from("x_reply_accounts").select("*").eq("active", true).order("display_name"),
     supabase.from("x_reply_daily_gates").select("account_id,gate_date,status,first_job_id,first_sent_at,authorized_at").eq("gate_date", shanghaiToday()),

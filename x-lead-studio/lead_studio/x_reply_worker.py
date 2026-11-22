@@ -25,7 +25,7 @@ from .xuse_client import (
 )
 
 
-WORKER_VERSION = "4.8.0-first-contact-text"
+WORKER_VERSION = "4.11.0-account-product-link"
 BATCH_DELAY_MIN_SECONDS = 15.0
 BATCH_DELAY_MAX_SECONDS = 30.0
 PROFILE_INSPECTION_SECONDS = 10 * 60.0
@@ -80,7 +80,7 @@ async def run_x_reply_iteration(
         "executorId": settings.x_reply_executor_id,
         "executionMode": settings.x_reply_execution_mode,
         "workerVersion": WORKER_VERSION,
-        "capabilities": ["first_contact_text_v1"],
+        "capabilities": ["first_contact_text_v1", "account_product_link_v2"],
         "deviceLabel": settings.x_reply_device_label or socket.gethostname()[:120],
         "xUseAvailable": xuse_available,
         "configuredAccounts": configured_accounts,
@@ -213,13 +213,22 @@ async def _execute_job(settings: Settings, client: httpx.AsyncClient, job: dict[
     try:
         preview_url = str(job.get("previewImageUrl") or "")
         content_mode = job.get("contentMode", "legacy_preview")
-        if content_mode not in {"first_contact_text", "legacy_preview"}:
+        if content_mode not in {"first_contact_text", "legacy_preview", "account_product_link"}:
             raise ValueError("Unknown automatic reply content mode.")
-        text_only = content_mode == "first_contact_text"
+        text_only = content_mode in {"first_contact_text", "account_product_link"}
         text = str(job.get("postText") or "")
         if text_only and (job.get("actionType") != "reply" or not job.get("targetPostUrl")
-                or not text.strip() or len(text) > 280 or re.search(r"https?://|www\.|\{link\}", text, re.I)):
+                or not text.strip() or len(text) > 280):
             raise ValueError("Invalid text-only first-contact reply.")
+        if content_mode == "first_contact_text" and re.search(r"https?://|www\.|\{link\}", text, re.I):
+            raise ValueError("First-contact text cannot contain a link.")
+        if content_mode == "account_product_link":
+            links = re.findall(r"https?://\S+", text)
+            approved_link = str(job.get("productLinkUrl") or "")
+            if len(links) != 1 or links[0] != approved_link or not re.fullmatch(
+                r"https://[A-Za-z0-9.-]+/g/[A-Za-z0-9_-]{10,64}", approved_link
+            ):
+                raise ValueError("Account product reply requires one approved product link.")
         if not text_only and not preview_url:
             raise ValueError("The approved automatic reply has no preview image attachment.")
         with tempfile.TemporaryDirectory(prefix="diy-x-preview-") as directory:

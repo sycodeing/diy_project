@@ -11,7 +11,7 @@ const PAGE_SIZE = 30;
 const ACCOUNT_STATES = ["potential", "watch", "insufficient", "excluded"];
 const ENTRY_STATES = ["ready", "no_entry", "context_pending", "hold"];
 
-type Filters = { account?: string; entry?: string; job?: string; status?: string; page?: string };
+type Filters = { account?: string; entry?: string; job?: string; status?: string; author?: string; page?: string };
 const ACCOUNT_LABELS: Record<string, string> = { potential: "有独立行为证据", watch: "观察", insufficient: "证据不足", excluded: "排除" };
 const ENTRY_LABELS: Record<string, string> = { ready: "有交流入口", no_entry: "暂无入口", context_pending: "父帖待核", hold: "暂缓" };
 function pageTimeMs() { return Date.now(); }
@@ -27,18 +27,27 @@ export async function AccountReviewPage({ filters }: { filters: Filters }) {
   if (filters.account && ACCOUNT_STATES.includes(filters.account)) query = query.eq("account_status", filters.account);
   if (filters.entry && ENTRY_STATES.includes(filters.entry)) query = query.eq("entry_status", filters.entry);
   if (filters.job && /^[0-9a-f-]{36}$/i.test(filters.job)) query = query.eq("latest_source_job_id", filters.job);
+  if (filters.author && /^\d{5,30}$/.test(filters.author)) query = query.eq("author_id", filters.author);
   if (["unreviewed", "dismissed"].includes(filters.status ?? "")) query = query.eq("review_status", filters.status!);
   const { data, count, error } = await query;
   if (error) throw new Error(error.message);
   const rows = data ?? [];
-  const [{ data: draftData, error: draftError }, activeProducts] = await Promise.all([
+  const [{ data: draftData, error: draftError }, { data: queueData, error: queueError }, activeProducts] = await Promise.all([
     rows.length ? supabase.from("x_lead_account_drafts")
       .select("author_id,status,reason,evidence_coverage,selected_post_id,selected_post_created_at,selected_post_excerpt,product_slug,product_match_reason,reply_text,marketing_url,marketing_expires_at,generation_version,generated_at,review_status")
       .in("author_id", rows.map((row) => row.author_id)) : Promise.resolve({ data: [], error: null }),
+    rows.length ? supabase.from("x_reply_jobs")
+      .select("id,target_author_id,status,created_at").eq("queue_version", 2)
+      .in("target_author_id", rows.map((row) => row.author_id)).order("created_at", { ascending: false })
+      : Promise.resolve({ data: [], error: null }),
     getActiveAccountProducts(),
   ]);
   if (draftError) throw new Error(draftError.message);
+  if (queueError) throw new Error(queueError.message);
   const drafts = new Map((draftData ?? []).map((draft) => [draft.author_id, draft]));
+  const queueByAuthor = new Map<string, { id: string; status: string }>();
+  for (const job of queueData ?? []) if (job.target_author_id && !queueByAuthor.has(job.target_author_id))
+    queueByAuthor.set(job.target_author_id, { id: job.id, status: job.status });
   const activeSlugs = new Set(activeProducts.map((product) => product.slug));
   const nowMs = pageTimeMs();
   const pageHref = (next: number) => {
@@ -46,6 +55,7 @@ export async function AccountReviewPage({ filters }: { filters: Filters }) {
     if (filters.account) params.set("account", filters.account);
     if (filters.entry) params.set("entry", filters.entry);
     if (filters.job) params.set("job", filters.job);
+    if (filters.author) params.set("author", filters.author);
     if (filters.status) params.set("status", filters.status);
     return `/admin/x-leads?${params}`;
   };
@@ -59,6 +69,7 @@ export async function AccountReviewPage({ filters }: { filters: Filters }) {
   };
   return <AppShell admin><main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
     <div className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-3xl font-black">按账号审阅 X 参与者</h1><Link className="font-bold text-accent underline" href="/admin/x-lead-search">手动启动账号发现</Link></div>
+    <Link className="mt-2 inline-block text-sm font-bold text-accent underline" href="/admin/x-auto-posts-v2">查看自动队列 V2</Link>
     <p className="mt-2 text-sm text-muted">稳定作者 ID 跨任务只显示一张最新评估卡；历史种子、回复与近期本人帖保留来源。账号适配与当前交流入口分开，所有结果均待人工核实，未取得联系资格。</p>
     <div className="mt-4 flex flex-wrap gap-2 text-sm">
       <Link className="rounded-lg border border-line px-3 py-2" href="/admin/x-leads?mode=account_review">全部账号</Link>
@@ -70,6 +81,7 @@ export async function AccountReviewPage({ filters }: { filters: Filters }) {
     <p className="mt-4 text-sm text-muted">{count ?? 0} 个账号。空表表示尚未运行账号模式，历史原始帖子不会自动变成账号证据。</p>
     <div className="mt-5 grid gap-4">{rows.map((row) => {
       const draft = drafts.get(row.author_id);
+      const queueJob = queueByAuthor.get(row.author_id);
       const draftFresh = draft?.status === "draft_ready"
         && draft.review_status !== "dismissed"
         && draft.marketing_expires_at && Date.parse(draft.marketing_expires_at) > nowMs
@@ -91,6 +103,7 @@ export async function AccountReviewPage({ filters }: { filters: Filters }) {
         {evidence.map((item) => <div className="mt-2 rounded-lg border border-line p-3 text-sm" key={`${item.post_id}-${item.quote}`}><a className="font-bold text-accent underline" href={`https://x.com/i/status/${item.post_id}`} target="_blank" rel="noreferrer">{item.source === "reply" ? "本人回复" : "近期本人帖"} · {item.post_id}</a><span className="ml-2 text-xs text-muted">{item.created_at || "时间未知"}</span><p className="mt-1 whitespace-pre-wrap break-words">{item.text}</p><p className="mt-1 text-xs text-muted">证据原句：{item.quote}</p>{Array.isArray(item.photo_urls) && item.photo_urls.length ? <RawPostPhotos urls={item.photo_urls.filter(isTrustedRawPhotoUrl).slice(0, 4)} postUrl={`https://x.com/i/status/${item.post_id}`} /> : null}</div>)}
         <div className="mt-3 border-t border-line pt-3 text-sm"><strong>当前交流入口：</strong>{entry.post_id ? <a className="text-accent underline" href={`https://x.com/i/status/${entry.post_id}`} target="_blank" rel="noreferrer">{String(entry.text ?? entry.post_id)}</a> : "尚无适合的新入口"}<p className="mt-1 text-xs text-muted">入口时间 {String(entry.created_at ?? "未知")} · 直接父帖：{String(entry.direct_parent_status ?? "unknown")}；不继承种子作者身份或图片。</p>{Array.isArray(entry.photo_urls) && entry.photo_urls.length ? <RawPostPhotos urls={(entry.photo_urls as string[]).filter(isTrustedRawPhotoUrl).slice(0, 4)} postUrl={`https://x.com/i/status/${entry.post_id}`} /> : null}</div>
         <div className="mt-3 rounded-lg border border-line bg-surface p-3 text-sm">
+          {queueJob ? <p className="mb-2"><Link className="font-bold text-accent underline" href="/admin/x-auto-posts-v2">V2 队列：{queueJob.status} · {queueJob.id}</Link></p> : null}
           <div className="flex flex-wrap items-center gap-2"><strong>公开回复草稿：</strong><span>{draft?.status === "draft_ready" ? "待人工审阅" : draft?.status === "no_match" ? "暂无商品匹配" : draft?.status === "evidence_pending" ? "证据待补" : draft?.status === "blocked" ? "已阻断" : "尚未生成"}</span><span className="text-xs text-muted">{draft?.evidence_coverage === "partial" ? "已有证据覆盖不完整" : draft?.evidence_coverage === "full" ? "已存有限本人帖快照" : ""}</span></div>
           {draft ? <p className="mt-1 text-xs text-muted">{draft.reason} · {draft.generation_version} · {draft.generated_at}</p> : null}
           {draft?.selected_post_id ? <p className="mt-2 text-xs">所选本人帖：<a className="text-accent underline" href={`https://x.com/i/status/${draft.selected_post_id}`} target="_blank" rel="noreferrer">{draft.selected_post_id}</a> · {draft.selected_post_created_at}<br />{draft.selected_post_excerpt}</p> : null}

@@ -8,6 +8,7 @@ import { isAuthorizedXReplyWorker } from "@/lib/x-reply-worker-auth";
 import { isBoundProxyEgress, isXAccountClaimEligible, isXDailyGateClaimAllowed, isXJobClaimEligible } from "@/lib/x-reply-safety";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { isValidXFirstContactText } from "@/lib/x-lead-copy";
+import { hasPriorXContact, isValidV2ReplyText, supportsXReplyV2Worker, validateV2Snapshot, X_REPLY_V2_CAPABILITY } from "@/lib/x-reply-v2";
 
 export const runtime = "nodejs";
 
@@ -209,7 +210,7 @@ export async function POST(request: Request) {
 
   let queuedQuery = supabase
     .from("x_reply_jobs")
-    .select("id,account_id,action_type,target_post_url,reply_text,content_mode,copy_variant,scheduled_for,created_at,status,preparation_status,attempt_count,approved_at,x_leads(marketing_links!x_leads_marketing_link_id_fkey(source_hash,expires_at))")
+    .select("id,account_id,action_type,target_post_url,reply_text,content_mode,copy_variant,queue_version,target_author_id,account_draft_author_id,marketing_link_id,source_post_id,draft_generated_at,scheduled_for,created_at,status,preparation_status,attempt_count,approved_at,x_leads(marketing_links!x_leads_marketing_link_id_fkey(source_hash,expires_at))")
     .eq("status", "queued")
     .eq("preparation_status", "ready")
     .eq("attempt_count", 0)
@@ -217,7 +218,10 @@ export async function POST(request: Request) {
     .lte("scheduled_for", now)
     .in("account_id", eligibleAccountIds);
   if (heartbeat.networkVerification) queuedQuery = queuedQuery.eq("id", heartbeat.networkVerification.jobId);
-  if (!heartbeat.capabilities.includes("first_contact_text_v1")) queuedQuery = queuedQuery.eq("content_mode", "legacy_preview");
+  const modes = ["legacy_preview"];
+  if (heartbeat.capabilities.includes("first_contact_text_v1")) modes.push("first_contact_text");
+  if (heartbeat.capabilities.includes(X_REPLY_V2_CAPABILITY) && supportsXReplyV2Worker(heartbeat.workerVersion)) modes.push("account_product_link");
+  queuedQuery = queuedQuery.in("content_mode", modes);
   const { data: queued, error: readError } = await queuedQuery
     .order("scheduled_for", { ascending: true })
     .order("created_at", { ascending: true })
@@ -237,12 +241,34 @@ export async function POST(request: Request) {
   const leadRelation = Array.isArray(queued.x_leads) ? queued.x_leads[0] : queued.x_leads;
   const linkRelation = leadRelation?.marketing_links;
   const marketingLink = Array.isArray(linkRelation) ? linkRelation[0] : linkRelation;
-  const textOnly = queued.content_mode === "first_contact_text";
-  if (textOnly && (queued.action_type !== "reply" || !queued.target_post_url || !isValidXFirstContactText(queued.reply_text))) {
+  const accountProduct = queued.content_mode === "account_product_link" && queued.queue_version === 2;
+  const textOnly = queued.content_mode === "first_contact_text" || accountProduct;
+  let productLinkUrl: string | null = null;
+  if (queued.content_mode === "first_contact_text" && (queued.action_type !== "reply" || !queued.target_post_url || !isValidXFirstContactText(queued.reply_text))) {
     await supabase.from("x_reply_jobs").update({ preparation_status: "failed", preparation_error: "首条接触必须是无链接的有效回复文案，请人工检查。" })
       .eq("id", queued.id).eq("status", "queued");
     return new Response(null, { status: 204 });
   }
+  if (accountProduct) {
+    const reason = await validateV2Snapshot(supabase, queued);
+    if (reason) {
+      await supabase.from("x_reply_jobs").update({ preparation_status: "failed", preparation_error: reason })
+        .eq("id", queued.id).eq("status", "queued").eq("queue_version", 2);
+      return new Response(null, { status: 204 });
+    }
+    const { data: draft } = await supabase.from("x_lead_account_drafts")
+      .select("marketing_url").eq("author_id", queued.target_author_id!).maybeSingle();
+    if (!draft?.marketing_url || !isValidV2ReplyText(queued.reply_text, draft.marketing_url)) return new Response(null, { status: 204 });
+    productLinkUrl = draft.marketing_url;
+  }
+  try {
+    const handle = /^https:\/\/(?:www\.)?(?:x|twitter)\.com\/([A-Za-z0-9_]+)\/status\/(\d+)$/.exec(String(queued.target_post_url ?? ""));
+    if (handle && await hasPriorXContact(supabase, queued.target_author_id ?? "", handle[1], handle[2], queued.id)) {
+      await supabase.from("x_reply_jobs").update({ preparation_status: "failed", preparation_error: "已有联系或并行发送任务，禁止重复领取。" })
+        .eq("id", queued.id).eq("status", "queued");
+      return new Response(null, { status: 204 });
+    }
+  } catch { return NextResponse.json({ error: "Historical contact snapshot unavailable." }, { status: 503 }); }
   const preview = !textOnly && marketingLink
     ? await getMarketingReplyPreviewUrl(marketingLink.source_hash, marketingLink.expires_at)
     : null;
@@ -354,6 +380,7 @@ export async function POST(request: Request) {
     targetPostUrl: claimed.target_post_url,
     postText: claimed.reply_text,
     contentMode: queued.content_mode,
+    productLinkUrl,
     copyVariant: queued.copy_variant,
     previewImageUrl: preview?.url ?? null,
   } });
