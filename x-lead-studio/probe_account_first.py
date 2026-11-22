@@ -12,12 +12,12 @@ from typing import Any
 
 import httpx
 
-from lead_studio.account_assessment import assess_account
+from lead_studio.account_assessment import VERSION as ASSESSMENT_VERSION, assess_account
 from lead_studio.config import Settings, TWITTERAPI_ARCHIVE_DIR
 from lead_studio.twitterapi import _iso_datetime
 from probe_purchase_recall import _credits, _save
 
-VERSION = "account-first-v1"
+VERSION = ASSESSMENT_VERSION
 SEED_PATH = "/twitter/tweets"
 REPLIES_PATH = "/twitter/tweet/replies/v2"
 RECENT_PATH = "/twitter/user/last_tweets"
@@ -146,6 +146,19 @@ async def run_account_first_probe(
         replies = await fetch(REPLIES_PATH, {"tweetId": seed_post_id, "cursor": "",
                                              "queryType": "Latest"}, 300)
         groups: dict[str, dict[str, Any]] = {}
+        # A verified personal source can itself be an account under review. Its
+        # own post is evidence; it must never be counted as one of its replies.
+        seed_handle = _author(seed)[1]
+        source_contacted = (seed_author in contacted_ids or seed_handle.lower() in contacted_handles
+                            or seed_post_id in contacted_posts)
+        if not source_contacted and _in_window(seed, since, started):
+            source_check = assess_account(seed_author, seed_handle, [], [seed],
+                                          seed_id=seed_post_id, seed_text=str(seed.get("text") or ""),
+                                          timeline_status="capacity_pending")
+            if (source_check["accountStatus"] == "watch"
+                    and source_check["accountEvidence"]["project_evidence"]):
+                groups[seed_author] = {"handle": seed_handle, "replies": [],
+                                       "source_post": seed, "role": "source_author"}
         for post in replies:
             if not isinstance(post, dict) or not _in_window(post, since, started):
                 continue
@@ -158,7 +171,8 @@ async def run_account_first_probe(
             if (author_id in contacted_ids or handle.lower() in contacted_handles
                     or post_id in contacted_posts):
                 continue
-            group = groups.setdefault(author_id, {"handle": handle, "replies": []})
+            group = groups.setdefault(author_id, {"handle": handle, "replies": [],
+                                                  "source_post": None, "role": "reply_author"})
             if post_id not in {str(p.get("id") or p.get("id_str")) for p in group["replies"]}:
                 group["replies"].append(post)
         # Stable first-seen order in the archived reply page; one timeline request per author.
@@ -179,12 +193,16 @@ async def run_account_first_probe(
                     # Auth, provider, malformed payload, or budget errors stop further paid calls.
                     document["status"] = "stopped_enrichment_error"
                     stop_enrichment = True
+            if group["source_post"] is not None:
+                recent = [group["source_post"], *recent]
             row = assess_account(author_id, group["handle"], group["replies"], recent,
                                  seed_id=seed_post_id, seed_text=str(seed.get("text") or ""),
                                  timeline_status=timeline_status)
             row["sourceArchive"] = archive_id
+            row["accountEvidence"]["source_role"] = group["role"]
             row["sourceHistory"] = [{"archive_id": archive_id, "seed_post_id": seed_post_id,
                                      "source_job_id": source_job_id,
+                                     "source_role": group["role"],
                                      "reply_post_ids": [str(p.get("id") or p.get("id_str")) for p in group["replies"]],
                                      "recent_post_ids": [str(p.get("id") or p.get("id_str")) for p in recent]}]
             document["account_candidates"].append(row)
@@ -210,7 +228,8 @@ async def run_account_first_probe(
                         "paid_requests": len(document["requests"]),
                         "returned_reply_page_items": len(replies) if 'replies' in locals() else 0,
                         "returned_replies": sum(len(group["replies"]) for group in groups.values()) if 'groups' in locals() else 0,
-                        "distinct_reply_authors": len(groups) if 'groups' in locals() else 0,
+                        "distinct_reply_authors": sum(group["role"] == "reply_author" for group in groups.values()) if 'groups' in locals() else 0,
+                        "source_authors_reviewed": sum(group["role"] == "source_author" for group in groups.values()) if 'groups' in locals() else 0,
                         "accounts_enriched": sum(r["accountEvidence"]["timeline_status"] == "complete"
                                                  for r in document["account_candidates"]),
                         "account_statuses": statuses, "strict_candidates": 0,

@@ -28,7 +28,9 @@ test("account review contract is separate from strict lead and stable by author 
 test("worker 1.18 cannot claim account jobs; 1.19 can", () => {
   assert.equal(supportsAccountFirst(undefined), false);
   assert.equal(supportsAccountFirst("1.18.3"), false);
-  assert.equal(supportsAccountFirst("1.19.0"), true);
+  assert.equal(supportsAccountFirst("1.19.0"), false);
+  assert.equal(supportsAccountFirst("1.19.1"), false);
+  assert.equal(supportsAccountFirst("1.19.2"), true);
 });
 
 test("completion mode keeps account reviews apart from strict and post raw pools", () => {

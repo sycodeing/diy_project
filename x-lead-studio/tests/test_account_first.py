@@ -55,6 +55,46 @@ def test_finished_behavior_and_author_id_isolation():
     assert assessment([], [cat, shop])["accountStatus"] == "excluded"
 
 
+def test_personal_home_project_is_watch_without_claiming_catalog_fit():
+    gallery = post("10010", "12345", "If you remember my living room gallery wall, I'm redoing it and replacing paintings.")
+    christmas = post("10011", "12345", "Done my living room Christmas decor; a small tree this year.")
+    result = assessment([], [gallery, christmas])
+    assert result["accountStatus"] == "watch"
+    assert result["entryStatus"] == "ready"
+    assert len(result["accountEvidence"]["project_evidence"]) == 2
+    assert result["accountEvidence"]["independent_behavior"] is False
+    assert result["accountEvidence"]["product_fit"] == "unknown"
+    assert result["accountEvidence"]["shopping_intent"] == "unknown"
+    assert result["entryEvidence"]["draft_ready"] is False
+    assert assessment([], [post("10012", "12345", "I watch TV in my living room")])["accountStatus"] == "insufficient"
+    assert assessment([], [post("10013", "12345", "You should redo your living room")])["accountStatus"] == "insufficient"
+
+
+def test_editorial_home_bio_is_only_suspected_publisher_not_personal_exclusion():
+    bio = "Home finds, small-space living ideas and notes on furniture and kitchen gear"
+    posts = [post("10001", "12345", "You should try a smaller tree", bio=bio),
+             post("10002", "12345", "Tips for small rooms", bio=bio),
+             post("10003", "12345", "How to choose curtains", bio=bio),
+             post("10004", "12345", "Swapped curtains", bio=bio)]
+    result = assessment([], posts)
+    assert result["accountStatus"] == "insufficient"
+    assert result["accountEvidence"]["suspected_publisher"] is True
+    assert result["accountEvidence"]["exclusion_reason"] is None
+    ordinary = assessment([], [post("10005", "12345", "I decorated my living room wall with photos.",
+                                   bio="Graphic designer, coffee enthusiast")])
+    assert ordinary["accountStatus"] == "watch"
+    observed_style = [post("10020", "12345", "Garden furniture searches are way up this month. Measure it before you buy anything. #InteriorDesign", bio=bio),
+                      post("10021", "12345", "Statement walls are everywhere right now. Pick a single wall behind the sofa. #HomeDecor", bio=bio),
+                      post("10022", "12345", "Slim trees are saving small living rooms. Tuck one in a corner and skip the bulky extras.", bio=bio)]
+    assert assessment([], observed_style)["accountEvidence"]["suspected_publisher"] is True
+    personal_bio = "A mum sharing home decor ideas from my own home"
+    personal_posts = [post("10031", "12345", "I decorated my living room wall with photos. #HomeDecor", bio=personal_bio),
+                      post("10032", "12345", "I am arranging my bedroom photos. #HomeDecor", bio=personal_bio),
+                      post("10033", "12345", "Done my room decor today. #HomeDecor", bio=personal_bio)]
+    assert assessment([], personal_posts)["accountStatus"] == "watch"
+    assert assessment([], personal_posts)["accountEvidence"]["exclusion_reason"] is None
+
+
 def test_nobody_inherits_seed_or_nested_parent():
     lovely = post("10001", "12345", "Lovely!", parent="99999")
     assert assessment([lovely], [])["accountStatus"] == "insufficient"
@@ -140,6 +180,78 @@ def test_v2_reply_page_does_not_turn_seed_or_unrelated_thread_into_participants(
     assert calls == [SEED_PATH, REPLIES_PATH, RECENT_PATH, RECENT_PATH]
 
 
+def test_personal_source_author_is_own_evidence_and_uses_same_timeline_cap(tmp_path):
+    seed = post("99999", "99990", "Done my living room Christmas decor, a small tree this year.")
+    replies = [post(str(10001 + n), str(12345 + n), "Lovely!", parent="99999") for n in range(4)]
+    calls = []
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oapi/my/info":
+            return httpx.Response(200, json={"recharge_credits": 10000})
+        calls.append((request.url.path, request.url.params.get("userId")))
+        if request.url.path == SEED_PATH:
+            return httpx.Response(200, json={"tweets": [seed]})
+        if request.url.path == REPLIES_PATH:
+            return httpx.Response(200, json={"tweets": [seed, *replies]})
+        return httpx.Response(200, json={"data": {"tweets": []}})
+    settings = replace(Settings(), twitterapi_api_key="test", twitterapi_base_url="https://provider.test")
+    async def run(contacted: dict):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            return await run_account_first_probe(client, settings, seed_post_id="99999",
+                verification_note="Verified personal home post with active comments",
+                contacted_snapshot=contacted, archive_dir=tmp_path,
+                now=datetime(2026, 11, 21, 6, tzinfo=timezone.utc))
+    snapshot = {"snapshot_at": "now", "post_ids": [], "author_ids": [], "handles": []}
+    result = asyncio.run(run(snapshot))
+    assert len(result["account_candidates"]) == 5
+    source = result["account_candidates"][0]
+    assert source["authorId"] == "99990" and source["accountStatus"] == "watch"
+    assert source["accountEvidence"]["source_role"] == "source_author"
+    assert source["sourceHistory"][0]["reply_post_ids"] == []
+    assert source["sourceHistory"][0]["recent_post_ids"] == ["99999"]
+    assert result["metrics"]["distinct_reply_authors"] == 4
+    assert result["metrics"]["source_authors_reviewed"] == 1
+    assert sum(path == RECENT_PATH for path, _ in calls) == 4
+    assert result["account_candidates"][4]["accountEvidence"]["timeline_status"] == "capacity_pending"
+    calls.clear()
+    excluded = asyncio.run(run({**snapshot, "author_ids": ["99990"]}))
+    assert all(row["authorId"] != "99990" for row in excluded["account_candidates"])
+    seed["text"] = "Our shop sells custom pillow covers. Order now."
+    calls.clear()
+    seller = asyncio.run(run(snapshot))
+    assert all(row["authorId"] != "99990" for row in seller["account_candidates"])
+
+
+def test_personal_source_without_replies_still_enters_watch_once(tmp_path):
+    seed = post("99999", "99990", "Done my living room Christmas decor this year.")
+    calls = []
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oapi/my/info":
+            return httpx.Response(200, json={"recharge_credits": 10000})
+        calls.append(request.url.path)
+        if request.url.path == SEED_PATH:
+            return httpx.Response(200, json={"tweets": [seed]})
+        if request.url.path == REPLIES_PATH:
+            return httpx.Response(200, json={"tweets": []})
+        return httpx.Response(200, json={"data": {"tweets": [seed], "pin_tweet": seed}})
+    settings = replace(Settings(), twitterapi_api_key="test", twitterapi_base_url="https://provider.test")
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            return await run_account_first_probe(client, settings, seed_post_id="99999",
+                verification_note="Verified personal living-room decor source post",
+                contacted_snapshot={"snapshot_at": "now", "post_ids": [], "author_ids": [], "handles": []},
+                archive_dir=tmp_path, now=datetime(2026, 11, 21, 6, tzinfo=timezone.utc))
+    result = asyncio.run(run())
+    assert calls == [SEED_PATH, REPLIES_PATH, RECENT_PATH]
+    assert result["metrics"]["returned_replies"] == 0
+    assert result["metrics"]["distinct_reply_authors"] == 0
+    assert result["metrics"]["source_authors_reviewed"] == 1
+    assert len(result["account_candidates"]) == 1
+    row = result["account_candidates"][0]
+    assert row["accountStatus"] == "watch"
+    assert [item["post_id"] for item in row["accountEvidence"]["project_evidence"]] == ["99999"]
+    assert row["sourceHistory"][0]["reply_post_ids"] == []
+
+
 def test_provider_business_error_is_not_empty_success(tmp_path):
     seed = post("99999", "99990", "Show me your cats")
     def respond(request: httpx.Request) -> httpx.Response:
@@ -180,7 +292,7 @@ def test_worker_snapshot_failure_prevents_paid_account_probe(monkeypatch):
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
             await worker._execute_job(client, {}, replace(Settings(), diy_site_url="https://site.test",
                 x_lead_provider="twitterapi"), "worker", {"id": "job", "configuration": {
-                    "discoveryMode": "account_first", "classifierVersion": "account-first-v1",
+                    "discoveryMode": "account_first", "classifierVersion": "account-first-v1.1",
                     "seedPostId": "99999", "seedVerificationNote": "Verified conversation seed"}})
     asyncio.run(run())
     assert called is False
@@ -238,7 +350,7 @@ def test_worker_dispatch_submits_account_rows_only(monkeypatch):
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
             await worker._execute_job(client, {}, replace(Settings(), diy_site_url="https://site.test",
                 x_lead_provider="twitterapi"), "worker", {"id": "job", "configuration": {
-                    "discoveryMode": "account_first", "classifierVersion": "account-first-v1",
+                    "discoveryMode": "account_first", "classifierVersion": "account-first-v1.1",
                     "seedPostId": "99999", "seedVerificationNote": "Verified conversation seed"}})
     asyncio.run(run())
     assert submitted[0]["status"] == "completed"

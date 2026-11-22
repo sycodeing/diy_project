@@ -118,7 +118,7 @@ export default async function XLeadSearchPage({
             <label className="text-sm font-bold">核实依据<input className="mt-1 w-full rounded-lg border border-line bg-surface p-3" name="seedVerificationNote" minLength={12} maxLength={1000} placeholder="原帖确有相关回复；仅作为上下文" required /></label>
             <div className="flex flex-wrap items-center gap-3 sm:col-span-2"><button className="focus-ring rounded-lg bg-accent px-4 py-3 font-bold text-accent-ink" type="submit" disabled={!workerOnline || !supportsAccountFirst(worker?.worker_version ?? undefined)}>手动开始账号证据任务</button><Link className="font-bold text-accent underline" href="/admin/x-leads?mode=account_review">查看账号待审</Link></div>
           </form>
-          <p className="mt-2 text-xs text-muted">需在线 1.19.0 执行器；最坏预留 1575 credits，硬上限 1800、余额保底 3000。当前不会自动启动任务。</p>
+          <p className="mt-2 text-xs text-muted">需在线 1.19.2 执行器；最坏预留 1575 credits，硬上限 1800、余额保底 3000。当前不会自动启动任务。</p>
         </section>
 
         <section className="mt-6 rounded-xl border border-line bg-panel/90 p-5">

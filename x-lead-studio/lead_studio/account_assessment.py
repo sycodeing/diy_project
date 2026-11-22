@@ -11,7 +11,7 @@ from .consumer_profiles import FICTION_FRAME, SELLER, PET_SENSITIVE
 from probe_consumer_recall import is_repost
 from probe_purchase_recall import _author_bio, extract_post_photo_urls
 
-VERSION = "account-first-v1"
+VERSION = "account-first-v1.1"
 PET = re.compile(r"\b(?:my|our)\s+(?:cat|dog|pet|kitten|puppy)\b", re.I)
 PERSONAL_PROJECT = re.compile(
     r"\b(?:i|we)\s+(?:made|designed|painted|drew|commissioned|displayed|decorated|customized|personalized)\b"
@@ -21,6 +21,26 @@ PERSONAL_PROJECT = re.compile(
 RESOLVED = re.compile(r"\b(?:arrived|received|already (?:bought|ordered)|finished)\b.{0,50}\b(?:pillow|cushion)(?:\s+cover)?\b|\b(?:pillow|cushion)(?:\s+cover)?\b.{0,50}\b(?:arrived|received|already (?:bought|ordered)|finished)\b", re.I)
 ENTRY = re.compile(r"\b(?:my|our|i|we)\b.{0,180}\b(?:cat|dog|pet|portrait|photo|picture|room|home|tag|pillow|cushion)\b", re.I)
 HYPOTHETICAL = re.compile(r"\b(?:if i|if we|would|could|might|maybe|imagine)\b", re.I)
+HOME_PROJECT = re.compile(
+    r"\b(?:my|our)\s+(?:living\s+room|bedroom|room|home|house|apartment|gallery\s+wall|wall)\b"
+    r".{0,110}\b(?:decor(?:at(?:e|ed|ing|ion))?|redecorat\w*|redo(?:ing|ne)?|"
+    r"arrang\w*|display\w*|framed?|hang\w*|gallery\s+wall|trinkets?)\b|"
+    r"\b(?:i(?:'m| am)?|we(?:'re| are)?)\s+(?:decorat\w*|redecorat\w*|redo\w*|"
+    r"arrang\w*|display\w*|fram\w*|hang\w*)\b.{0,90}"
+    r"\b(?:my|our)\s+(?:living\s+room|bedroom|room|home|wall|photos?|pictures?)\b|"
+    r"\b(?:done|finished|completed)\s+(?:my|our)\s+(?:living\s+room|bedroom|room|home|wall)\b"
+    r".{0,60}\b(?:decor|gallery|photos?|pictures?)\b",
+    re.I,
+)
+PUBLISHER_BIO = re.compile(
+    r"\b(?:home|decor|interior|furniture|kitchen|small.space)\b.{0,45}"
+    r"\b(?:finds|ideas|guides|tips|trends|gear|content)\b",
+    re.I,
+)
+PUBLISHER_POST = re.compile(r"\b(?:you\s+(?:should|can)|tips?\s+(?:for|to)|"
+                            r"how\s+to|buying\s+guide|design\s+trends?|"
+                            r"(?:try|choose|pick|skip|measure|tuck)\s+(?:a|the|your|it|one)|"
+                            r"searches\s+(?:are|for|keep)|everywhere\s+right\s+now)\b", re.I)
 
 
 def assess_account(author_id: str, handle: str, replies: list[dict[str, Any]],
@@ -37,8 +57,12 @@ def assess_account(author_id: str, handle: str, replies: list[dict[str, Any]],
         own.setdefault(post_id, post)
     bio = " ".join(_author_bio(post) for post in own.values())
     seller = bool(SELLER.search(bio) or any(SELLER.search(str(post.get("text") or "")) for post in own.values()))
+    suspected_publisher = bool(PUBLISHER_BIO.search(bio) and sum(
+        bool(PUBLISHER_POST.search(str(post.get("text") or ""))) for post in own.values()
+    ) >= 3)
     pet_evidence: list[dict[str, str]] = []
     project_evidence: list[dict[str, str]] = []
+    personal_project_evidence: list[dict[str, str]] = []
     for post_id, post in own.items():
         text = str(post.get("text") or "")
         fictional = bool(FICTION_FRAME.search(text) or FICTION_FRAME.search(bio))
@@ -46,6 +70,9 @@ def assess_account(author_id: str, handle: str, replies: list[dict[str, Any]],
         project = next((match for clause in re.split(r"[.!?\n]", text)
                         for match in [PERSONAL_PROJECT.search(clause)]
                         if match and not HYPOTHETICAL.search(clause[:match.end()])), None) if not fictional else None
+        home_project = next((match for clause in re.split(r"[.!?\n]", text)
+                             for match in [HOME_PROJECT.search(clause)]
+                             if match and not HYPOTHETICAL.search(clause[:match.end()])), None) if not fictional else None
         source = "reply" if any(str(r.get("id") or r.get("id_str")) == post_id for r in replies) else "recent"
         item = {"post_id": post_id, "source": source,
                 "created_at": str(post.get("createdAt") or post.get("created_at") or ""),
@@ -53,8 +80,12 @@ def assess_account(author_id: str, handle: str, replies: list[dict[str, Any]],
         if pet:
             pet_evidence.append({**item, "quote": pet.group(0)})
         if project:
-            project_evidence.append({**item, "quote": project.group(0)})
-    independent = next(((pet, project) for pet in pet_evidence for project in project_evidence
+            evidence = {**item, "quote": project.group(0), "kind": "personal_project"}
+            project_evidence.append(evidence)
+            personal_project_evidence.append(evidence)
+        elif home_project:
+            project_evidence.append({**item, "quote": home_project.group(0), "kind": "own_home_scene"})
+    independent = next(((pet, project) for pet in pet_evidence for project in personal_project_evidence
                         if pet["post_id"] != project["post_id"]), None)
     if seller:
         account_status = "excluded"
@@ -92,6 +123,9 @@ def assess_account(author_id: str, handle: str, replies: list[dict[str, Any]],
         "entryStatus": entry_status, "classifierVersion": VERSION,
         "accountEvidence": {
             "person_evidence": pet_evidence, "project_evidence": project_evidence,
+            "exclusion_reason": "seller_or_reseller" if seller else None,
+            "suspected_publisher": suspected_publisher,
+            "suspected_publisher_evidence": "editorial_bio_and_multiple_guides" if suspected_publisher else None,
             "independent_behavior": bool(independent), "timeline_status": timeline_status,
             "shopping_intent": "unknown", "product_fit": "possible" if independent else "unknown",
             "same_product_need_resolved": any(RESOLVED.search(str(p.get("text") or "")) for p in own.values()),
