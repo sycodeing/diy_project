@@ -38,7 +38,7 @@ async def run_x_lead_worker(settings: Settings) -> None:
                     json={
                         "workerId": worker_id,
                         "cookieConfigured": _provider_is_configured(settings, provider),
-                        "version": "1.19.2",
+                        "version": "1.19.3",
                     },
                 )
                 if response.status_code == 204:
@@ -409,7 +409,7 @@ async def _execute_account_first_job(
     error_code = None
     error_message = None
     try:
-        if _selected_provider(settings) != "twitterapi" or config.get("classifierVersion") != "account-first-v1.1":
+        if _selected_provider(settings) != "twitterapi" or config.get("classifierVersion") != "account-first-v1.2":
             raise ValueError("Unsupported account-first configuration")
         snapshot_response = await client.get(
             f"{settings.diy_site_url}/api/x-leads/worker/contacted-snapshot", headers=headers)

@@ -73,6 +73,19 @@ def test_personal_home_project_is_watch_without_claiming_catalog_fit():
     assert assessment([], [post("10013", "12345", "You should redo your living room")])["accountStatus"] == "insufficient"
 
 
+def test_quote_comment_is_own_text_but_quoted_material_is_context_only():
+    own = post("10014", "12345", "I decorated my living room wall with photos.")
+    own.update(isQuote=True, quoted_tweet=post("90014", "99999", "Our beautiful living room photos"))
+    result = assessment([], [own])
+    assert result["accountStatus"] == "watch"
+    assert result["accountEvidence"]["project_evidence"][0]["is_quote"] is True
+    assert result["accountEvidence"]["own_posts"][0]["is_quote"] is True
+    assert result["accountEvidence"]["own_posts"][0]["photo_urls"] == []
+    context_only = post("10015", "12345", "I like this")
+    context_only.update(isQuote=True, quoted_tweet=post("90015", "99999", "I decorated my living room wall with photos."))
+    assert assessment([], [context_only])["accountStatus"] == "insufficient"
+
+
 def test_editorial_home_bio_is_only_suspected_publisher_not_personal_exclusion():
     bio = "Home finds, small-space living ideas and notes on furniture and kitchen gear"
     posts = [post("10001", "12345", "You should try a smaller tree", bio=bio),
@@ -295,7 +308,7 @@ def test_worker_snapshot_failure_prevents_paid_account_probe(monkeypatch):
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
             await worker._execute_job(client, {}, replace(Settings(), diy_site_url="https://site.test",
                 x_lead_provider="twitterapi"), "worker", {"id": "job", "configuration": {
-                    "discoveryMode": "account_first", "classifierVersion": "account-first-v1.1",
+                    "discoveryMode": "account_first", "classifierVersion": "account-first-v1.2",
                     "seedPostId": "99999", "seedVerificationNote": "Verified conversation seed"}})
     asyncio.run(run())
     assert called is False
@@ -353,7 +366,7 @@ def test_worker_dispatch_submits_account_rows_only(monkeypatch):
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
             await worker._execute_job(client, {}, replace(Settings(), diy_site_url="https://site.test",
                 x_lead_provider="twitterapi"), "worker", {"id": "job", "configuration": {
-                    "discoveryMode": "account_first", "classifierVersion": "account-first-v1.1",
+                    "discoveryMode": "account_first", "classifierVersion": "account-first-v1.2",
                     "seedPostId": "99999", "seedVerificationNote": "Verified conversation seed"}})
     asyncio.run(run())
     assert submitted[0]["status"] == "completed"

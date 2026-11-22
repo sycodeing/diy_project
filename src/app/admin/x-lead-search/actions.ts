@@ -28,7 +28,7 @@ export async function runAccountFirstSearch(formData: FormData) {
   if (workerError) throw new Error(workerError.message);
   if (!worker || Date.now() - new Date(worker.last_seen_at).getTime() > 120_000
       || !supportsAccountFirst(worker.worker_version ?? undefined)) {
-    throw new Error("账号证据模式需要在线的 1.19.2 或更高版本发现执行器。");
+    throw new Error("账号证据模式需要在线的 1.19.3 或更高版本发现执行器。");
   }
   const { data: active, error: activeError } = await supabase.from("x_lead_search_jobs")
     .select("id").in("status", ["queued", "running"]).limit(1).maybeSingle();
@@ -36,7 +36,7 @@ export async function runAccountFirstSearch(formData: FormData) {
   if (active) redirect("/admin/x-lead-search?notice=active");
   const { error } = await supabase.from("x_lead_search_jobs").insert({
     trigger_type: "manual", status: "queued", created_by: user.id,
-    configuration: { discoveryMode: "account_first", classifierVersion: "account-first-v1.1",
+    configuration: { discoveryMode: "account_first", classifierVersion: "account-first-v1.2",
       seedPostId, seedVerificationNote, maxAccounts: 4, maxCredits: 1800 },
   });
   if (error) throw new Error(error.message);

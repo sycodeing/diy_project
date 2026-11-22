@@ -11,7 +11,7 @@ from .consumer_profiles import FICTION_FRAME, SELLER, PET_SENSITIVE
 from probe_consumer_recall import is_repost
 from probe_purchase_recall import _author_bio, extract_post_photo_urls
 
-VERSION = "account-first-v1.1"
+VERSION = "account-first-v1.2"
 PET = re.compile(r"\b(?:my|our)\s+(?:cat|dog|pet|kitten|puppy)\b", re.I)
 PERSONAL_PROJECT = re.compile(
     r"\b(?:i|we)\s+(?:made|designed|painted|drew|commissioned|displayed|decorated|customized|personalized)\b"
@@ -52,7 +52,7 @@ def assess_account(author_id: str, handle: str, replies: list[dict[str, Any]],
         post_id = str(post.get("id") or post.get("id_str") or "")
         author = post.get("author") if isinstance(post.get("author"), dict) else {}
         if (not post_id or str(author.get("id") or author.get("id_str") or "") != author_id
-                or is_repost(post) or post.get("quotedTweet") or post.get("quoted_tweet")):
+                or is_repost(post)):
             continue
         own.setdefault(post_id, post)
     bio = " ".join(_author_bio(post) for post in own.values())
@@ -65,6 +65,7 @@ def assess_account(author_id: str, handle: str, replies: list[dict[str, Any]],
     personal_project_evidence: list[dict[str, str]] = []
     for post_id, post in own.items():
         text = str(post.get("text") or "")
+        is_quote = bool(post.get("isQuote") or post.get("quotedTweet") or post.get("quoted_tweet"))
         fictional = bool(FICTION_FRAME.search(text) or FICTION_FRAME.search(bio))
         pet = PET.search(text) if not fictional else None
         project = next((match for clause in re.split(r"[.!?\n]", text)
@@ -76,7 +77,8 @@ def assess_account(author_id: str, handle: str, replies: list[dict[str, Any]],
         source = "reply" if any(str(r.get("id") or r.get("id_str")) == post_id for r in replies) else "recent"
         item = {"post_id": post_id, "source": source,
                 "created_at": str(post.get("createdAt") or post.get("created_at") or ""),
-                "text": text[:2000], "photo_urls": extract_post_photo_urls(post)}
+                "text": text[:2000], "is_quote": is_quote,
+                "photo_urls": [] if is_quote else extract_post_photo_urls(post)}
         if pet:
             pet_evidence.append({**item, "quote": pet.group(0)})
         if project:
@@ -136,16 +138,20 @@ def assess_account(author_id: str, handle: str, replies: list[dict[str, Any]],
             "own_posts": [{"post_id": post_id, "author_id": author_id,
                             "created_at": str(post.get("createdAt") or post.get("created_at") or ""),
                             "text": str(post.get("text") or "")[:2000],
+                            "is_quote": bool(post.get("isQuote") or post.get("quotedTweet") or post.get("quoted_tweet")),
                             "source": "reply" if any(str(r.get("id") or r.get("id_str")) == post_id for r in replies) else "recent",
                             "direct_parent_status": "seed_is_direct_parent" if str(post.get("inReplyToId") or "") == seed_id else
                                 "thread_context_known_direct_parent_unknown" if post.get("inReplyToId") else "own_recent_post",
-                            "photo_urls": extract_post_photo_urls(post)}
+                            "photo_urls": [] if (post.get("isQuote") or post.get("quotedTweet") or post.get("quoted_tweet"))
+                                else extract_post_photo_urls(post)}
                            for post_id, post in list(own.items())[:20]],
         },
         "entryEvidence": {
             "post_id": entry_id, "text": str(entry_post.get("text") or "")[:2000] if entry_post else None,
             "created_at": str(entry_post.get("createdAt") or entry_post.get("created_at") or "") if entry_post else None,
-            "photo_urls": extract_post_photo_urls(entry_post) if entry_post else [],
+            "photo_urls": [] if entry_post and (entry_post.get("isQuote") or entry_post.get("quotedTweet") or entry_post.get("quoted_tweet"))
+                else extract_post_photo_urls(entry_post) if entry_post else [],
+            "is_quote": bool(entry_post and (entry_post.get("isQuote") or entry_post.get("quotedTweet") or entry_post.get("quoted_tweet"))),
             "quote": ENTRY.search(str(entry_post.get("text") or "")).group(0) if entry_post else None,
             "direct_parent_status": "seed_is_direct_parent" if entry_post and any(
                 str(r.get("id") or r.get("id_str") or "") == entry_id for r in replies) else
