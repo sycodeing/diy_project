@@ -40,6 +40,10 @@ export type MarketingReportRow = {
   channel: string;
   variant: string;
   source_hash: string;
+  product_slug?: string | null;
+  x_post_id?: string | null;
+  x_post_url?: string | null;
+  x_author_hash?: string | null;
   click_count: number;
   created_at: string;
   expires_at: string;

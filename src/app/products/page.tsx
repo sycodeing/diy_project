@@ -18,8 +18,9 @@ type CatalogProduct = {
   href: string;
 };
 
-export default async function ProductsPage() {
+export default async function ProductsPage({ searchParams }: { searchParams: Promise<{ unavailable?: string }> }) {
   await connection();
+  const { unavailable } = await searchParams;
   const products = await getProducts();
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = supabase ? await supabase.auth.getUser() : { data: { user: null } };
@@ -33,6 +34,7 @@ export default async function ProductsPage() {
           <h1 className="mt-3 text-4xl font-black tracking-[-0.035em] sm:text-5xl">Choose what to customize</h1>
           <p className="mt-4 text-base leading-7 text-muted">Start with a product, then add your image and preview the result before ordering.</p>
         </header>
+        {unavailable === "1" ? <p className="mt-5 rounded-lg border border-line bg-panel p-4 text-sm" role="status">This design is currently unavailable. Choose an active product below.</p> : null}
 
         <section aria-label="Available products" className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {products.map((product) => (

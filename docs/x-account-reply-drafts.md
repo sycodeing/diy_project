@@ -1,0 +1,11 @@
+# Account-review public-reply drafts
+
+The account-review page can generate a **pending public-reply draft** by explicit admin action. Generation does not approve, enqueue, or send anything. The account and selected post must pass the current contacted snapshot; an unavailable snapshot blocks generation. A ready draft is only a suggestion for human review.
+
+The selector reads bounded, archived original posts belonging to the account, with post ID, author ID, text, and time. It prefers a specific image-in-seating use over a general seating color/pattern project, then recency. It never borrows the seed author's post, a quote, or an unverified reply parent. Older account rows can use verified stored evidence snippets and are labeled partial; an ID without text is insufficient. The stored snapshot covers at most 20 recent returned posts, not an entire account history.
+
+Only active, customizable `custom-pillow` covers and `face-towel` products with active variants are eligible. A gallery wall by itself does not imply pillow interest. Refusal, a newer completed same-product need, sensitive context, dismissal, stale posts, or a contacted identity block the draft. Shopping intent can remain unknown. A first-order 25% line appears only when the selected product's active variants satisfy the current promotion check. Copy does not claim a preview or quote a price.
+
+A ready draft stores its selected post, product, reason, text, and seven-day text-only marketing link. The link records an X post ID/URL and anonymous author hash for attribution and opens that selected product's design page. If the selected product becomes unavailable or the link expires, the redirect shows the product list rather than silently substituting a pillow. Legacy image links retain their preview behavior. Regeneration to a non-ready state clears old reply text and link; manual review fields remain separate.
+
+The schema is in `20261122032930_account_review_drafts.sql`. The admin page reads drafts without generating them. Discovery workers can add bounded own-post snapshots to future account evidence, while older rows remain usable only where stored excerpts establish authorship and timing. No X collection, image generation, reply, DM, or send-queue action is part of draft generation.

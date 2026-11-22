@@ -131,6 +131,16 @@ def assess_account(author_id: str, handle: str, replies: list[dict[str, Any]],
             "same_product_need_resolved": any(RESOLVED.search(str(p.get("text") or "")) for p in own.values()),
             "verification": ["identity", "product_fit", "media_ownership", "location"],
             "own_post_ids": list(own),
+            # Bounded text snapshots let an admin select a current entry without another paid API call.
+            # The post remains context only; photo URLs do not prove ownership or product fit.
+            "own_posts": [{"post_id": post_id, "author_id": author_id,
+                            "created_at": str(post.get("createdAt") or post.get("created_at") or ""),
+                            "text": str(post.get("text") or "")[:2000],
+                            "source": "reply" if any(str(r.get("id") or r.get("id_str")) == post_id for r in replies) else "recent",
+                            "direct_parent_status": "seed_is_direct_parent" if str(post.get("inReplyToId") or "") == seed_id else
+                                "thread_context_known_direct_parent_unknown" if post.get("inReplyToId") else "own_recent_post",
+                            "photo_urls": extract_post_photo_urls(post)}
+                           for post_id, post in list(own.items())[:20]],
         },
         "entryEvidence": {
             "post_id": entry_id, "text": str(entry_post.get("text") or "")[:2000] if entry_post else None,

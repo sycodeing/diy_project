@@ -35,6 +35,9 @@ def test_account_and_entry_are_separate_and_seed_does_not_count():
     assert result["accountEvidence"]["shopping_intent"] == "unknown"
     assert result["entryEvidence"]["draft_ready"] is False
     assert result["accountEvidence"]["independent_behavior"] is True
+    own_posts = result["accountEvidence"]["own_posts"]
+    assert {item["post_id"] for item in own_posts} == {"10001", "10002", "10003"}
+    assert all(item["author_id"] == "12345" and item["created_at"] and item["text"] for item in own_posts)
     assert assessment([reply], [cat, post("10004", "12345", "Here is my cat")])["accountStatus"] == "watch"
     assert assessment([reply], [cat, cat, cat])["accountStatus"] == "watch"
 

@@ -6,17 +6,12 @@ import { hashMarketingToken, safeHexEqual } from "@/lib/marketing";
 import { createLegacyMarketingAlias, createMarketingLinkTokens } from "@/lib/marketing-token";
 import { prepareMarketingPreviewCache } from "@/lib/marketing-preview-cache";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getActiveAccountProducts } from "@/lib/x-lead-account-products";
+import { marketingLinkRequestSchema } from "@/lib/marketing-link-request";
 
 export const runtime = "nodejs";
 
-const requestSchema = z.object({
-  campaign: z.string().trim().min(1).max(100),
-  channel: z.enum(["consent_reply", "public_reply", "direct_message"]),
-  variant: z.string().trim().min(1).max(100),
-  sourceHash: z.string().regex(/^[a-f0-9]{64}$/i),
-  sourceImageUrl: z.url().max(2048).refine((value) => value.startsWith("https://")),
-  previewMode: z.enum(["reply", "full"]).default("full"),
-});
+const requestSchema = marketingLinkRequestSchema;
 
 export async function POST(request: Request) {
   const secret = getMarketingIngestSecret();
@@ -88,14 +83,22 @@ async function createLink(
   if ((count ?? 0) > 60) {
     return NextResponse.json({ error: "Too many marketing link requests." }, { status: 429 });
   }
+  if (payload.productSlug) {
+    const active = await getActiveAccountProducts();
+    if (!active.some((product) => product.slug === payload.productSlug)) {
+      return NextResponse.json({ error: "Selected product is not currently available." }, { status: 409 });
+    }
+  }
 
   const { data: existing } = await supabase
     .from("marketing_links")
-    .select("id,token_hash,short_token_hash,expires_at,source_hash,source_image_url")
+    .select("id,token_hash,short_token_hash,expires_at,source_hash,source_image_url,product_slug")
     .eq("idempotency_key", idempotencyKey)
     .maybeSingle();
   const tokens = createMarketingLinkTokens(secret, idempotencyKey);
   if (existing) {
+    if ((existing.product_slug ?? null) !== (payload.productSlug ?? null))
+      return NextResponse.json({ error: "Marketing link destination changed." }, { status: 409 });
     const legacyAlias = createLegacyMarketingAlias(existing.token_hash);
     const legacyMatches = existing.token_hash === hashMarketingToken(tokens.legacy);
     const preferredStored = existing.token_hash === hashMarketingToken(tokens.preferred)
@@ -114,13 +117,13 @@ async function createLink(
       }).eq("id", existing.id);
       if (aliasError) return NextResponse.json({ error: "Could not create the short marketing link." }, { status: 500 });
     }
-    const cacheReady = await prepareMarketingPreviewCache(
+    const cacheReady = payload.sourceImageUrl ? await prepareMarketingPreviewCache(
       existing.source_image_url ?? payload.sourceImageUrl,
       existing.source_hash,
       existing.expires_at,
       supabase,
       { replyOnly: payload.previewMode === "reply" },
-    );
+    ) : false;
     return linkResponse(returnedToken, existing.expires_at, true, cacheReady);
   }
 
@@ -137,6 +140,7 @@ async function createLink(
       variant: payload.variant,
       source_hash: payload.sourceHash.toLowerCase(),
       source_image_url: payload.sourceImageUrl,
+      product_slug: payload.productSlug ?? null,
       expires_at: expiresAt,
     })
     .select("id,expires_at")
@@ -145,10 +149,12 @@ async function createLink(
   if (error || !data) {
     const { data: raced } = await supabase
       .from("marketing_links")
-      .select("id,token_hash,short_token_hash,expires_at,source_hash,source_image_url")
+      .select("id,token_hash,short_token_hash,expires_at,source_hash,source_image_url,product_slug")
       .eq("idempotency_key", idempotencyKey)
       .maybeSingle();
     if (raced) {
+      if ((raced.product_slug ?? null) !== (payload.productSlug ?? null))
+        return NextResponse.json({ error: "Marketing link destination changed." }, { status: 409 });
       const legacyAlias = createLegacyMarketingAlias(raced.token_hash);
       const legacyMatches = raced.token_hash === hashMarketingToken(tokens.legacy);
       const preferredStored = raced.token_hash === hashMarketingToken(tokens.preferred)
@@ -164,26 +170,26 @@ async function createLink(
         }).eq("id", raced.id);
         if (aliasError) return NextResponse.json({ error: "Could not create the short marketing link." }, { status: 500 });
       }
-      const cacheReady = await prepareMarketingPreviewCache(
+      const cacheReady = payload.sourceImageUrl ? await prepareMarketingPreviewCache(
         raced.source_image_url ?? payload.sourceImageUrl,
         raced.source_hash,
         raced.expires_at,
         supabase,
       { replyOnly: payload.previewMode === "reply" },
-      );
+      ) : false;
       return linkResponse(returnedToken, raced.expires_at, true, cacheReady);
     }
     return NextResponse.json({ error: "Could not create marketing link." }, { status: 500 });
   }
 
   // The deterministic HMAC token is returned but never persisted in plaintext.
-  const cacheReady = await prepareMarketingPreviewCache(
+  const cacheReady = payload.sourceImageUrl ? await prepareMarketingPreviewCache(
     payload.sourceImageUrl,
     payload.sourceHash.toLowerCase(),
     data.expires_at,
     supabase,
     { replyOnly: payload.previewMode === "reply" },
-  );
+  ) : false;
   return linkResponse(token, data.expires_at, false, cacheReady);
 }
 

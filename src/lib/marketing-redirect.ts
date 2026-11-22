@@ -11,6 +11,8 @@ import {
 } from "@/lib/marketing";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { classifyTraffic } from "@/lib/traffic-classification";
+import { getActiveAccountProducts } from "@/lib/x-lead-account-products";
+import { marketingDestinationPath } from "@/lib/marketing-link-request";
 
 export async function handleMarketingRedirect(request: Request, token: string, shortAlias = false) {
   const supabase = getSupabaseServiceClient();
@@ -22,14 +24,20 @@ export async function handleMarketingRedirect(request: Request, token: string, s
   const now = new Date();
   let linkQuery = supabase
     .from("marketing_links")
-    .select("id,source_image_url,expires_at")
-    .gt("expires_at", now.toISOString());
+    .select("id,source_image_url,expires_at,product_slug");
   linkQuery = shortAlias
     ? linkQuery.eq("short_token_hash", hashMarketingToken(token))
     : linkQuery.eq("token_hash", hashMarketingToken(token));
   const { data: link } = await linkQuery
     .maybeSingle();
   if (!link) return NextResponse.redirect(fallback);
+  if (Date.parse(link.expires_at) <= now.getTime())
+    return NextResponse.redirect(new URL(link.product_slug ? "/products?unavailable=1" : "/design", getAppUrl()));
+  const available = link.product_slug ? await getActiveAccountProducts().catch(() => []) : [];
+  const destinationPath = marketingDestinationPath(link.product_slug,
+    new Set(available.map((product) => product.slug)));
+  if (link.product_slug && destinationPath.startsWith("/products"))
+    return NextResponse.redirect(new URL(destinationPath, getAppUrl()));
 
   const traffic = classifyTraffic(request.headers, new URL(request.url).origin);
   const isInternal = /(?:^|;\s*)diy_internal_test=1(?:;|$)/.test(request.headers.get("cookie") ?? "");
@@ -43,7 +51,7 @@ export async function handleMarketingRedirect(request: Request, token: string, s
     p_is_internal: isInternal,
   });
   if (visitError) console.error("Marketing redirect visit could not be recorded", { error: visitError.message });
-  const destination = new URL("/design", getAppUrl());
+  const destination = new URL(destinationPath, getAppUrl());
   if (link.source_image_url) destination.searchParams.set("image", link.source_image_url);
   if (!visitError) destination.searchParams.set(MARKETING_VISIT_PARAM, visitId);
 

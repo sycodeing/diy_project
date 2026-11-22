@@ -31,7 +31,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Se
 
   let query = supabase
     .from("marketing_links")
-    .select("id,campaign,channel,variant,source_hash,click_count,created_at,expires_at,marketing_events(event_type,created_at,order_id,activity_session_id,is_internal),marketing_link_visits(id,visited_at,device_class,referrer_group,suspected_bot,is_internal,design_requested_at,browser_confirmed_at,first_interaction_at),orders(id,order_number,amount_cents,currency,payment_status,paid_at)")
+    .select("id,campaign,channel,variant,source_hash,product_slug,x_post_id,x_post_url,x_author_hash,click_count,created_at,expires_at,marketing_events(event_type,created_at,order_id,activity_session_id,is_internal),marketing_link_visits(id,visited_at,device_class,referrer_group,suspected_bot,is_internal,design_requested_at,browser_confirmed_at,first_interaction_at),orders(id,order_number,amount_cents,currency,payment_status,paid_at)")
     .order("created_at", { ascending: false })
     .limit(1000);
   if (get("from")) query = query.gte("created_at", `${get("from")}T00:00:00.000Z`);
@@ -130,7 +130,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Se
           </div>
           <aside className="rounded-lg border border-line bg-panel/80 p-4">
             <h2 className="text-xl font-black">匿名访问时间线</h2>
-            {selected ? <><p className="mt-1 break-all font-mono text-xs text-muted">{selected.source_hash.slice(0, 16)}…</p><p className="mt-3 text-sm font-semibold">累计收到 {selected.click_count} 次跳转请求</p>{selected.click_count > selected.marketing_link_visits.length ? <p className="mt-1 text-xs text-muted">其中 {selected.click_count - selected.marketing_link_visits.length} 次为逐次明细功能上线前的历史请求，仅保留累计数。</p> : null}<ol className="mt-4 space-y-3">{selectedTimeline.map((event) => <li className="border-l-2 border-accent pl-3" key={event.key}><p className="font-bold">{event.label}</p><p className="text-xs text-muted">{formatDate(event.createdAt)}</p>{event.orderId ? <Link className="text-sm text-accent" href={`/admin/orders/${event.orderId}`}>查看订单</Link> : null}</li>)}</ol></> : <p className="mt-3 text-sm text-muted">选择一条链接，查看每次跳转请求、浏览器确认阶段和关联订单。</p>}
+            {selected ? <><p className="mt-1 break-all font-mono text-xs text-muted">{selected.source_hash.slice(0, 16)}…</p>{selected.x_post_id && selected.x_post_url ? <p className="mt-2 text-xs">公开回复来源：<a className="text-accent underline" href={selected.x_post_url} target="_blank" rel="noreferrer">X 帖子 {selected.x_post_id}</a>{selected.product_slug ? ` · ${selected.product_slug}` : ""}</p> : null}<p className="mt-3 text-sm font-semibold">累计收到 {selected.click_count} 次跳转请求</p>{selected.click_count > selected.marketing_link_visits.length ? <p className="mt-1 text-xs text-muted">其中 {selected.click_count - selected.marketing_link_visits.length} 次为逐次明细功能上线前的历史请求，仅保留累计数。</p> : null}<ol className="mt-4 space-y-3">{selectedTimeline.map((event) => <li className="border-l-2 border-accent pl-3" key={event.key}><p className="font-bold">{event.label}</p><p className="text-xs text-muted">{formatDate(event.createdAt)}</p>{event.orderId ? <Link className="text-sm text-accent" href={`/admin/orders/${event.orderId}`}>查看订单</Link> : null}</li>)}</ol></> : <p className="mt-3 text-sm text-muted">选择一条链接，查看每次跳转请求、浏览器确认阶段和关联订单。</p>}
           </aside>
         </section>
       </main>
