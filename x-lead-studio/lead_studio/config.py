@@ -70,6 +70,8 @@ class Settings:
     x_lead_provider: str = os.getenv("X_LEAD_PROVIDER", "twitterapi").strip().lower()
     twitterapi_api_key: str = os.getenv("TWITTERAPI_API_KEY", "").strip()
     twitterapi_base_url: str = os.getenv("TWITTERAPI_BASE_URL", "https://api.twitterapi.io").rstrip("/")
+    twitterapi_account_timeline_cache_hours: int = max(0, min(24, int(os.getenv("TWITTERAPI_ACCOUNT_TIMELINE_CACHE_HOURS", "6"))))
+    twitterapi_account_timeline_force_refresh: bool = os.getenv("TWITTERAPI_ACCOUNT_TIMELINE_FORCE_REFRESH", "false").lower() == "true"
     twitterapi_us_query_share: int = max(50, min(100, int(os.getenv("TWITTERAPI_US_QUERY_SHARE", "90"))))
     twitterapi_geo_query_enabled: bool = os.getenv("TWITTERAPI_GEO_QUERY_ENABLED", "false").lower() == "true"
     twitterapi_about_enrichment_enabled: bool = os.getenv(

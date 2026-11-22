@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import hashlib
+import json
 import re
 import uuid
 from typing import Any
@@ -24,6 +26,57 @@ RECENT_PATH = "/twitter/user/last_tweets"
 MAX_ACCOUNTS = 4
 MAX_CREDITS = 1800
 STATIC_RESERVE = 15 + 20 * 15 + MAX_ACCOUNTS * 21 * 15  # 1575, includes optional pinned tweet.
+
+
+def _valid_response(payload: Any) -> bool:
+    return (isinstance(payload, dict)
+            and str(payload.get("status") or "").lower() not in {"error", "failed"}
+            and payload.get("code") in (None, 0, "0"))
+
+
+def _timeline_cache_key(settings: Settings, endpoint: str, params: dict[str, str]) -> str:
+    identity = {"base_url": settings.twitterapi_base_url.rstrip("/"), "endpoint": endpoint,
+                "params": params, "credential_fingerprint": hashlib.sha256(
+                    settings.twitterapi_api_key.encode("utf-8")).hexdigest()}
+    return hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _cached_timeline(cache_dir: Path, key: str, author_id: str, started: datetime,
+                     ttl_hours: int) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+    if ttl_hours <= 0:
+        return None
+    try:
+        entry = json.loads((cache_dir / f"{key}.json").read_text(encoding="utf-8"))
+        fetched_at = datetime.fromisoformat(entry["provider_received_at"])
+        age = started - fetched_at
+        payload = entry["response"]
+        source_id = entry.get("source_archive_id")
+        if (entry.get("cache_key") != key or not isinstance(source_id, str)
+                or not re.fullmatch(r"account-first-[\w-]+", source_id)
+                or not (cache_dir.parent / f"{source_id}.json").is_file()
+                or not isinstance(entry.get("source_request_index"), int)
+                or entry["source_request_index"] < 0 or fetched_at.tzinfo is None
+                or not timedelta(0) <= age <= timedelta(hours=ttl_hours)
+                or not _valid_response(payload)):
+            return None
+        posts = _posts(payload, RECENT_PATH)
+        if any(not isinstance(p, dict) or _author(p)[0] != author_id for p in posts):
+            return None
+        return entry, posts
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _save_timeline_cache(cache_dir: Path, key: str, entry: dict[str, Any]) -> None:
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        target = cache_dir / f"{key}.json"
+        temporary = cache_dir / f"{key}.{uuid.uuid4().hex}.tmp"
+        temporary.write_text(json.dumps(entry, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(target)
+    except OSError:
+        # A cache write failure cannot invalidate a successfully archived provider page.
+        pass
 
 
 def _author(post: dict[str, Any]) -> tuple[str, str]:
@@ -83,6 +136,9 @@ async def run_account_first_probe(
     since = started - timedelta(days=14)
     archive_id = f"account-first-{started:%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
     path = archive_dir / f"{archive_id}.json"
+    cache_dir = archive_dir / "account-first-timeline-cache"
+    cache_hours = getattr(settings, "twitterapi_account_timeline_cache_hours", 6)
+    force_refresh = getattr(settings, "twitterapi_account_timeline_force_refresh", False)
     document: dict[str, Any] = {
         "archive_version": 1, "kind": "account_first_raw_only", "archive_id": archive_id,
         "classifier_version": VERSION, "started_at": started.isoformat(), "status": "collecting",
@@ -92,23 +148,40 @@ async def run_account_first_probe(
         "max_credits": MAX_CREDITS, "static_reserved_credits": STATIC_RESERVE,
         "contacted_snapshot": {"snapshot_at": contacted_snapshot["snapshot_at"],
                                **{key: len(contacted_snapshot[key]) for key in ("post_ids", "author_ids", "handles")}},
-        "requests": [], "account_candidates": [],
+        "requests": [], "cache_reuses": [], "account_candidates": [],
     }
     _save(path, document)
     try:
         before = await _credits(client, settings)
         document["credits_before"] = before
-        if sum(before.values()) - STATIC_RESERVE < 3000:
+        if sum(before.values()) - 315 < 3000:
             document["status"] = "stopped_credit_reserve"
             return {"status": document["status"], "archive_path": str(path), "archive_id": archive_id,
                     "account_candidates": [], "metrics": {"paid_requests": 0}}
         reserved = 0
         async def fetch(endpoint: str, params: dict[str, str], reserve: int) -> list[dict[str, Any]]:
             nonlocal reserved
+            cache_key = _timeline_cache_key(settings, endpoint, params) if endpoint == RECENT_PATH else None
+            if cache_key and not force_refresh:
+                cached = _cached_timeline(cache_dir, cache_key, params["userId"],
+                                          datetime.now(timezone.utc),
+                                          cache_hours)
+                if cached is not None:
+                    entry, posts = cached
+                    document["cache_reuses"].append({
+                        "endpoint": endpoint, "request_params": params,
+                        "source_archive_id": entry.get("source_archive_id"),
+                        "source_request_index": entry.get("source_request_index"),
+                        "provider_received_at": entry["provider_received_at"],
+                        "reused_at": datetime.now(timezone.utc).isoformat(),
+                        "returned_items": len(posts)})
+                    _save(path, document)
+                    return posts
             if reserved + reserve > MAX_CREDITS:
                 raise RuntimeError("Static paid-call bound reached")
             current = await _credits(client, settings)
-            if sum(current.values()) - reserve < 3000 or sum(before.values()) - sum(current.values()) + reserve > MAX_CREDITS:
+            if (min(sum(current.values()), sum(before.values()) - reserved) - reserve < 3000
+                    or sum(before.values()) - sum(current.values()) + reserve > MAX_CREDITS):
                 raise RuntimeError("Credit reserve reached")
             attempt: dict[str, Any] = {"endpoint": endpoint, "request_params": params,
                                        "reserved_credits": reserve,
@@ -131,11 +204,16 @@ async def run_account_first_probe(
             attempt.update(state="response_received", http_status=response.status_code,
                            response=payload, received_at=datetime.now(timezone.utc).isoformat())
             _save(path, document)  # Paid raw response is durable before parsing or classification.
-            if (response.status_code != 200 or not isinstance(payload, dict)
-                    or str(payload.get("status") or "").lower() in {"error", "failed"}
-                    or payload.get("code") not in (None, 0, "0")):
+            if response.status_code != 200 or not _valid_response(payload):
                 raise RuntimeError(f"Provider response error: {endpoint} HTTP {response.status_code}")
-            return _posts(payload, endpoint)
+            posts = _posts(payload, endpoint)
+            if (cache_key and cache_hours > 0
+                    and all(isinstance(p, dict) and _author(p)[0] == params["userId"] for p in posts)):
+                _save_timeline_cache(cache_dir, cache_key, {
+                    "cache_key": cache_key, "provider_received_at": attempt["received_at"],
+                    "source_archive_id": archive_id,
+                    "source_request_index": len(document["requests"]) - 1, "response": payload})
+            return posts
 
         seed_posts = await fetch(SEED_PATH, {"tweet_ids": seed_post_id}, 15)
         seed = next((p for p in seed_posts if str(p.get("id") or p.get("id_str")) == seed_post_id), None)
@@ -226,6 +304,9 @@ async def run_account_first_probe(
             "account_candidates": document["account_candidates"],
             "metrics": {"provider": "twitterapi", "scope": "account_review_only",
                         "paid_requests": len(document["requests"]),
+                        "timeline_cache_hits": len(document["cache_reuses"]),
+                        "estimated_avoided_credits": sum(max(1, item["returned_items"]) * 15
+                                                         for item in document["cache_reuses"]),
                         "returned_reply_page_items": len(replies) if 'replies' in locals() else 0,
                         "returned_replies": sum(len(group["replies"]) for group in groups.values()) if 'groups' in locals() else 0,
                         "distinct_reply_authors": sum(group["role"] == "reply_author" for group in groups.values()) if 'groups' in locals() else 0,
