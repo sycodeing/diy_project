@@ -23,10 +23,8 @@
 | 3 | [跨帖项目批次](https://www.thebestdiyshop.com/admin/x-leads?mode=account_review&job=642d9799-408f-475f-9d12-9096c96c9754) |
 | 2 | [最终批次](https://www.thebestdiyshop.com/admin/x-leads?mode=account_review&job=e53d862b-4339-4074-bb4f-f193e3a59d44) |
 
-[账号待审总入口](https://www.thebestdiyshop.com/admin/x-leads?mode=account_review)需要管理员登录。服务端独立回读确认：20 条作者、入口帖、草稿、追踪链接逐一对应；选中原帖的作者、正文与时间匹配；商品仍在售；文案最长 234 字且无价格数字。账号所在地为公开资料或本人陈述支持的配送国家线索，**不是收货地址验证**。逐账号名册、地区依据、来源帖、原始响应、备选和排除理由只保存在忽略目录 `x-lead-studio/.data/purchase-discussion-evaluation/`，包括 `account_draft_manifest_live_20261122.json`、`account_batch_root_final_db_audit_20261122.json` 和采集档案汇总 `account_batch_archive_summary_20261122.json`；不将原帖与个人语境提交到仓库。
+[账号待审总入口](https://www.thebestdiyshop.com/admin/x-leads?mode=account_review)需要管理员登录。服务端独立回读确认：20 条作者、入口帖、草稿、追踪链接逐一对应；选中原帖的作者、正文与时间匹配；商品仍在售；正式域名修正后文案均不超过 280 字且无价格数字。账号所在地为公开资料或本人陈述支持的配送国家线索，**不是收货地址验证**。逐账号名册、地区依据、来源帖、原始响应、备选和排除理由只保存在忽略目录 `x-lead-studio/.data/purchase-discussion-evaluation/`，包括 `account_draft_manifest_live_20261122.json`、`account_batch_root_final_db_audit_20261122.json` 和采集档案汇总 `account_batch_archive_summary_20261122.json`；不将原帖与个人语境提交到仓库。
 
 本轮发现的代码边界已在源码修正：引用帖仅用作者自己的外层评论，不继承被引图文；同一作者、同一近期空间项目的两条本人帖可以分别作为入口与支持证据；具体房间配色/风格可形成条件式枕套建议，而泛泛房间提及、虚拟场景、未知回复父帖、拒绝或同类需求已完成仍阻断草稿。新建账号任务的分类器标识为 `account-first-v1.2`，发现 worker 门槛为 `1.19.3`，草稿生成器为 `account-draft-v1.1`。已入库批次保留实际生成时的版本标识，不为了统一版本重写历史链接。
 
 验证：草稿与账号任务 TypeScript 定向测试 17 项、Python worker 全套 253 项、Next build 均通过。Lint 使用 `npm run lint -- --quiet --ignore-pattern 'x-lead-studio/.data/**'` 通过；未带该忽略参数的 lint 仅因本地忽略目录内一次性导入脚本触发 15 条 `no-explicit-any`，不属于提交的业务源码。以上验证是规则、入库和链接契约的证据；尚无发送、真人点击、购买或营销效果证明。
-
-\n
