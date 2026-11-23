@@ -199,37 +199,58 @@ export async function POST(request: Request) {
 
   const shanghaiDate = getShanghaiDate();
   const { data: gates, error: gatesError } = await supabase.from("x_reply_daily_gates")
-    .select("account_id,status")
+    .select("account_id,status,first_job_id")
     .eq("gate_date", shanghaiDate)
     .in("account_id", [...accountRoutes.keys()]);
   if (gatesError) return NextResponse.json({ error: gatesError.message }, { status: 500 });
   const gateStatus = new Map((gates ?? []).map((gate) => [gate.account_id, gate.status]));
-  const eligibleAccountIds = [...accountRoutes.entries()]
-    .filter(([accountId, route]) => isXDailyGateClaimAllowed(route.requiresConfirmation, gateStatus.get(accountId)))
+  const firstJobIds = (gates ?? []).flatMap((gate) => gate.first_job_id ? [gate.first_job_id] : []);
+  const { data: firstJobs, error: firstJobsError } = firstJobIds.length
+    ? await supabase.from("x_reply_jobs").select("id,status").in("id", firstJobIds)
+    : { data: [], error: null };
+  if (firstJobsError) return NextResponse.json({ error: firstJobsError.message }, { status: 500 });
+  const firstJobStatus = new Map((firstJobs ?? []).map((job) => [job.id, job.status]));
+  const firstJobByAccount = new Map((gates ?? []).map((gate) => [gate.account_id,
+    gate.first_job_id ? firstJobStatus.get(gate.first_job_id) : undefined]));
+  const eligibleAccounts = (version: 1 | 2) => [...accountRoutes.entries()]
+    .filter(([accountId, route]) => isXDailyGateClaimAllowed(route.requiresConfirmation,
+      gateStatus.get(accountId), version, firstJobByAccount.get(accountId)))
     .map(([accountId]) => accountId);
-  if (!eligibleAccountIds.length) return new Response(null, { status: 204 });
+  const v1Accounts = eligibleAccounts(1);
+  const v2Accounts = eligibleAccounts(2);
+  if (!v1Accounts.length && !v2Accounts.length) return new Response(null, { status: 204 });
 
-  let queuedQuery = supabase
-    .from("x_reply_jobs")
-    .select("id,account_id,action_type,target_post_url,reply_text,content_mode,copy_variant,queue_version,target_author_id,account_draft_author_id,marketing_link_id,source_post_id,draft_generated_at,account_artwork_path,account_artwork_hash,account_preview_path,account_preview_hash,account_preview_template_id,scheduled_for,created_at,status,preparation_status,attempt_count,approved_at,x_leads(marketing_links!x_leads_marketing_link_id_fkey(source_hash,expires_at))")
-    .eq("status", "queued")
-    .eq("preparation_status", "ready")
-    .eq("attempt_count", 0)
-    .not("approved_at", "is", null)
-    .lte("scheduled_for", now)
-    .in("account_id", eligibleAccountIds);
-  if (heartbeat.networkVerification) queuedQuery = queuedQuery.eq("id", heartbeat.networkVerification.jobId);
   const modes = ["legacy_preview"];
   if (heartbeat.capabilities.includes("first_contact_text_v1")) modes.push("first_contact_text");
   if (heartbeat.capabilities.includes(X_REPLY_V2_CAPABILITY) && supportsXReplyV2Worker(heartbeat.workerVersion)) modes.push("account_product_link");
   if (heartbeat.capabilities.includes(X_REPLY_V2_PREVIEW_CAPABILITY) && supportsXReplyV2PreviewWorker(heartbeat.workerVersion)) modes.push("account_product_preview");
-  queuedQuery = queuedQuery.in("content_mode", modes);
-  const { data: queued, error: readError } = await queuedQuery
-    .order("scheduled_for", { ascending: true })
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+  const readCandidate = async (version: 1 | 2, accountIds: string[]) => {
+    if (!accountIds.length) return { data: null, error: null };
+    let queuedQuery = supabase
+      .from("x_reply_jobs")
+      .select("id,account_id,action_type,target_post_url,reply_text,content_mode,copy_variant,queue_version,target_author_id,account_draft_author_id,marketing_link_id,source_post_id,draft_generated_at,account_artwork_path,account_artwork_hash,account_preview_path,account_preview_hash,account_preview_template_id,scheduled_for,created_at,status,preparation_status,attempt_count,approved_at,x_leads(marketing_links!x_leads_marketing_link_id_fkey(source_hash,expires_at))")
+      .eq("status", "queued")
+      .eq("queue_version", version)
+      .eq("preparation_status", "ready")
+      .eq("attempt_count", 0)
+      .not("approved_at", "is", null)
+      .lte("scheduled_for", now)
+      .in("account_id", accountIds);
+    if (heartbeat.networkVerification) queuedQuery = queuedQuery.eq("id", heartbeat.networkVerification.jobId);
+    queuedQuery = queuedQuery.in("content_mode", modes);
+    return await queuedQuery
+      .order("scheduled_for", { ascending: true })
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+  };
+  // Filter each queue before ordering so a blocked V1 task cannot hide a claimable V2 task.
+  const candidates = await Promise.all([readCandidate(1, v1Accounts), readCandidate(2, v2Accounts)]);
+  const readError = candidates.find((candidate) => candidate.error)?.error;
   if (readError) return NextResponse.json({ error: readError.message }, { status: 500 });
+  const queued = candidates.flatMap((candidate) => candidate.data ? [candidate.data] : [])
+    .sort((a, b) => Date.parse(a.scheduled_for) - Date.parse(b.scheduled_for)
+      || Date.parse(a.created_at) - Date.parse(b.created_at))[0];
   if (!queued) return new Response(null, { status: 204 });
   if (!isXJobClaimEligible({
     status: queued.status,
@@ -354,7 +375,7 @@ export async function POST(request: Request) {
 
   await supabase.from("x_reply_workers").update({ status: "busy", current_job_id: claimed.id, last_seen_at: now })
     .eq("executor_id", heartbeat.executorId);
-  const supervisedFirst = route.requiresConfirmation && gateStatus.get(claimed.account_id) !== "authorized";
+  const supervisedFirst = queued.queue_version !== 2 && route.requiresConfirmation && gateStatus.get(claimed.account_id) !== "authorized";
   if (supervisedFirst) {
     const { error: gateError } = await supabase.from("x_reply_daily_gates").upsert({
       account_id: claimed.account_id,

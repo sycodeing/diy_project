@@ -81,7 +81,7 @@ export default async function XAutoV2Page({ searchParams }: { searchParams: Prom
           {previewImages.get(job.id) ? <a className="mt-2 inline-block text-xs text-accent underline" href={previewImages.get(job.id)!} target="_blank" rel="noreferrer">查看该任务审核时的商品预览图</a> : null}
           <p className="mt-1 text-xs text-muted">{job.status === "draft" && !compatible
             ? `待执行器升级至 ${job.content_mode === "account_product_preview" ? "4.12.0（附图）" : "4.11.0（文字）"}并启用发送模式；仍可保留待审草稿`
-            : job.status === "draft" ? "待人工批准" : job.status === "queued" ? "已批准，等待执行器与每日安全门槛" : "状态以执行记录为准"}</p>
+            : job.status === "draft" ? "待人工批准" : job.status === "queued" ? "已批准，等待执行器；V2 无需每日首条再次放行，仍受账号额度、暂停与批次休息约束" : "状态以执行记录为准"}</p>
           {job.result_url ? <a className="text-accent underline" href={job.result_url} target="_blank" rel="noreferrer">发送结果</a> : null}
           {job.preparation_status === "failed" ? <p className="mt-1 text-red-700">已阻断：{job.preparation_error ?? "证据失效"}。请撤回、重生成草稿并重新加入。</p> : null}
           {job.error_message ? <p className="text-red-700">{job.error_message}</p> : null}

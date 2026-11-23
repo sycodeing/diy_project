@@ -52,7 +52,12 @@ export type JobClaimSafetyInput = {
   nowMillis: number;
 };
 
-export function isXDailyGateClaimAllowed(requiresConfirmation: boolean, status: string | null | undefined): boolean {
+export function isXDailyGateClaimAllowed(requiresConfirmation: boolean, status: string | null | undefined,
+  queueVersion = 1, firstJobStatus?: string | null): boolean {
+  if (queueVersion === 2) {
+    if (status === "awaiting_confirmation") return firstJobStatus === "sent";
+    return status == null || status === "pending" || status === "authorized";
+  }
   return !requiresConfirmation || status == null || status === "pending" || status === "authorized";
 }
 

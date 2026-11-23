@@ -157,4 +157,22 @@ test("daily first-success gate pauses later jobs until explicit authorization", 
   assert.equal(isXDailyGateClaimAllowed(true, "paused"), false);
   assert.equal(isXDailyGateClaimAllowed(true, "authorized"), true);
   assert.equal(isXDailyGateClaimAllowed(false, "awaiting_confirmation"), true);
+  assert.equal(isXDailyGateClaimAllowed(true, "awaiting_confirmation", 1, "sent"), false);
+});
+
+test("V2 skips a confirmed first-success hold but retains pauses and unresolved outcomes", () => {
+  for (const requiresConfirmation of [true, false]) {
+    for (const status of [undefined, "pending", "authorized"])
+      assert.equal(isXDailyGateClaimAllowed(requiresConfirmation, status, 2), true);
+    assert.equal(isXDailyGateClaimAllowed(requiresConfirmation, "awaiting_confirmation", 2, "sent"), true);
+    assert.equal(isXDailyGateClaimAllowed(requiresConfirmation, "paused", 2, "sent"), false);
+    for (const firstJobStatus of [undefined, "queued", "claimed", "uncertain", "failed"])
+      assert.equal(isXDailyGateClaimAllowed(requiresConfirmation, "awaiting_confirmation", 2, firstJobStatus), false);
+  }
+});
+
+test("an earlier V1 task awaiting confirmation does not hide a claimable V2 task on the same account", () => {
+  const orderedJobs = [{ id: "earlier-v1", queueVersion: 1 }, { id: "later-v2", queueVersion: 2 }];
+  const claimable = orderedJobs.filter((job) => isXDailyGateClaimAllowed(true, "awaiting_confirmation", job.queueVersion, "sent"));
+  assert.deepEqual(claimable.map((job) => job.id), ["later-v2"]);
 });

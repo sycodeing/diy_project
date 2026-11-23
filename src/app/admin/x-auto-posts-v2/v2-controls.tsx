@@ -77,7 +77,7 @@ function V2ApproveControls({ items }: { items: Item[] }) {
   const formRef = useRef<HTMLFormElement>(null);
   return <form ref={formRef} action={action} className="rounded-xl border border-line bg-panel p-4">
     <h2 className="text-lg font-black">人工批准所选 V2 任务</h2>
-    <p className="mt-1 text-xs text-muted">批准后会按共享的账号限额和每日监督规则执行；当前不会批量自动选择。</p>
+    <p className="mt-1 text-xs text-muted">批准后无需每日首条再次放行；仍保留共享账号限额、显式暂停、每 12 条休息 45 分钟及发送间随机等待 15–30 秒。当前不会批量自动选择。</p>
     <Selection items={items} name="jobId" formRef={formRef} />
     <button className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-bold text-accent-ink disabled:opacity-50" disabled={pending || !items.length} type="submit">
       {pending ? "处理中…" : "批准所选并启动"}</button>
