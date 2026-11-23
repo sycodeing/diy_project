@@ -8,7 +8,8 @@ import { isAuthorizedXReplyWorker } from "@/lib/x-reply-worker-auth";
 import { isBoundProxyEgress, isXAccountClaimEligible, isXDailyGateClaimAllowed, isXJobClaimEligible } from "@/lib/x-reply-safety";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { isValidXFirstContactText } from "@/lib/x-lead-copy";
-import { hasPriorXContact, isValidV2ReplyText, supportsXReplyV2Worker, validateV2Snapshot, X_REPLY_V2_CAPABILITY } from "@/lib/x-reply-v2";
+import { hasPriorXContact, isValidV2ReplyText, supportsXReplyV2PreviewWorker, supportsXReplyV2Worker, validateV2Snapshot, X_REPLY_V2_CAPABILITY, X_REPLY_V2_PREVIEW_CAPABILITY } from "@/lib/x-reply-v2";
+import { signAccountDesignAsset } from "@/lib/x-account-design-assets";
 
 export const runtime = "nodejs";
 
@@ -210,7 +211,7 @@ export async function POST(request: Request) {
 
   let queuedQuery = supabase
     .from("x_reply_jobs")
-    .select("id,account_id,action_type,target_post_url,reply_text,content_mode,copy_variant,queue_version,target_author_id,account_draft_author_id,marketing_link_id,source_post_id,draft_generated_at,scheduled_for,created_at,status,preparation_status,attempt_count,approved_at,x_leads(marketing_links!x_leads_marketing_link_id_fkey(source_hash,expires_at))")
+    .select("id,account_id,action_type,target_post_url,reply_text,content_mode,copy_variant,queue_version,target_author_id,account_draft_author_id,marketing_link_id,source_post_id,draft_generated_at,account_artwork_path,account_artwork_hash,account_preview_path,account_preview_hash,account_preview_template_id,scheduled_for,created_at,status,preparation_status,attempt_count,approved_at,x_leads(marketing_links!x_leads_marketing_link_id_fkey(source_hash,expires_at))")
     .eq("status", "queued")
     .eq("preparation_status", "ready")
     .eq("attempt_count", 0)
@@ -221,6 +222,7 @@ export async function POST(request: Request) {
   const modes = ["legacy_preview"];
   if (heartbeat.capabilities.includes("first_contact_text_v1")) modes.push("first_contact_text");
   if (heartbeat.capabilities.includes(X_REPLY_V2_CAPABILITY) && supportsXReplyV2Worker(heartbeat.workerVersion)) modes.push("account_product_link");
+  if (heartbeat.capabilities.includes(X_REPLY_V2_PREVIEW_CAPABILITY) && supportsXReplyV2PreviewWorker(heartbeat.workerVersion)) modes.push("account_product_preview");
   queuedQuery = queuedQuery.in("content_mode", modes);
   const { data: queued, error: readError } = await queuedQuery
     .order("scheduled_for", { ascending: true })
@@ -241,8 +243,9 @@ export async function POST(request: Request) {
   const leadRelation = Array.isArray(queued.x_leads) ? queued.x_leads[0] : queued.x_leads;
   const linkRelation = leadRelation?.marketing_links;
   const marketingLink = Array.isArray(linkRelation) ? linkRelation[0] : linkRelation;
-  const accountProduct = queued.content_mode === "account_product_link" && queued.queue_version === 2;
-  const textOnly = queued.content_mode === "first_contact_text" || accountProduct;
+  const accountPreview = queued.content_mode === "account_product_preview" && queued.queue_version === 2;
+  const accountProduct = queued.queue_version === 2 && (queued.content_mode === "account_product_link" || accountPreview);
+  const textOnly = queued.content_mode === "first_contact_text" || queued.content_mode === "account_product_link";
   let productLinkUrl: string | null = null;
   if (queued.content_mode === "first_contact_text" && (queued.action_type !== "reply" || !queued.target_post_url || !isValidXFirstContactText(queued.reply_text))) {
     await supabase.from("x_reply_jobs").update({ preparation_status: "failed", preparation_error: "首条接触必须是无链接的有效回复文案，请人工检查。" })
@@ -269,10 +272,12 @@ export async function POST(request: Request) {
       return new Response(null, { status: 204 });
     }
   } catch { return NextResponse.json({ error: "Historical contact snapshot unavailable." }, { status: 503 }); }
-  const preview = !textOnly && marketingLink
-    ? await getMarketingReplyPreviewUrl(marketingLink.source_hash, marketingLink.expires_at)
-    : null;
-  if (!textOnly && !preview) {
+  const preview = accountPreview && queued.account_preview_path
+    ? { url: await signAccountDesignAsset(queued.account_preview_path, 60 * 60) }
+    : !textOnly && marketingLink
+      ? await getMarketingReplyPreviewUrl(marketingLink.source_hash, marketingLink.expires_at)
+      : null;
+  if (!textOnly && !preview?.url) {
     await supabase.from("x_reply_jobs").update({
       preparation_status: "failed",
       preparation_error: "发送预览图暂时不可用；任务未下发，请重新生成素材。",
@@ -383,6 +388,8 @@ export async function POST(request: Request) {
     productLinkUrl,
     copyVariant: queued.copy_variant,
     previewImageUrl: preview?.url ?? null,
+    previewImageSha256: accountPreview ? queued.account_preview_hash : null,
+    previewAssetId: accountPreview ? queued.account_preview_path : null,
   } });
 }
 

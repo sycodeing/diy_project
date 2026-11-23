@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import random
 import re
 import socket
@@ -8,6 +9,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import httpx
 
@@ -25,7 +27,7 @@ from .xuse_client import (
 )
 
 
-WORKER_VERSION = "4.11.0-account-product-link"
+WORKER_VERSION = "4.12.0-account-product-preview"
 BATCH_DELAY_MIN_SECONDS = 15.0
 BATCH_DELAY_MAX_SECONDS = 30.0
 PROFILE_INSPECTION_SECONDS = 10 * 60.0
@@ -80,7 +82,7 @@ async def run_x_reply_iteration(
         "executorId": settings.x_reply_executor_id,
         "executionMode": settings.x_reply_execution_mode,
         "workerVersion": WORKER_VERSION,
-        "capabilities": ["first_contact_text_v1", "account_product_link_v2"],
+        "capabilities": ["first_contact_text_v1", "account_product_link_v2", "account_product_preview_v2"],
         "deviceLabel": settings.x_reply_device_label or socket.gethostname()[:120],
         "xUseAvailable": xuse_available,
         "configuredAccounts": configured_accounts,
@@ -213,16 +215,17 @@ async def _execute_job(settings: Settings, client: httpx.AsyncClient, job: dict[
     try:
         preview_url = str(job.get("previewImageUrl") or "")
         content_mode = job.get("contentMode", "legacy_preview")
-        if content_mode not in {"first_contact_text", "legacy_preview", "account_product_link"}:
+        if content_mode not in {"first_contact_text", "legacy_preview", "account_product_link", "account_product_preview"}:
             raise ValueError("Unknown automatic reply content mode.")
         text_only = content_mode in {"first_contact_text", "account_product_link"}
+        product_reply = content_mode in {"account_product_link", "account_product_preview"}
         text = str(job.get("postText") or "")
-        if text_only and (job.get("actionType") != "reply" or not job.get("targetPostUrl")
+        if (text_only or product_reply) and (job.get("actionType") != "reply" or not job.get("targetPostUrl")
                 or not text.strip() or len(text) > 280):
-            raise ValueError("Invalid text-only first-contact reply.")
+            raise ValueError("Invalid approved reply text or target.")
         if content_mode == "first_contact_text" and re.search(r"https?://|www\.|\{link\}", text, re.I):
             raise ValueError("First-contact text cannot contain a link.")
-        if content_mode == "account_product_link":
+        if product_reply:
             links = re.findall(r"https?://\S+", text)
             approved_link = str(job.get("productLinkUrl") or "")
             if len(links) != 1 or links[0] != approved_link or not re.fullmatch(
@@ -231,10 +234,19 @@ async def _execute_job(settings: Settings, client: httpx.AsyncClient, job: dict[
                 raise ValueError("Account product reply requires one approved product link.")
         if not text_only and not preview_url:
             raise ValueError("The approved automatic reply has no preview image attachment.")
+        expected_preview_hash = str(job.get("previewImageSha256") or "")
+        if content_mode == "account_product_preview":
+            asset_id = str(job.get("previewAssetId") or "")
+            if not _is_approved_preview_url(preview_url, asset_id):
+                raise ValueError("The product preview URL does not match the approved asset identity.")
+            if not re.fullmatch(r"[0-9a-f]{64}", expected_preview_hash):
+                raise ValueError("The approved product preview has no valid SHA-256 hash.")
         with tempfile.TemporaryDirectory(prefix="diy-x-preview-") as directory:
             media = []
             if not text_only:
                 preview_path, _ = await download_image(preview_url, Path(directory))
+                if content_mode == "account_product_preview" and hashlib.sha256(preview_path.read_bytes()).hexdigest() != expected_preview_hash:
+                    raise ValueError("The downloaded product preview does not match the approved SHA-256 hash.")
                 media = [str(preview_path)]
             result = await send_approved_action(
                 x_use_home=settings.x_use_home,
@@ -270,6 +282,21 @@ async def _execute_job(settings: Settings, client: httpx.AsyncClient, job: dict[
     )
     response.raise_for_status()
     return result
+
+
+def _is_approved_preview_url(url: str, asset_id: str) -> bool:
+    """Bind the signed Supabase URL to the immutable asset in the claim."""
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+", asset_id) or any(
+        segment in {"", ".", ".."} for segment in asset_id.split("/")
+    ):
+        return False
+    parsed = urlsplit(url)
+    return (
+        parsed.scheme == "https"
+        and bool(parsed.hostname)
+        and unquote(parsed.path) == f"/storage/v1/object/sign/account-design-previews/{asset_id}"
+        and bool(parse_qs(parsed.query).get("token", [""])[0])
+    )
 
 
 def _must_halt(error_code: str | None, error_message: str | None) -> bool:

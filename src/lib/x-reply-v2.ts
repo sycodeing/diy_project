@@ -6,9 +6,11 @@ import { selectAccountDraft, type AccountDraftInput } from "@/lib/x-lead-account
 import { getActiveFirstOrderPromotion, type FirstOrderPromotion } from "@/lib/first-order-promotion";
 import { canAdvertiseFirstOrder25 } from "@/lib/x-lead-copy";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { validAccountDesignAsset } from "@/lib/x-account-design-assets";
 
 export const X_REPLY_V2_CAPABILITY = "account_product_link_v2";
 export const X_REPLY_V2_WORKER_MIN_VERSION = "4.11.0";
+export const X_REPLY_V2_PREVIEW_CAPABILITY = "account_product_preview_v2";
 type ServiceClient = NonNullable<ReturnType<typeof getSupabaseServiceClient>>;
 
 export type V2Snapshot = {
@@ -22,6 +24,11 @@ export type V2Snapshot = {
   draft_generated_at: string | null;
   target_post_url: string | null;
   reply_text: string;
+  account_artwork_path?: string | null;
+  account_artwork_hash?: string | null;
+  account_preview_path?: string | null;
+  account_preview_hash?: string | null;
+  account_preview_template_id?: string | null;
 };
 
 export function supportsXReplyV2Worker(version: string | null | undefined) {
@@ -29,6 +36,13 @@ export function supportsXReplyV2Worker(version: string | null | undefined) {
   if (!match) return false;
   const parts = match.slice(1).map(Number);
   return parts[0] > 4 || parts[0] === 4 && (parts[1] > 11 || parts[1] === 11 && parts[2] >= 0);
+}
+
+export function supportsXReplyV2PreviewWorker(version: string | null | undefined) {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-|$)/.exec(version ?? "");
+  if (!match) return false;
+  const [major, minor, patch] = match.slice(1).map(Number);
+  return major > 4 || major === 4 && (minor > 12 || minor === 12 && patch >= 0);
 }
 
 export function isValidV2ReplyText(text: string, marketingUrl: string) {
@@ -59,9 +73,15 @@ export type V2EvidenceInput = {
   account: AccountDraftInput & { x_handle?: string | null };
   draft: { author_id: string; status: string; review_status: string; selected_post_id: string | null;
     product_slug: string | null; reply_text: string | null; marketing_link_id: string | null;
-    marketing_url: string | null; marketing_expires_at: string | null; generated_at: string };
+    marketing_url: string | null; marketing_expires_at: string | null; generated_at: string;
+    preview_status?: string | null; design_source?: string | null; design_brief?: string | null;
+    artwork_path?: string | null; artwork_hash?: string | null; preview_path?: string | null;
+    preview_hash?: string | null; preview_template_id?: string | null };
   link: { channel: string; product_slug: string | null; x_post_id: string | null;
-    x_author_hash: string | null; source_image_url: string | null; token_hash: string; expires_at: string };
+    x_author_hash: string | null; source_image_url: string | null; token_hash: string; expires_at: string;
+    account_artwork_path?: string | null; account_artwork_hash?: string | null;
+    account_preview_path?: string | null; account_preview_hash?: string | null;
+    account_preview_template_id?: string | null };
   products: ActiveAccountProduct[];
   promotion: FirstOrderPromotion | null;
   now: Date;
@@ -71,7 +91,8 @@ export type V2EvidenceInput = {
 
 /** Pure snapshot check for archived-data tests; the live wrapper loads current records each time. */
 export function validateV2Evidence({ job, account: input, draft, link, products, promotion, now, appUrl, secret }: V2EvidenceInput): string | null {
-  if (job.queue_version !== 2 || job.content_mode !== "account_product_link"
+  const previewMode = job.content_mode === "account_product_preview";
+  if (job.queue_version !== 2 || !["account_product_link", "account_product_preview"].includes(job.content_mode)
     || !job.target_author_id || job.account_draft_author_id !== job.target_author_id
     || !job.marketing_link_id || !job.source_post_id || !job.draft_generated_at
     || !/^https:\/\/x\.com\/[A-Za-z0-9_]{1,50}\/status\/\d+$/.test(job.target_post_url ?? "")
@@ -84,6 +105,21 @@ export function validateV2Evidence({ job, account: input, draft, link, products,
   if (!v2OwnPostIsCurrent(input, job.source_post_id, now)) return "所选本人帖已过期或归属证据失效。";
   const product = products.find((item) => item.slug === draft.product_slug);
   if (!product) return "选中商品已下架、无可售规格或模板不可用。";
+  if (previewMode) {
+    const asset = { artworkPath: job.account_artwork_path ?? "", artworkHash: job.account_artwork_hash ?? "",
+      previewPath: job.account_preview_path ?? "", previewHash: job.account_preview_hash ?? "",
+      templateId: job.account_preview_template_id ?? "" };
+    if (draft.preview_status !== "ready" || draft.design_source !== "brand_created" || !draft.design_brief
+      || !validAccountDesignAsset(asset, product.slug) || !product.mockupTemplateIds?.includes(asset.templateId)
+      || draft.artwork_path !== asset.artworkPath || draft.artwork_hash !== asset.artworkHash
+      || draft.preview_path !== asset.previewPath || draft.preview_hash !== asset.previewHash
+      || draft.preview_template_id !== asset.templateId
+      || link.account_artwork_path !== asset.artworkPath || link.account_artwork_hash !== asset.artworkHash
+      || link.account_preview_path !== asset.previewPath || link.account_preview_hash !== asset.previewHash
+      || link.account_preview_template_id !== asset.templateId) return "预览原画、商品模板或已审素材快照已失效。";
+  } else if (draft.preview_status === "ready" || job.account_artwork_path || link.account_artwork_path) {
+    return "文字版队列与图片草稿不一致，请重建待审任务。";
+  }
   const current = selectAccountDraft(input, products, now);
   if (current.status !== "draft_ready" || current.selectedPost?.post_id !== job.source_post_id
     || current.productSlug !== draft.product_slug) return "账号当前证据不再支持已审草稿，请重新生成。";
@@ -113,9 +149,9 @@ export async function validateV2Snapshot(supabase: ServiceClient, job: V2Snapsho
   const [{ data: account, error: accountError }, { data: draft, error: draftError }, { data: link, error: linkError }, products, promotion] = await Promise.all([
     supabase.from("x_lead_account_reviews").select("author_id,x_handle,account_status,entry_status,review_status,account_evidence,entry_evidence")
       .eq("author_id", job.target_author_id).maybeSingle(),
-    supabase.from("x_lead_account_drafts").select("author_id,status,review_status,selected_post_id,product_slug,reply_text,marketing_link_id,marketing_url,marketing_expires_at,generated_at")
+    supabase.from("x_lead_account_drafts").select("author_id,status,review_status,selected_post_id,product_slug,reply_text,marketing_link_id,marketing_url,marketing_expires_at,generated_at,preview_status,design_source,design_brief,artwork_path,artwork_hash,preview_path,preview_hash,preview_template_id")
       .eq("author_id", job.target_author_id).maybeSingle(),
-    supabase.from("marketing_links").select("id,channel,product_slug,x_post_id,x_author_hash,source_image_url,token_hash,expires_at")
+    supabase.from("marketing_links").select("id,channel,product_slug,x_post_id,x_author_hash,source_image_url,token_hash,expires_at,account_artwork_path,account_artwork_hash,account_preview_path,account_preview_hash,account_preview_template_id")
       .eq("id", job.marketing_link_id).maybeSingle(),
     getActiveAccountProducts(), getActiveFirstOrderPromotion(),
   ]);

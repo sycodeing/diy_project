@@ -77,7 +77,7 @@ export async function getActiveMarketingLinkFromCookie() {
 
   const { data } = await supabase
     .from("marketing_links")
-    .select("id,expires_at,source_hash,source_image_url")
+    .select("id,expires_at,source_hash,source_image_url,product_slug,account_artwork_path,account_artwork_hash,account_preview_path,account_preview_hash,account_preview_template_id")
     .or(`token_hash.eq.${tokenHash},short_token_hash.eq.${tokenHash}`)
     .gt("expires_at", new Date().toISOString())
     .maybeSingle();

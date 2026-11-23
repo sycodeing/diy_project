@@ -21,9 +21,8 @@ test("a non-buying sofa style project can yield a conditional review draft", () 
   assert.equal(result.status, "draft_ready");
   assert.equal(result.productSlug, "custom-pillow");
   const copy = createAccountReply(result, "https://example.com/g/abc1234567", false);
-  assert.match(copy, /cushion colors and patterns/);
-  assert.match(copy, /custom-printed pillow covers/);
-  assert.match(copy, /could be one option/);
+  assert.match(copy, /sofa color or pattern/);
+  assert.match(copy, /printed pillow cover/);
   assert.doesNotMatch(copy, /preview|already made|\$/i);
 });
 
@@ -33,7 +32,7 @@ test("an owned room palette or theme can suggest a cover without a buying or pil
     "I’m trying figure out what color my living room finna be . Cause my room definitely green 😂🤣",
     "I like the black nouvea theme for my bedroom.",
   ];
-  const expectedAngles = [/neutral and olive accents/, /living-room color you're deciding on/, /black bedroom palette/];
+  const expectedAngles = [/neutral tree.*olive accent/, /living room color.*swatches/, /black nouveau bedroom/];
   for (const [index, text] of scenes.entries()) {
     const result = select(account(post(String(111111 + index), text)));
     assert.equal(result.status, "draft_ready", text);
@@ -90,7 +89,7 @@ test("specific image placement outranks newer generic sofa styling", () => {
   ));
   assert.equal(result.selectedPost?.post_id, "222222");
   assert.equal(result.matchStrength, 2);
-  assert.match(createAccountReply(result, "https://example.com/g/abc1234567", false), /custom photo pillow covers/);
+  assert.match(createAccountReply(result, "https://example.com/g/abc1234567", false), /photo-and-pillow idea in your reading corner.*image you have rights to.*pillow cover/);
 });
 
 test("wall art, accidental word co-occurrence, and third-party or stale posts do not force a pillow", () => {
@@ -137,7 +136,7 @@ test("one author's ongoing room project may use a distinct earlier palette post 
   assert.equal(chosen.selectedPost?.post_id, "222222");
   assert.deepEqual(chosen.supportingPostIds, ["111111"]);
   assert.match(chosen.productMatchReason ?? "", /111111.*222222|222222.*111111/);
-  assert.match(createAccountReply(chosen, "https://www.pattayamade.com/g/abcdefghij", true), /living room palette and redecoration/);
+  assert.match(createAccountReply(chosen, "https://www.pattayamade.com/g/abcdefghij", true), /Pink curtains.*unfinished living room.*pillow cover/);
 
   const otherRoom = select(account(post("111111", "I want pink curtains for my bedroom.", 3), current));
   assert.equal(otherRoom.status, "no_match");
@@ -232,5 +231,27 @@ test("all supported scene replies fit X with a production-length short link and 
       assert.equal(reply.includes("25% off"), offer);
     }
   }
-  assert.match(createAccountReply(scenes[2], url, false), /personalized face towel/);
+  assert.match(createAccountReply(scenes[2], url, false), /custom face towel/);
+});
+
+test("original sample copy names the actual reviewed motif without claiming the prospect supplied artwork", () => {
+  const scenes = [
+    { text: "Decorating my apartment as a gingerbread house &amp; I’m so excited 😊",
+      visibleMotifs: "iced houses and candy canes", designReason: "echoing your gingerbread theme", word: /gingerbread-house/ },
+    { text: "I did a neutral color Christmas tree with a pop of olive. It match my living room so well",
+      visibleMotifs: "olive foliage and pale berries", designReason: "echoing the olive tree accent", word: /neutral tree's olive accent/ },
+    { text: "I am considering redecorating my room to be cabin core with a pinch of winter",
+      visibleMotifs: "snowy cabins, pines and woodland animals", designReason: "exploring a fuller winter direction", word: /sample leans snowy/ },
+  ];
+  for (const [index, scene] of scenes.entries()) {
+    const selection = select(account(post(String(999990 + index), scene.text)));
+    assert.equal(selection.status, "draft_ready", scene.text);
+    const reply = createAccountReply(selection, "https://www.thebestdiyshop.com/g/abcdefghij", true,
+      { preview: { visibleMotifs: scene.visibleMotifs, designReason: scene.designReason } });
+    assert.match(reply, scene.word);
+    assert.match(reply, new RegExp(scene.visibleMotifs));
+    assert.match(reply, /Original custom-printed pillow cover sample/);
+    assert.ok(reply.length <= 280, `${index}: ${reply.length}`);
+    assert.doesNotMatch(reply, /your photo|your design|already made for you|\$/i);
+  }
 });

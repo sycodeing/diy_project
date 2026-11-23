@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from dataclasses import replace
+from pathlib import Path
 
 import httpx
 import pytest
@@ -25,6 +27,9 @@ def test_observe_mode_reports_heartbeat_but_never_executes(monkeypatch, tmp_path
     async def post_claim(_settings, _client, payload):
         assert payload["executionMode"] == "observe"
         assert payload["executorId"] == "macbook-x-01"
+        assert payload["workerVersion"] == "4.12.0-account-product-preview"
+        assert "account_product_link_v2" in payload["capabilities"]
+        assert "account_product_preview_v2" in payload["capabilities"]
         return httpx.Response(204)
 
     async def forbidden_execute(*_args, **_kwargs):
@@ -297,3 +302,102 @@ def test_v2_product_link_is_text_only_and_bound_to_claim(monkeypatch, mode, text
     assert len(sent) == expected_sends
     assert len(completions) == 1
     assert result.status == ("sent" if expected_sends else "failed")
+
+
+@pytest.mark.parametrize("patch,expected_sends", [
+    ({}, 1),
+    ({"previewImageSha256": "0" * 64}, 0),
+    ({"previewImageSha256": "INVALID"}, 0),
+    ({"previewAssetId": ""}, 0),
+    ({"previewAssetId": "other/preview.webp"}, 0),
+    ({"previewImageUrl": "https://storage.example.test/storage/v1/object/sign/account-design-previews/other/preview.webp?token=signed"}, 0),
+    ({"previewImageUrl": "http://storage.example.test/storage/v1/object/sign/account-design-previews/account/preview.webp?token=signed"}, 0),
+    ({"previewImageUrl": "https://storage.example.test/storage/v1/object/sign/account-design-previews/account/preview.webp"}, 0),
+    ({"productLinkUrl": "https://www.thebestdiyshop.com/g/other12345"}, 0),
+    ({"postText": "https://www.thebestdiyshop.com/g/abcdefghij https://www.thebestdiyshop.com/g/abcdefghij"}, 0),
+    ({"actionType": "post"}, 0),
+    ({"targetPostUrl": None}, 0),
+    ({"contentMode": "unknown"}, 0),
+])
+def test_account_product_preview_sends_only_exact_approved_media(monkeypatch, patch, expected_sends):
+    preview_bytes = b"rendered original artwork through the approved template"
+    preview_hash = hashlib.sha256(preview_bytes).hexdigest()
+    asset_id = "account/preview.webp"
+    preview_url = f"https://storage.example.test/storage/v1/object/sign/account-design-previews/{asset_id}?token=signed"
+    text = "A custom cover could suit your room. https://www.thebestdiyshop.com/g/abcdefghij"
+    downloaded = []
+    sent = []
+    completions = []
+
+    async def fake_download(url, destination):
+        assert url == preview_url
+        downloaded.append(url)
+        path = destination / "approved.webp"
+        path.write_bytes(preview_bytes)
+        return path, preview_hash
+
+    async def fake_send(**kwargs):
+        assert kwargs["text"] == text
+        assert kwargs["action_type"] == "reply"
+        assert len(kwargs["media"]) == 1
+        assert hashlib.sha256(Path(kwargs["media"][0]).read_bytes()).hexdigest() == preview_hash
+        sent.append(kwargs)
+        return ReplyResult(status="sent", result_url="https://x.com/owner/status/2")
+
+    class FakeClient:
+        async def post(self, url, **kwargs):
+            completions.append(kwargs["json"])
+            return httpx.Response(200, json={"ok": True}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(x_reply_worker, "download_image", fake_download)
+    monkeypatch.setattr(x_reply_worker, "send_approved_action", fake_send)
+    job = {
+        "id": "job-preview", "accountKey": "pet_account", "actionType": "reply",
+        "targetPostUrl": "https://x.com/owner/status/1", "postText": text,
+        "contentMode": "account_product_preview", "productLinkUrl": "https://www.thebestdiyshop.com/g/abcdefghij",
+        "previewImageUrl": preview_url, "previewImageSha256": preview_hash, "previewAssetId": asset_id,
+        "networkMode": "vpn_direct",
+    }
+    job.update(patch)
+    result = asyncio.run(x_reply_worker._execute_job(Settings(), FakeClient(), job))
+    assert len(sent) == expected_sends
+    assert len(completions) == 1
+    assert completions[0]["status"] == ("sent" if expected_sends else "failed")
+    assert result.status == ("sent" if expected_sends else "failed")
+    if expected_sends:
+        assert downloaded == [preview_url]
+
+
+def test_account_product_preview_download_failure_never_falls_back_to_text(monkeypatch):
+    sent = []
+    completions = []
+    preview_url = "https://storage.example.test/storage/v1/object/sign/account-design-previews/account/preview.webp?token=signed"
+
+    async def failed_download(*_args):
+        raise httpx.HTTPError("expired signed URL")
+
+    async def fake_send(**kwargs):
+        sent.append(kwargs)
+        raise AssertionError("No text-only fallback is allowed")
+
+    class FakeClient:
+        async def post(self, url, **kwargs):
+            completions.append(kwargs["json"])
+            return httpx.Response(200, json={"ok": True}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(x_reply_worker, "download_image", failed_download)
+    monkeypatch.setattr(x_reply_worker, "send_approved_action", fake_send)
+    result = asyncio.run(x_reply_worker._execute_job(Settings(), FakeClient(), {
+        "id": "job-preview", "accountKey": "pet_account", "actionType": "reply",
+        "targetPostUrl": "https://x.com/owner/status/1",
+        "postText": "See the design. https://www.thebestdiyshop.com/g/abcdefghij",
+        "contentMode": "account_product_preview",
+        "productLinkUrl": "https://www.thebestdiyshop.com/g/abcdefghij",
+        "previewImageUrl": preview_url,
+        "previewImageSha256": "a" * 64,
+        "previewAssetId": "account/preview.webp",
+        "networkMode": "vpn_direct",
+    }))
+    assert result.status == "failed"
+    assert sent == []
+    assert [completion["status"] for completion in completions] == ["failed"]

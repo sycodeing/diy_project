@@ -3,7 +3,8 @@ import { AppShell } from "@/components/app-shell";
 import { requireAdmin } from "@/lib/auth";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { X_REPLY_STATUS_LABELS } from "@/lib/x-reply";
-import { supportsXReplyV2Worker } from "@/lib/x-reply-v2";
+import { supportsXReplyV2PreviewWorker, supportsXReplyV2Worker } from "@/lib/x-reply-v2";
+import { signAccountDesignAsset } from "@/lib/x-account-design-assets";
 import { getServerNowMillis } from "@/lib/utils";
 import { IdleAutoRefresh } from "@/components/idle-auto-refresh";
 import { withdrawV2Draft } from "./actions";
@@ -19,13 +20,15 @@ export default async function XAutoV2Page({ searchParams }: { searchParams: Prom
   const [{ data: drafts, error: draftError }, { data: jobs, error: jobError }, { data: accounts, error: accountError }, { data: workers }] = await Promise.all([
     supabase.from("x_lead_account_drafts").select("author_id,status,review_status,selected_post_id,product_slug,reply_text,marketing_expires_at,x_lead_account_reviews!inner(x_handle,account_status,entry_status,review_status)")
       .eq("status", "draft_ready").eq("review_status", "unreviewed").order("generated_at", { ascending: false }).limit(200),
-    supabase.from("x_reply_jobs").select("id,account_id,target_author_id,source_post_id,reply_text,status,preparation_status,preparation_error,approved_at,created_at,completed_at,result_url,error_message,marketing_link_id,product_slug_snapshot,product_match_reason_snapshot,x_reply_accounts(account_key,display_name)")
+    supabase.from("x_reply_jobs").select("id,account_id,target_author_id,source_post_id,reply_text,status,preparation_status,preparation_error,approved_at,created_at,completed_at,result_url,error_message,marketing_link_id,product_slug_snapshot,product_match_reason_snapshot,content_mode,account_preview_path,x_reply_accounts(account_key,display_name)")
       .eq("queue_version", 2).order("created_at", { ascending: false }).limit(500),
     supabase.from("x_reply_accounts").select("id,account_key,display_name,active,executor_id").eq("active", true).order("display_name"),
     supabase.from("x_reply_workers").select("executor_id,worker_version,execution_mode,last_seen_at"),
   ]);
   if (draftError || jobError || accountError) throw new Error(draftError?.message ?? jobError?.message ?? accountError?.message);
   const allJobs = jobs ?? [];
+  const previewImages = new Map(await Promise.all(allJobs.filter((job) => job.content_mode === "account_product_preview" && job.account_preview_path)
+    .map(async (job) => [job.id, await signAccountDesignAsset(job.account_preview_path!, 15 * 60)] as const)));
   const statuses = ["draft", "queued", "claimed", "sent", "failed", "uncertain", "rejected"];
   const shownJobs = filters.status && statuses.includes(filters.status) ? allJobs.filter((job) => job.status === filters.status) : allJobs;
   const nowMillis = getServerNowMillis();
@@ -64,7 +67,8 @@ export default async function XAutoV2Page({ searchParams }: { searchParams: Prom
       <div className="mt-3 grid gap-3">{shownJobs.map((job) => {
         const sender = (accounts ?? []).find((account) => account.id === job.account_id);
         const worker = sender?.executor_id ? workerByExecutor.get(sender.executor_id) : null;
-        const compatible = Boolean(worker && supportsXReplyV2Worker(worker.worker_version) && worker.execution_mode === "send"
+        const compatible = Boolean(worker && (job.content_mode === "account_product_preview"
+          ? supportsXReplyV2PreviewWorker(worker.worker_version) : supportsXReplyV2Worker(worker.worker_version)) && worker.execution_mode === "send"
           && nowMillis - Date.parse(worker.last_seen_at) < 5 * 60_000);
         return <article id={`v2-job-${job.id}`} className="scroll-mt-6 rounded-xl border border-line bg-panel p-4 text-sm" key={job.id}>
           <div className="flex flex-wrap items-center gap-2"><strong>{X_REPLY_STATUS_LABELS[job.status] ?? job.status}</strong>
@@ -74,7 +78,10 @@ export default async function XAutoV2Page({ searchParams }: { searchParams: Prom
           <p className="mt-1">发送账号 {sender?.display_name ?? senderName(job)} · 商品 {job.product_slug_snapshot} · 本人帖 <a className="text-accent underline" href={`https://x.com/i/status/${job.source_post_id}`} target="_blank" rel="noreferrer">{job.source_post_id}</a></p>
           {job.product_match_reason_snapshot ? <p className="mt-1 text-xs text-muted">匹配理由：{job.product_match_reason_snapshot}</p> : null}
           <p className="mt-2 whitespace-pre-wrap break-words rounded border border-line bg-surface p-2">{job.reply_text}</p>
-          <p className="mt-1 text-xs text-muted">{job.status === "draft" && !compatible ? "待执行器升级至 4.11.0/send；仍可保留待审草稿" : job.status === "draft" ? "待人工批准" : job.status === "queued" ? "已批准，等待执行器与每日安全门槛" : "状态以执行记录为准"}</p>
+          {previewImages.get(job.id) ? <a className="mt-2 inline-block text-xs text-accent underline" href={previewImages.get(job.id)!} target="_blank" rel="noreferrer">查看该任务审核时的商品预览图</a> : null}
+          <p className="mt-1 text-xs text-muted">{job.status === "draft" && !compatible
+            ? `待执行器升级至 ${job.content_mode === "account_product_preview" ? "4.12.0（附图）" : "4.11.0（文字）"}并启用发送模式；仍可保留待审草稿`
+            : job.status === "draft" ? "待人工批准" : job.status === "queued" ? "已批准，等待执行器与每日安全门槛" : "状态以执行记录为准"}</p>
           {job.result_url ? <a className="text-accent underline" href={job.result_url} target="_blank" rel="noreferrer">发送结果</a> : null}
           {job.preparation_status === "failed" ? <p className="mt-1 text-red-700">已阻断：{job.preparation_error ?? "证据失效"}。请撤回、重生成草稿并重新加入。</p> : null}
           {job.error_message ? <p className="text-red-700">{job.error_message}</p> : null}

@@ -9,6 +9,8 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { DEFAULT_PRODUCT_CONFIG, type DesignerProductConfig } from "@/lib/product-config";
 import { getActiveFirstOrderPromotion, promotionalPrice } from "@/lib/first-order-promotion";
 import type { DesignPayload, ShippingAddress } from "@/lib/types";
+import { signAccountDesignAsset, validAccountDesignAsset } from "@/lib/x-account-design-assets";
+import { getServerNowMillis } from "@/lib/utils";
 
 const ALLOWED_PARAMS = new Set([
   "image",
@@ -72,16 +74,35 @@ export default async function DesignPage({
   const cookieMarketingLink = await getActiveMarketingLinkFromCookie();
   const { data: visitMarketingLink } = marketingVisit
     ? await getSupabaseServiceClient()!.from("marketing_links")
-        .select("id,expires_at,source_hash,source_image_url")
+        .select("id,expires_at,source_hash,source_image_url,product_slug,account_artwork_path,account_artwork_hash,account_preview_path,account_preview_hash,account_preview_template_id")
         .eq("id", marketingVisit.marketing_link_id)
         .gt("expires_at", new Date().toISOString())
         .maybeSingle()
     : { data: null };
+  if (marketingVisit && !visitMarketingLink) redirect("/products?unavailable=1");
   const marketingLink = visitMarketingLink ?? cookieMarketingLink;
   const linkedImage = initialParams.image ?? initialParams.imageUrl ?? initialParams.img;
-  const cachedMockupPreviews = marketingLink && linkedImage === marketingLink.source_image_url
-    ? await getMarketingPreviewUrls(marketingLink.source_hash, marketingLink.expires_at)
-    : [];
+  const accountAsset = marketingVisit && !linkedImage
+    && (!initialParams.product || initialParams.product === visitMarketingLink?.product_slug)
+    && visitMarketingLink?.account_artwork_path && visitMarketingLink.account_artwork_hash
+    && visitMarketingLink.account_preview_path && visitMarketingLink.account_preview_hash && visitMarketingLink.account_preview_template_id
+    ? { artworkPath: visitMarketingLink.account_artwork_path, artworkHash: visitMarketingLink.account_artwork_hash,
+      previewPath: visitMarketingLink.account_preview_path, previewHash: visitMarketingLink.account_preview_hash,
+      templateId: visitMarketingLink.account_preview_template_id } : null;
+  const accountAssetValid = accountAsset && visitMarketingLink?.product_slug === productConfig.slug
+    && validAccountDesignAsset(accountAsset, productConfig.slug);
+  const assetExpirySeconds = marketingLink
+    ? Math.max(60, Math.min(7 * 24 * 60 * 60, Math.floor((Date.parse(marketingLink.expires_at) - getServerNowMillis()) / 1000))) : 60;
+  const [artworkUrl, previewUrl] = accountAssetValid
+    ? await Promise.all([signAccountDesignAsset(accountAsset.artworkPath, assetExpirySeconds),
+      signAccountDesignAsset(accountAsset.previewPath, assetExpirySeconds)]) : [null, null];
+  if (accountAsset && (!accountAssetValid || !artworkUrl || !previewUrl)) redirect("/products?unavailable=1");
+  const accountPreviews = artworkUrl && previewUrl && accountAsset
+    ? [{ id: accountAsset.templateId, label: "Original sample on this product", url: previewUrl }] : [];
+  const cachedMockupPreviews = accountPreviews.length ? accountPreviews
+    : marketingLink && linkedImage === marketingLink.source_image_url
+      ? await getMarketingPreviewUrls(marketingLink.source_hash, marketingLink.expires_at) : [];
+  const designerImage = accountPreviews.length ? artworkUrl : linkedImage;
 
   if (marketingVisit || marketingLink) {
     const requestHeaders = await headers();
@@ -104,8 +125,9 @@ export default async function DesignPage({
         paypalEnabled={Boolean(getPayPalConfig().clientId && getPayPalConfig().clientSecret)}
         autoCheckout={initialParams.checkout === "1"}
         cachedMockupPreviews={cachedMockupPreviews}
-        cachedMockupSourceImageUrl={cachedMockupPreviews.length ? linkedImage : null}
-        initialParams={Object.fromEntries(Object.entries(initialParams).filter(([key]) => key !== MARKETING_VISIT_PARAM))}
+        cachedMockupSourceImageUrl={cachedMockupPreviews.length ? designerImage : null}
+        initialParams={{ ...Object.fromEntries(Object.entries(initialParams).filter(([key]) => key !== MARKETING_VISIT_PARAM)),
+          ...(accountPreviews.length && artworkUrl ? { image: artworkUrl, imageUrl: undefined, img: undefined } : {}) }}
         isAuthenticated={Boolean(user)}
         userId={user?.id ?? null}
         defaultShippingAddress={defaultShippingAddress}

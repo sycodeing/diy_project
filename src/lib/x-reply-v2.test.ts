@@ -3,7 +3,7 @@ import { createHmac } from "node:crypto";
 import test from "node:test";
 import { hashMarketingToken } from "./marketing.ts";
 import { createAccountReply, selectAccountDraft } from "./x-lead-account-draft.ts";
-import { isValidV2ReplyText, supportsXReplyV2Worker, validateV2Evidence, type V2EvidenceInput } from "./x-reply-v2.ts";
+import { isValidV2ReplyText, supportsXReplyV2PreviewWorker, supportsXReplyV2Worker, validateV2Evidence, type V2EvidenceInput } from "./x-reply-v2.ts";
 
 const now = new Date("2026-11-22T12:00:00Z");
 const secret = "test-secret-not-for-production";
@@ -60,4 +60,37 @@ test("V2 blocks dismissed accounts and unsupported replies while V1 cannot claim
   assert.notEqual(validateV2Evidence(wrongAuthor), null);
   const extraLink = validInput(); extraLink.job.reply_text += " https://example.com/g/extra12345";
   assert.notEqual(validateV2Evidence(extraLink), null);
+});
+
+test("V2 image mode binds an immutable original artwork and rendered product preview across job, draft and link", () => {
+  const input = validInput();
+  const artworkHash = "a".repeat(64);
+  const previewHash = "b".repeat(64);
+  const fields = { artwork_path: `artwork/${artworkHash}.png`, artwork_hash: artworkHash,
+    preview_path: `preview/${artworkHash}/pillow-psd-03-grey-sofa-${previewHash}.webp`,
+    preview_hash: previewHash, preview_template_id: "pillow-psd-03-grey-sofa" };
+  input.job.content_mode = "account_product_preview";
+  input.job.account_artwork_path = fields.artwork_path;
+  input.job.account_artwork_hash = fields.artwork_hash;
+  input.job.account_preview_path = fields.preview_path;
+  input.job.account_preview_hash = fields.preview_hash;
+  input.job.account_preview_template_id = fields.preview_template_id;
+  Object.assign(input.draft, fields, { preview_status: "ready", design_source: "brand_created",
+    design_brief: JSON.stringify({ visibleMotifs: "olive leaves", designReason: "echoing a tree accent" }) });
+  Object.assign(input.link, { account_artwork_path: fields.artwork_path, account_artwork_hash: fields.artwork_hash,
+    account_preview_path: fields.preview_path, account_preview_hash: fields.preview_hash,
+    account_preview_template_id: fields.preview_template_id });
+  input.products[0].mockupTemplateIds = [fields.preview_template_id];
+  assert.equal(validateV2Evidence(input), null);
+  assert.equal(supportsXReplyV2PreviewWorker("4.11.0-account-product-link"), false);
+  assert.equal(supportsXReplyV2PreviewWorker("4.12.0-account-product-preview"), true);
+  const changed = structuredClone(input);
+  changed.draft.preview_hash = "c".repeat(64);
+  assert.match(validateV2Evidence(changed) ?? "", /预览原画/);
+  const wrongProduct = structuredClone(input);
+  wrongProduct.products[0].mockupTemplateIds = ["pillow-psd-04-size"];
+  assert.match(validateV2Evidence(wrongProduct) ?? "", /预览原画/);
+  const staleTextOnly = structuredClone(input);
+  staleTextOnly.job.content_mode = "account_product_link";
+  assert.match(validateV2Evidence(staleTextOnly) ?? "", /文字版队列/);
 });

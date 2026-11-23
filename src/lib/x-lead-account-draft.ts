@@ -1,4 +1,4 @@
-export const ACCOUNT_DRAFT_VERSION = "account-draft-v1.1";
+export const ACCOUNT_DRAFT_VERSION = "account-draft-v1.2";
 export type DraftStatus = "draft_ready" | "no_match" | "evidence_pending" | "blocked";
 export type OwnPost = { post_id: string; created_at: string; text: string; source: string; direct_parent_status?: string; is_quote?: boolean };
 export type AccountDraftInput = {
@@ -20,6 +20,7 @@ export type DraftSelection = {
   conversationAngle: string | null;
   matchStrength: number;
   supportingPostIds?: string[];
+  supportingPosts?: OwnPost[];
 };
 
 const ID = /^\d{5,30}$/;
@@ -226,19 +227,79 @@ export function selectAccountDraft(input: AccountDraftInput, products: ActiveDra
     evidenceCoverage: coverage, selectedPost: best.post, productSlug: best.match.slug,
     productMatchReason: best.match.reason, conversationAngle: best.match.angle,
     matchStrength: best.match.strength,
-    supportingPostIds: accountProject && best.match === accountProject.match ? [accountProject.support.post_id] : [] };
+    supportingPostIds: accountProject && best.match === accountProject.match ? [accountProject.support.post_id] : [],
+    supportingPosts: accountProject && best.match === accountProject.match ? [accountProject.support] : [] };
   return { ...base, status: blocked ? "blocked" : "no_match", reason: blocked
     ? "相关帖子涉及敏感、已完成同类需求或明确拒绝推荐；不生成草稿"
     : "已存本人帖子未呈现与当前可售商品相连的具体用途" };
 }
 
-export function createAccountReply(selection: DraftSelection, marketingUrl: string, firstOrder25: boolean): string {
-  if (selection.status !== "draft_ready" || !selection.productSlug || !selection.conversationAngle) throw new Error("No reviewable draft");
-  const product = selection.productSlug === "custom-pillow"
-    ? selection.matchStrength >= 2 ? "custom photo pillow covers" : "custom-printed pillow covers"
-    : "customizable face towels";
-  const offer = firstOrder25 ? " First orders currently get 25% off." : "";
-  const text = `For ${selection.conversationAngle}, ${product} could be one option if useful. See the design page: ${marketingUrl}${offer}`;
+export type AccountPreviewBrief = { visibleMotifs: string; designReason: string };
+export function validAccountPreviewBrief(brief: AccountPreviewBrief) {
+  return /^[\p{L}\p{N} ,&'-]{5,90}$/u.test(brief.visibleMotifs)
+    && /^[\p{L}\p{N} ,&'-]{5,90}$/u.test(brief.designReason);
+}
+
+/** Rule-authored, evidence-grounded public reply. A preview brief describes actual reviewed artwork. */
+export function createAccountReply(selection: DraftSelection, marketingUrl: string, firstOrder25: boolean,
+  options: { preview?: AccountPreviewBrief } = {}): string {
+  if (selection.status !== "draft_ready" || !selection.productSlug || !selection.selectedPost || !selection.conversationAngle)
+    throw new Error("No reviewable draft");
+  const original = selection.selectedPost.text;
+  const advice = options.preview ? accountPreviewResponse(original, selection) : accountAdvice(original, selection);
+  const product = selection.productSlug === "custom-pillow" ? "custom-printed pillow cover" : "customizable face towel";
+  const preview = options.preview;
+  if (preview && !validAccountPreviewBrief(preview)) throw new Error("Preview brief is invalid");
+  const suggestion = preview
+    ? `Original ${product} sample: ${preview.visibleMotifs}, ${preview.designReason}. Preview/edit: ${marketingUrl}`
+    : marketingUrl;
+  const offer = firstOrder25 ? " First orders: 25% off." : "";
+  let text = `${advice} ${suggestion}${offer}`;
+  if (text.length > 280 && offer) text = `${advice} ${suggestion}`;
   if (text.length > 280) throw new Error("Public reply draft exceeds 280 characters");
   return text;
+}
+
+function accountPreviewResponse(text: string, selection: DraftSelection): string {
+  const t = text.toLowerCase();
+  if (/gingerbread house/.test(t)) return "A gingerbread-house theme for the apartment sounds playful.";
+  if (/neutral/.test(t) && /olive/.test(t)) return "Your neutral tree's olive accent could carry into a smaller room detail.";
+  if (/cabin\s*core/.test(t)) return "You pictured cabin-core with a little winter; this sample leans snowy.";
+  return accountAdvice(text, selection).replace(/:\s*$/, ".");
+}
+
+function accountAdvice(text: string, selection: DraftSelection): string {
+  const t = text.toLowerCase().replaceAll("&amp;", "&");
+  const room = /\b(?:my|our) apartment\b/i.test(t) ? "apartment" : /\b(?:my|our) bedroom\b/i.test(t) ? "bedroom"
+    : /\b(?:my|our) living room\b/i.test(t) ? "living room" : "space";
+  if (selection.productSlug === "face-towel") return "For a small face towel, one clear repeated element may read better than a busy layout. You can upload your own design for a custom face towel:";
+  if (selection.matchStrength === 2 && /\b(?:photo|portrait|image)\b/.test(t)
+    && /\b(?:reading corner|sofa|couch|seat|pillow|cushion)\b/.test(t)) {
+    const location = /reading corner/.test(t) ? "reading corner" : /\b(?:sofa|couch)\b/.test(t) ? "sofa" : "seating area";
+    return `For the photo-and-pillow idea in your ${location}, try a crop that keeps the subject clear. You could upload an image you have rights to for a custom-printed pillow cover:`;
+  }
+  if (selection.supportingPosts?.some((post) => /pink curtains/i.test(post.text)))
+    return "Pink curtains could give the unfinished living room a color to echo. If you have a print in mind, a custom pillow cover could carry it into the seating area:";
+  if (/gingerbread house/.test(t)) return "A gingerbread-house apartment is a whole theme. Repeating one original candy motif on a custom-printed pillow cover could tie a corner into it:";
+  if (/cabin\s*core/.test(t)) return "Cabin-core with a little winter could start with a restrained woodland print. A custom-printed pillow cover is one removable place to try it:";
+  if (/neutral/.test(t) && /olive/.test(t)) return "Your neutral tree already has that olive accent. Echoing it in an original print on a pillow cover could connect the living room without adding another dominant color:";
+  if (/four different colored walls/.test(t) && /white room/.test(t)) return "Going from four wall colors toward white is a big shift. A printed pillow cover could let you keep one chosen accent while you test the walls:";
+  if (/inside of my bedroom door/.test(t) && /light green/.test(t)) return "A light-green accent door could be echoed in one bedroom textile. If you have a matching design, it could go on a printed pillow cover:";
+  if (/green out my living room/.test(t) && /burnt orange/.test(t)) return "Burnt orange is a clear move away from green. Try it in a removable print first; a custom pillow cover is one place for your own design:";
+  if (/nature vibes anymore/.test(t) && /pink/.test(t)) return "Pink/blue and pink/black would set different moods. Before changing the whole room, try your chosen pairing on a printed pillow cover:";
+  if (/purple or pink/.test(t) && /couch/.test(t)) return "Purple or pink walls and a new couch are two big choices. Try paint swatches beside the sofa fabric first; a pillow cover could echo the shade you pick:";
+  if (/gold/.test(t) && /holiday/.test(t) && /red/.test(t)) return "Gold already links your living room to the holiday options. Whichever palette you choose, an original print on a pillow cover could repeat it:";
+  if (/gold/.test(t) && /living room/.test(t) && /black/.test(t) && /white/.test(t)) return "Black, white and gold give your living room a clear direction. A printed pillow cover using your own design could repeat the gold without changing the larger pieces:";
+  if (/pink/.test(t) && /apartment/.test(t) && /coming together/.test(t)) return "The pink apartment is coming together. A printed pillow cover could carry a print you choose into one soft furnishing without changing the whole scheme:";
+  if (/beige/.test(t) && /warmth/.test(t)) return "For a warmer-looking beige living room, try a richer visual accent. A printed pillow cover could show your chosen pattern without changing the walls:";
+  if (/dark and moody/.test(t)) return "A dark, moody room doesn't need a bright contrast. A low-contrast print on a custom pillow cover could extend the direction you're building:";
+  if (/black nouvea/.test(t)) return "That black nouveau bedroom idea has a strong direction. A printed pillow cover could carry one detail from a design you choose while keeping the dark look:";
+  if (/pink/.test(t) && /blue/.test(t) && /room/.test(t)) return "Pink and blue could give your room a playful look. An original print in those tones on a pillow cover might help test the pairing:";
+  if (/light pink/.test(t) && /beige/.test(t) && /gold/.test(t)) return "Beige, light pink and gold form a gentle apartment palette. A print you choose on a pillow cover could repeat one of those tones:";
+  if (/paint my bedroom pink/.test(t)) return "Before painting your bedroom pink, compare the swatch with your bedding in daylight. A printed pillow cover could echo the shade you settle on:";
+  if (/\bpaint.*(?:bedroom|living room)/.test(t)) return `If you're still choosing a ${room} wall color, try swatches in day and evening light. Once you decide, a custom pillow cover could carry a related print:`;
+  if (/\b(?:trying|picking|decide|figuring)\b/.test(t) && /color/.test(t)) return `Choosing a ${room} color can take a few swatches. A printed pillow cover could carry your final palette into one soft furnishing:`;
+  if (/\bcurtains?\b/.test(t)) return "Once the curtains are chosen, a print using one of their accents could connect the soft furnishings on a custom pillow cover:";
+  if (/\b(?:sofa|couch)\b/.test(t)) return "A removable printed pillow cover could let you try a sofa color or pattern before committing to larger pieces:";
+  return `If you settle on a ${room} palette, your own print on a custom pillow cover could add one coordinated soft accent:`;
 }

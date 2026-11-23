@@ -4,6 +4,7 @@ import type { ActiveDraftProduct } from "@/lib/x-lead-account-draft";
 
 export type ActiveAccountProduct = ActiveDraftProduct & {
   variants: Array<{ price_cents: number; currency: string }>;
+  mockupTemplateIds?: string[];
 };
 export const ACCOUNT_PRODUCT_SLUGS = ["custom-pillow", "face-towel"] as const;
 
@@ -26,7 +27,11 @@ export async function getActiveAccountProducts(): Promise<ActiveAccountProduct[]
   return eligible.flatMap((product) => {
     const activeVariants = (variants ?? []).filter((variant) => variant.product_id === product.id
       && Number.isFinite(variant.price_cents) && typeof variant.currency === "string");
+    const customization = product.customization && typeof product.customization === "object" && !Array.isArray(product.customization)
+      ? product.customization as Record<string, unknown> : {};
     return activeVariants.length ? [{ slug: product.slug as ActiveDraftProduct["slug"],
-      name: product.name, variants: activeVariants.map((variant) => ({ price_cents: variant.price_cents, currency: variant.currency })) }] : [];
+      name: product.name, variants: activeVariants.map((variant) => ({ price_cents: variant.price_cents, currency: variant.currency })),
+      mockupTemplateIds: Array.isArray(customization.mockupTemplateIds)
+        ? customization.mockupTemplateIds.filter((item): item is string => typeof item === "string") : [] }] : [];
   });
 }

@@ -9,6 +9,8 @@ import { getActiveAccountProducts } from "@/lib/x-lead-account-products";
 import { X_REPLY_STATUS_LABELS } from "@/lib/x-reply";
 import { AccountV2QueueControl } from "./account-v2-queue-control";
 import { accountV2QueueEligibility } from "./account-v2-queue-eligibility";
+import { AccountDesignControl } from "./account-design-control";
+import { signAccountDesignAsset, validAccountDesignAsset } from "@/lib/x-account-design-assets";
 
 const PAGE_SIZE = 30;
 const ACCOUNT_STATES = ["potential", "watch", "insufficient", "excluded"];
@@ -37,7 +39,7 @@ export async function AccountReviewPage({ filters }: { filters: Filters }) {
   const rows = data ?? [];
   const [{ data: draftData, error: draftError }, { data: queueData, error: queueError }, { data: senderData, error: senderError }, activeProducts] = await Promise.all([
     rows.length ? supabase.from("x_lead_account_drafts")
-      .select("author_id,status,reason,evidence_coverage,selected_post_id,selected_post_created_at,selected_post_excerpt,product_slug,product_match_reason,reply_text,marketing_url,marketing_expires_at,generation_version,generated_at,review_status")
+      .select("author_id,status,reason,evidence_coverage,selected_post_id,selected_post_created_at,selected_post_excerpt,product_slug,product_match_reason,reply_text,marketing_url,marketing_expires_at,generation_version,generated_at,review_status,preview_status,design_brief,artwork_path,artwork_hash,preview_path,preview_hash,preview_template_id")
       .in("author_id", rows.map((row) => row.author_id)) : Promise.resolve({ data: [], error: null }),
     rows.length ? supabase.from("x_reply_jobs")
       .select("id,target_author_id,status,created_at").eq("queue_version", 2)
@@ -50,6 +52,11 @@ export async function AccountReviewPage({ filters }: { filters: Filters }) {
   if (queueError) throw new Error(queueError.message);
   if (senderError) throw new Error(senderError.message);
   const drafts = new Map((draftData ?? []).map((draft) => [draft.author_id, draft]));
+  const previewUrls = new Map(await Promise.all((draftData ?? []).filter((draft) => draft.preview_status === "ready"
+    && draft.product_slug && draft.artwork_path && draft.artwork_hash && draft.preview_path && draft.preview_hash && draft.preview_template_id
+    && validAccountDesignAsset({ artworkPath: draft.artwork_path, artworkHash: draft.artwork_hash,
+      previewPath: draft.preview_path, previewHash: draft.preview_hash, templateId: draft.preview_template_id }, draft.product_slug))
+    .map(async (draft) => [draft.author_id, await signAccountDesignAsset(draft.preview_path!, 15 * 60)] as const)));
   const queueByAuthor = new Map<string, { id: string; status: string }>();
   const activeQueueStatuses = new Set(["draft", "queued", "claimed", "sent", "uncertain"]);
   for (const job of queueData ?? []) {
@@ -121,11 +128,16 @@ export async function AccountReviewPage({ filters }: { filters: Filters }) {
           <div className="flex flex-wrap items-center gap-2"><strong>公开回复草稿：</strong><span>{draft?.status === "draft_ready" ? "待人工审阅" : draft?.status === "no_match" ? "暂无商品匹配" : draft?.status === "evidence_pending" ? "证据待补" : draft?.status === "blocked" ? "已阻断" : "尚未生成"}</span><span className="text-xs text-muted">{draft?.evidence_coverage === "partial" ? "已有证据覆盖不完整" : draft?.evidence_coverage === "full" ? "已存有限本人帖快照" : ""}</span></div>
           {draft ? <p className="mt-1 text-xs text-muted">{draft.reason} · {draft.generation_version} · {draft.generated_at}</p> : null}
           {draft?.selected_post_id ? <p className="mt-2 text-xs">所选本人帖：<a className="text-accent underline" href={`https://x.com/i/status/${draft.selected_post_id}`} target="_blank" rel="noreferrer">{draft.selected_post_id}</a> · {draft.selected_post_created_at}<br />{draft.selected_post_excerpt}</p> : null}
-          {draft?.product_match_reason ? <p className="mt-2 text-xs">商品用途判断：{draft.product_match_reason}；选中商品 {draft.product_slug}。原帖图片未验归属，也未生成个人预览。</p> : null}
+          {draft?.product_match_reason ? <p className="mt-2 text-xs">商品用途判断：{draft.product_match_reason}；选中商品 {draft.product_slug}。原帖图片未用于设计；{draft.preview_status === "ready" ? "本店原创平面设计已合成商品示例，待人工审图。" : "当前为纯文字建议，未附商品示例图。"}</p> : null}
           {draftFresh ? <div className="mt-2"><p className="whitespace-pre-wrap rounded border border-line bg-panel p-2">{draft.reply_text}</p><a className="mt-1 inline-block text-xs text-accent underline" href={draft.marketing_url!} target="_blank" rel="noreferrer">查看该商品归因链接</a><p className="text-xs text-muted">链接至 {draft.marketing_expires_at}；{queueJob ? `队列状态：${queueJob.status === "draft" ? "已加入，待人工批准" : X_REPLY_STATUS_LABELS[queueJob.status] ?? queueJob.status}。` : "尚未加入队列。"}</p></div> : draft?.status === "draft_ready" ? <p className="mt-2 text-xs text-muted">草稿链接已过期、商品不可售或人工已忽略；请重生成并复核。</p> : null}
+          {draft ? <AccountDesignControl authorId={row.author_id} previewStatus={draft.preview_status}
+            previewBrief={draft.design_brief} previewImageUrl={previewUrls.get(row.author_id)}
+            disabledReason={hasActiveQueueJob ? "该账号已有 V2 任务；先撤回待审任务，再更新图文草稿。"
+              : !draftFresh ? "先生成有效的近期本人帖及在售商品文字草稿，再上传本店原创设计。" : null} /> : null}
           {queueGate.ready ? <AccountV2QueueControl authorId={row.author_id} senders={senders} />
             : !hasActiveQueueJob ? <p className="mt-2 text-xs text-muted">{queueGate.reason}</p> : null}
-          <div className="mt-2 flex flex-wrap gap-2"><form action={generateAccountReplyDraft}><input type="hidden" name="authorId" value={row.author_id} /><button className="rounded-lg border border-line px-3 py-2 text-xs font-bold" type="submit">{draft ? "重生成并核实" : "生成待审草稿"}</button></form>{draft ? <form action={setAccountDraftReviewStatus}><input type="hidden" name="authorId" value={row.author_id} /><input type="hidden" name="status" value={draft.review_status === "dismissed" ? "unreviewed" : "dismissed"} /><button className="rounded-lg border border-line px-3 py-2 text-xs font-bold" type="submit">{draft.review_status === "dismissed" ? "恢复草稿待审" : "忽略草稿"}</button></form> : null}</div>
+          <div className="mt-2 flex flex-wrap gap-2"><form action={generateAccountReplyDraft}><input type="hidden" name="authorId" value={row.author_id} /><button className="rounded-lg border border-line px-3 py-2 text-xs font-bold" type="submit">{draft ? "重生成纯文字草稿" : "生成待审草稿"}</button></form>{draft ? <form action={setAccountDraftReviewStatus}><input type="hidden" name="authorId" value={row.author_id} /><input type="hidden" name="status" value={draft.review_status === "dismissed" ? "unreviewed" : "dismissed"} /><button className="rounded-lg border border-line px-3 py-2 text-xs font-bold" type="submit">{draft.review_status === "dismissed" ? "恢复草稿待审" : "忽略草稿"}</button></form> : null}</div>
+          {draft?.preview_status === "ready" ? <p className="mt-1 text-xs text-muted">重生成文字会清除当前预览，需重新上传设计；队列中的已审快照不会被改写。</p> : null}
         </div>
         <form action={setAccountReviewStatus} className="mt-3"><input type="hidden" name="authorId" value={row.author_id} /><input type="hidden" name="status" value={row.review_status === "dismissed" ? "unreviewed" : "dismissed"} /><button className="rounded-lg border border-line px-3 py-2 text-xs font-bold" type="submit">{row.review_status === "dismissed" ? "恢复待审" : "忽略此账号"}</button></form>
         <p className="mt-2 text-xs text-muted">最新来源 {row.latest_source_archive} · 分类 {row.classifier_version} · 历史批次 {Array.isArray(row.source_history) ? row.source_history.length : 0}</p>

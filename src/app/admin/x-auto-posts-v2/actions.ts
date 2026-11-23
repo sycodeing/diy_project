@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { getXApprovalBlockReason } from "@/lib/x-reply-safety";
-import { hasPriorXContact, supportsXReplyV2Worker, validateV2Snapshot, type V2Snapshot } from "@/lib/x-reply-v2";
+import { hasPriorXContact, supportsXReplyV2PreviewWorker, supportsXReplyV2Worker, validateV2Snapshot, type V2Snapshot } from "@/lib/x-reply-v2";
 
 const PATH = "/admin/x-auto-posts-v2";
 const id = /^[0-9a-f-]{36}$/i;
@@ -39,7 +39,7 @@ export async function addV2Drafts(_previous: V2ActionState = EMPTY, formData: Fo
     try {
       const [{ data: draft, error: draftError }, { data: account, error: accountError }] = await Promise.all([
         supabase.from("x_lead_account_drafts")
-          .select("author_id,status,selected_post_id,reply_text,marketing_link_id,generated_at,product_slug,product_match_reason")
+          .select("author_id,status,selected_post_id,reply_text,marketing_link_id,generated_at,product_slug,product_match_reason,preview_status,artwork_path,artwork_hash,preview_path,preview_hash,preview_template_id")
           .eq("author_id", author).maybeSingle(),
         supabase.from("x_lead_account_reviews")
           .select("author_id,x_handle").eq("author_id", author).maybeSingle(),
@@ -48,17 +48,23 @@ export async function addV2Drafts(_previous: V2ActionState = EMPTY, formData: Fo
         || !draft.selected_post_id || !draft.marketing_link_id || !draft.reply_text) throw new Error("可用账号草稿不存在。" );
       const handle = String(account.x_handle ?? "").replace(/^@/, "");
       if (!/^[A-Za-z0-9_]{1,50}$/.test(handle)) throw new Error("账号 X handle 无效。" );
-      const snapshot: V2Snapshot = { queue_version: 2, content_mode: "account_product_link",
+      const withPreview = draft.preview_status === "ready";
+      const snapshot: V2Snapshot = { queue_version: 2, content_mode: withPreview ? "account_product_preview" : "account_product_link",
         target_author_id: author, account_draft_author_id: author, marketing_link_id: draft.marketing_link_id,
         source_post_id: draft.selected_post_id, draft_generated_at: draft.generated_at,
-        target_post_url: `https://x.com/${handle}/status/${draft.selected_post_id}`, reply_text: draft.reply_text };
+        target_post_url: `https://x.com/${handle}/status/${draft.selected_post_id}`, reply_text: draft.reply_text,
+        account_artwork_path: withPreview ? draft.artwork_path : null,
+        account_artwork_hash: withPreview ? draft.artwork_hash : null,
+        account_preview_path: withPreview ? draft.preview_path : null,
+        account_preview_hash: withPreview ? draft.preview_hash : null,
+        account_preview_template_id: withPreview ? draft.preview_template_id : null };
       const reason = await validateV2Snapshot(supabase, snapshot);
       if (reason) throw new Error(reason);
       if (await hasPriorXContact(supabase, author, handle, draft.selected_post_id)) throw new Error("历史已联系或已屏蔽。" );
       const { error } = await supabase.from("x_reply_jobs").insert({ ...snapshot,
         account_id: accountId, action_type: "reply", status: "draft", preparation_status: "ready",
         scheduled_for: new Date().toISOString(), approved_at: null, approved_by: null,
-        created_by: admin.id, copy_variant: "account_context_v2",
+        created_by: admin.id, copy_variant: withPreview ? "account_preview_v1" : "account_context_v2",
         product_slug_snapshot: draft.product_slug,
         product_match_reason_snapshot: draft.product_match_reason,
       });
@@ -81,7 +87,7 @@ export async function approveV2Drafts(_previous: V2ActionState = EMPTY, formData
   for (const jobId of ids) {
     try {
       const { data: job, error: readError } = await supabase.from("x_reply_jobs")
-        .select("id,queue_version,content_mode,target_author_id,account_draft_author_id,marketing_link_id,source_post_id,draft_generated_at,target_post_url,reply_text,status,preparation_status,account_id,x_reply_accounts!inner(account_key,positioning,daily_limit,active,executor_id,network_mode,expected_egress_ip,verification_status,x_reply_account_proxies(status))")
+        .select("id,queue_version,content_mode,target_author_id,account_draft_author_id,marketing_link_id,source_post_id,draft_generated_at,target_post_url,reply_text,account_artwork_path,account_artwork_hash,account_preview_path,account_preview_hash,account_preview_template_id,status,preparation_status,account_id,x_reply_accounts!inner(account_key,positioning,daily_limit,active,executor_id,network_mode,expected_egress_ip,verification_status,x_reply_account_proxies(status))")
         .eq("id", jobId).eq("queue_version", 2).maybeSingle();
       if (readError || !job) throw new Error("V2 任务不存在。" );
       if (job.status !== "draft" || job.preparation_status !== "ready") throw new Error("任务已经处理或未就绪。" );
@@ -102,8 +108,11 @@ export async function approveV2Drafts(_previous: V2ActionState = EMPTY, formData
           currentEgressIp: worker.current_egress_ip, networkProbeStatus: worker.network_probe_status } : null,
         nowMillis: now.getTime() });
       if (block) throw new Error(block);
-      if (!worker || worker.execution_mode !== "send" || !supportsXReplyV2Worker(worker.worker_version))
-        throw new Error("Mac 发送执行器需升级到 4.11.0 并处于发送模式。" );
+      if (!worker || worker.execution_mode !== "send" || !supportsXReplyV2Worker(worker.worker_version)
+        || job.content_mode === "account_product_preview" && !supportsXReplyV2PreviewWorker(worker.worker_version))
+        throw new Error(job.content_mode === "account_product_preview"
+          ? "附图回复需要 4.12.0 及以上的 Mac 发送执行器，并启用发送模式。"
+          : "文字回复需要 4.11.0 及以上的 Mac 发送执行器，并启用发送模式。");
       const snapshotError = await validateV2Snapshot(supabase, job);
       if (snapshotError) throw new Error(snapshotError);
       if (await hasPriorXContact(supabase, job.target_author_id!, job.target_post_url!.split("/")[3], job.source_post_id!, job.id))

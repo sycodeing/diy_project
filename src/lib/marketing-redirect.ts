@@ -13,6 +13,7 @@ import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { classifyTraffic } from "@/lib/traffic-classification";
 import { getActiveAccountProducts } from "@/lib/x-lead-account-products";
 import { marketingDestinationPath } from "@/lib/marketing-link-request";
+import { validAccountDesignAsset } from "@/lib/x-account-design-assets";
 
 export async function handleMarketingRedirect(request: Request, token: string, shortAlias = false) {
   const supabase = getSupabaseServiceClient();
@@ -24,7 +25,7 @@ export async function handleMarketingRedirect(request: Request, token: string, s
   const now = new Date();
   let linkQuery = supabase
     .from("marketing_links")
-    .select("id,source_image_url,expires_at,product_slug");
+    .select("id,source_image_url,expires_at,product_slug,account_artwork_path,account_artwork_hash,account_preview_path,account_preview_hash,account_preview_template_id");
   linkQuery = shortAlias
     ? linkQuery.eq("short_token_hash", hashMarketingToken(token))
     : linkQuery.eq("token_hash", hashMarketingToken(token));
@@ -38,6 +39,13 @@ export async function handleMarketingRedirect(request: Request, token: string, s
     new Set(available.map((product) => product.slug)));
   if (link.product_slug && destinationPath.startsWith("/products"))
     return NextResponse.redirect(new URL(destinationPath, getAppUrl()));
+  if (link.account_artwork_path) {
+    const asset = { artworkPath: link.account_artwork_path, artworkHash: link.account_artwork_hash ?? "",
+      previewPath: link.account_preview_path ?? "", previewHash: link.account_preview_hash ?? "",
+      templateId: link.account_preview_template_id ?? "" };
+    if (!link.product_slug || !validAccountDesignAsset(asset, link.product_slug) || link.source_image_url)
+      return NextResponse.redirect(new URL("/products?unavailable=1", getAppUrl()));
+  }
 
   const traffic = classifyTraffic(request.headers, new URL(request.url).origin);
   const isInternal = /(?:^|;\s*)diy_internal_test=1(?:;|$)/.test(request.headers.get("cookie") ?? "");
@@ -51,6 +59,8 @@ export async function handleMarketingRedirect(request: Request, token: string, s
     p_is_internal: isInternal,
   });
   if (visitError) console.error("Marketing redirect visit could not be recorded", { error: visitError.message });
+  if (visitError && link.account_artwork_path)
+    return NextResponse.redirect(new URL("/products?unavailable=1", getAppUrl()));
   const destination = new URL(destinationPath, getAppUrl());
   if (link.source_image_url) destination.searchParams.set("image", link.source_image_url);
   if (!visitError) destination.searchParams.set(MARKETING_VISIT_PARAM, visitId);
