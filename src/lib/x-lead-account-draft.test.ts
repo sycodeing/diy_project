@@ -23,7 +23,8 @@ test("a non-buying sofa style project can yield a conditional review draft", () 
   const copy = createAccountReply(result, "https://example.com/g/abc1234567", false);
   assert.match(copy, /sofa color or pattern/);
   assert.match(copy, /printed pillow cover/);
-  assert.doesNotMatch(copy, /preview|already made|\$/i);
+  assert.match(copy, /Make it yours with your own image.*Preview & order/);
+  assert.doesNotMatch(copy, /already made|exclusive|one.of.a.kind|\$/i);
 });
 
 test("an owned room palette or theme can suggest a cover without a buying or pillow request", () => {
@@ -40,7 +41,8 @@ test("an owned room palette or theme can suggest a cover without a buying or pil
     assert.match(result.productMatchReason ?? "", /条件式软装用途建议/);
     const reply = createAccountReply(result, "https://example.com/g/abc1234567", false);
     assert.match(reply, expectedAngles[index]);
-    assert.doesNotMatch(reply, /already made|preview|\$/i);
+    assert.match(reply, /your own image.*Preview & order/);
+    assert.doesNotMatch(reply, /already made|exclusive|one.of.a.kind|\$/i);
     assert.ok(reply.length <= 280);
   }
 });
@@ -89,7 +91,7 @@ test("specific image placement outranks newer generic sofa styling", () => {
   ));
   assert.equal(result.selectedPost?.post_id, "222222");
   assert.equal(result.matchStrength, 2);
-  assert.match(createAccountReply(result, "https://example.com/g/abc1234567", false), /photo-and-pillow idea in your reading corner.*image you have rights to.*pillow cover/);
+  assert.match(createAccountReply(result, "https://example.com/g/abc1234567", false), /photo-and-pillow idea in your reading corner.*your own image.*pillow cover/);
 });
 
 test("wall art, accidental word co-occurrence, and third-party or stale posts do not force a pillow", () => {
@@ -217,7 +219,7 @@ test("25% statement is based on the selected product variants, without product p
 });
 
 test("all supported scene replies fit X with a production-length short link and either offer state", () => {
-  const url = "https://www.pattayamade.com/g/abcdefghij";
+  const url = "https://www.thebestdiyshop.com/g/abcdefghij";
   const scenes = [
     select(account(post("111111", "I made a photo collage of my dog for our reading corner."))),
     select(account(post("222222", "I'm arranging my sofa cushions with a blue pattern."))),
@@ -228,7 +230,9 @@ test("all supported scene replies fit X with a production-length short link and 
     for (const offer of [false, true]) {
       const reply = createAccountReply(scene, url, offer);
       assert.ok(reply.length <= 280, `${scene.productSlug} reply length ${reply.length}`);
-      assert.equal(reply.includes("25% off"), offer);
+      if (!offer) assert.doesNotMatch(reply, /25% off/);
+      assert.match(reply, /Preview & order: https:\/\/www\.thebestdiyshop\.com\/g\/abcdefghij/);
+      assert.doesNotMatch(reply, /exclusive|one.of.a.kind|already made for you|\$/i);
     }
   }
   assert.match(createAccountReply(scenes[2], url, false), /custom face towel/);
@@ -250,7 +254,8 @@ test("original sample copy states the reviewed design direction without claiming
       { preview: { visibleMotifs: scene.visibleMotifs, designReason: scene.designReason } });
     assert.match(reply, scene.word);
     assert.match(reply, new RegExp(scene.designReason));
-    assert.match(reply, /Original custom-printed pillow cover sample/);
+    assert.match(reply, /Custom pillow cover idea/);
+    assert.match(reply, /Make it yours: use this print or (upload )?your own/);
     assert.ok(reply.length <= 280, `${index}: ${reply.length}`);
     assert.doesNotMatch(reply, /your photo|your design|already made for you|\$/i);
   }

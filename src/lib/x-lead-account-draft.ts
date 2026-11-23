@@ -1,4 +1,4 @@
-export const ACCOUNT_DRAFT_VERSION = "account-draft-v1.3";
+export const ACCOUNT_DRAFT_VERSION = "account-draft-v1.4";
 export type DraftStatus = "draft_ready" | "no_match" | "evidence_pending" | "blocked";
 export type OwnPost = { post_id: string; created_at: string; text: string; source: string; direct_parent_status?: string; is_quote?: boolean };
 export type AccountDraftInput = {
@@ -246,16 +246,24 @@ export function createAccountReply(selection: DraftSelection, marketingUrl: stri
   if (selection.status !== "draft_ready" || !selection.productSlug || !selection.selectedPost || !selection.conversationAngle)
     throw new Error("No reviewable draft");
   const original = selection.selectedPost.text;
-  const advice = options.preview ? accountPreviewResponse(original, selection) : accountAdvice(original, selection);
+  const advice = (options.preview ? accountPreviewResponse(original, selection) : accountAdvice(original, selection))
+    .replace(/:\s*$/, ".");
   const product = selection.productSlug === "custom-pillow" ? "custom-printed pillow cover" : "customizable face towel";
   const preview = options.preview;
   if (preview && !validAccountPreviewBrief(preview)) throw new Error("Preview brief is invalid");
+  const previewProduct = selection.productSlug === "custom-pillow" ? "pillow cover" : "face towel";
   const suggestion = preview
-    ? `Original ${product} sample: ${preview.designReason}. Preview/edit: ${marketingUrl}`
-    : marketingUrl;
+    ? `Custom ${previewProduct} idea: ${preview.designReason}. Make it yours: use this print or upload your own. Preview & order: ${marketingUrl}`
+    : `Make it yours with your own image on a ${product}. Preview & order: ${marketingUrl}`;
   const offer = firstOrder25 ? " First orders: 25% off." : "";
   let text = `${advice} ${suggestion}${offer}`;
   if (text.length > 280 && offer) text = `${advice} ${suggestion}`;
+  if (text.length > 280) {
+    const shortAdvice = advice.split(/(?<=[.!?])\s+/)[0];
+    text = `${shortAdvice} ${suggestion}`;
+  }
+  if (text.length > 280 && preview)
+    text = `${advice.split(/(?<=[.!?])\s+/)[0]} Custom ${previewProduct} idea: ${preview.designReason}. Make it yours: use this print or your own image. Preview & order: ${marketingUrl}`;
   if (text.length > 280) throw new Error("Public reply draft exceeds 280 characters");
   return text;
 }
