@@ -234,7 +234,7 @@ test("all supported scene replies fit X with a production-length short link and 
   assert.match(createAccountReply(scenes[2], url, false), /custom face towel/);
 });
 
-test("original sample copy names the actual reviewed motif without claiming the prospect supplied artwork", () => {
+test("original sample copy states the reviewed design direction without claiming prospect artwork", () => {
   const scenes = [
     { text: "Decorating my apartment as a gingerbread house &amp; I’m so excited 😊",
       visibleMotifs: "iced houses and candy canes", designReason: "echoing your gingerbread theme", word: /gingerbread-house/ },
@@ -249,7 +249,7 @@ test("original sample copy names the actual reviewed motif without claiming the 
     const reply = createAccountReply(selection, "https://www.thebestdiyshop.com/g/abcdefghij", true,
       { preview: { visibleMotifs: scene.visibleMotifs, designReason: scene.designReason } });
     assert.match(reply, scene.word);
-    assert.match(reply, new RegExp(scene.visibleMotifs));
+    assert.match(reply, new RegExp(scene.designReason));
     assert.match(reply, /Original custom-printed pillow cover sample/);
     assert.ok(reply.length <= 280, `${index}: ${reply.length}`);
     assert.doesNotMatch(reply, /your photo|your design|already made for you|\$/i);

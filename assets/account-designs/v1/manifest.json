@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "designs": [
+    {
+      "id": "gingerbread-v1",
+      "version": 1,
+      "source": "brand_generated",
+      "generator": "image_gen",
+      "file": "gingerbread.png",
+      "sha256": "cc3556c35cc9f788f9eb3eb935860af4e9a4a2cce96a5db4bb6c9371a484eaaf",
+      "allowedProductSlugs": ["custom-pillow"],
+      "visibleMotifs": "iced houses and candy canes",
+      "designReason": "echoing a cozy gingerbread theme",
+      "matchTags": ["gingerbread_house"]
+    },
+    {
+      "id": "neutral-olive-v1",
+      "version": 1,
+      "source": "brand_generated",
+      "generator": "image_gen",
+      "file": "neutral-olive.png",
+      "sha256": "98afd812f6d8fe9101fc82ba38e4d5c1c8bc93e1f04e1e9fae0285901c182bba",
+      "allowedProductSlugs": ["custom-pillow"],
+      "visibleMotifs": "olive foliage and pale berries",
+      "designReason": "for a calm olive and evergreen look",
+      "matchTags": ["neutral_olive"]
+    },
+    {
+      "id": "winter-cabin-v1",
+      "version": 1,
+      "source": "brand_generated",
+      "generator": "image_gen",
+      "file": "winter-cabin.png",
+      "sha256": "16d6d444f05a67202f31c8e152307a8a365224b05d235ec8eb2e9d481a0ae62c",
+      "allowedProductSlugs": ["custom-pillow"],
+      "visibleMotifs": "snowy cabins, pines and woodland animals",
+      "designReason": "exploring a fuller winter direction",
+      "matchTags": ["cabin_core_winter"]
+    }
+  ]
+}

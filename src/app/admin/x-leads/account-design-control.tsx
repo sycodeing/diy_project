@@ -36,8 +36,8 @@ export function AccountDesignControl({ authorId, previewImageUrl, previewStatus,
   const disabled = pending || Boolean(disabledReason);
 
   return <form action={action} className="mt-3 rounded-lg border border-line bg-panel p-3 text-sm">
-    <h3 className="font-bold">为此账号制作原创商品预览</h3>
-    <p className="mt-1 text-xs text-muted">本店原创示例，原帖图片未作印花。上传平面图后使用当前商品的真实模板渲染；保存后仍需单独加入 V2 待审并人工批准。</p>
+    <h3 className="font-bold">原创商品预览</h3>
+    <p className="mt-1 text-xs text-muted">默认可自动选择本店原创图并用真实商品模板合成；原帖图片不会作印花。已保存预览仍需单独加入 V2 待审并人工批准。</p>
     {previewStatus ? <p className="mt-2 text-xs">预览状态：{STATUS_LABEL[previewStatus] ?? previewStatus}</p> : null}
     {previewBrief ? <p className="mt-1 break-words text-xs text-muted">已保存的设计说明：{describeBrief(previewBrief)}</p> : null}
     {previewImageUrl ? <div className="mt-2">
@@ -49,7 +49,7 @@ export function AccountDesignControl({ authorId, previewImageUrl, previewStatus,
     {disabledReason ? <p className="mt-2 text-xs text-amber-800">当前不能更换预览：{disabledReason}</p> : null}
     <input type="hidden" name="authorId" value={authorId} />
     <input type="hidden" name="designSource" value="brand_created" />
-
+    <details className="mt-3 rounded border border-line p-2"><summary className="cursor-pointer text-xs font-bold">高级操作：手动替换本店原创设计</summary>
     <label className="mt-3 block font-bold" htmlFor={`${id}-artwork`}>本店原创平面设计图</label>
     <input id={`${id}-artwork`} name="artwork" type="file" accept="image/png,image/webp,.png,.webp" required
       disabled={disabled} onChange={(event) => {
@@ -75,6 +75,7 @@ export function AccountDesignControl({ authorId, previewImageUrl, previewStatus,
       className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-bold text-accent-ink disabled:opacity-50">
       {pending ? "生成中…" : "保存原创设计与商品预览"}
     </button>
+    </details>
     {state.message ? <p role={state.ok ? "status" : "alert"} aria-live="polite"
       className={`mt-2 text-xs ${state.ok ? "text-emerald-700" : "text-red-700"}`}>
       {state.message}

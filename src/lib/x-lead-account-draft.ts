@@ -1,4 +1,4 @@
-export const ACCOUNT_DRAFT_VERSION = "account-draft-v1.2";
+export const ACCOUNT_DRAFT_VERSION = "account-draft-v1.3";
 export type DraftStatus = "draft_ready" | "no_match" | "evidence_pending" | "blocked";
 export type OwnPost = { post_id: string; created_at: string; text: string; source: string; direct_parent_status?: string; is_quote?: boolean };
 export type AccountDraftInput = {
@@ -251,7 +251,7 @@ export function createAccountReply(selection: DraftSelection, marketingUrl: stri
   const preview = options.preview;
   if (preview && !validAccountPreviewBrief(preview)) throw new Error("Preview brief is invalid");
   const suggestion = preview
-    ? `Original ${product} sample: ${preview.visibleMotifs}, ${preview.designReason}. Preview/edit: ${marketingUrl}`
+    ? `Original ${product} sample: ${preview.designReason}. Preview/edit: ${marketingUrl}`
     : marketingUrl;
   const offer = firstOrder25 ? " First orders: 25% off." : "";
   let text = `${advice} ${suggestion}${offer}`;
@@ -265,7 +265,7 @@ function accountPreviewResponse(text: string, selection: DraftSelection): string
   if (/gingerbread house/.test(t)) return "A gingerbread-house theme for the apartment sounds playful.";
   if (/neutral/.test(t) && /olive/.test(t)) return "Your neutral tree's olive accent could carry into a smaller room detail.";
   if (/cabin\s*core/.test(t)) return "You pictured cabin-core with a little winter; this sample leans snowy.";
-  return accountAdvice(text, selection).replace(/:\s*$/, ".");
+  return accountAdvice(text, selection).split(/(?<=[.!?])\s+/)[0].replace(/:\s*$/, ".");
 }
 
 function accountAdvice(text: string, selection: DraftSelection): string {

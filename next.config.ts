@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  outputFileTracingIncludes: {
+    "/admin/x-leads": ["./assets/account-designs/v1/**/*"],
+    "/admin/x-auto-posts-v2": ["./assets/account-designs/v1/**/*"],
+  },
   allowedDevOrigins: ["127.0.0.1"],
   images: {
     remotePatterns: [

@@ -5,6 +5,7 @@ import { requireAdmin } from "@/lib/auth";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { getXApprovalBlockReason } from "@/lib/x-reply-safety";
 import { hasPriorXContact, supportsXReplyV2PreviewWorker, supportsXReplyV2Worker, validateV2Snapshot, type V2Snapshot } from "@/lib/x-reply-v2";
+import { ensurePreparedAccountDraft } from "@/app/admin/x-leads/account-draft-actions";
 
 const PATH = "/admin/x-auto-posts-v2";
 const id = /^[0-9a-f-]{36}$/i;
@@ -28,6 +29,7 @@ export async function addV2Drafts(_previous: V2ActionState = EMPTY, formData: Fo
   const admin = await requireAdmin(PATH);
   const ids = selected(formData, "authorId", authorId);
   const accountId = String(formData.get("accountId") ?? "");
+  const preparationMode = formData.get("preparationMode") === "text_only" ? "text_only" : "auto_preview";
   if (!id.test(accountId)) return { ok: 0, failed: [{ id: "account", reason: "请选择发送账号。" }] };
   if (!ids.length) return { ok: 0, failed: [{ id: "selection", reason: "请先选择账号草稿。" }] };
   const supabase = db();
@@ -37,6 +39,12 @@ export async function addV2Drafts(_previous: V2ActionState = EMPTY, formData: Fo
   if (senderError || !sender?.active) return { ok: 0, failed: [{ id: "account", reason: "发送账号已停用或不可读。" }] };
   for (const author of ids) {
     try {
+      const prepared = await ensurePreparedAccountDraft(author, preparationMode);
+      if (preparationMode === "auto_preview" && prepared.status !== "ready")
+        throw new Error(prepared.status === "no_design_match"
+          ? `没有可根据本人原文安全生成的设计：${prepared.reason}；如需纯文字，请明确选择文字模式。`
+          : prepared.reason);
+      if (preparationMode === "text_only" && prepared.status !== "text_only") throw new Error(prepared.reason);
       const [{ data: draft, error: draftError }, { data: account, error: accountError }] = await Promise.all([
         supabase.from("x_lead_account_drafts")
           .select("author_id,status,selected_post_id,reply_text,marketing_link_id,generated_at,product_slug,product_match_reason,preview_status,artwork_path,artwork_hash,preview_path,preview_hash,preview_template_id")

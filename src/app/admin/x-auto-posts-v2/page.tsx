@@ -11,6 +11,7 @@ import { withdrawV2Draft } from "./actions";
 import { V2BatchControls } from "./v2-controls";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 export default async function XAutoV2Page({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
   await requireAdmin("/admin/x-auto-posts-v2");
@@ -36,13 +37,12 @@ export default async function XAutoV2Page({ searchParams }: { searchParams: Prom
     .map((job) => job.target_author_id));
   const senderList = (accounts ?? []).map((account) => ({ id: account.id, label: `${account.display_name} (${account.account_key})` }));
   const workerByExecutor = new Map((workers ?? []).map((worker) => [worker.executor_id, worker]));
-  const candidates = (drafts ?? []).filter((draft) => !activeAuthors.has(draft.author_id)
-    && Date.parse(String(draft.marketing_expires_at ?? "")) > nowMillis + 24 * 60 * 60_000)
+  const candidates = (drafts ?? []).filter((draft) => !activeAuthors.has(draft.author_id))
     .flatMap((draft) => {
       const review = Array.isArray(draft.x_lead_account_reviews) ? draft.x_lead_account_reviews[0] : draft.x_lead_account_reviews;
       if (!review || review.review_status === "dismissed" || review.account_status === "excluded" || review.entry_status === "hold") return [];
       return [{ id: draft.author_id, label: `@${review.x_handle ?? draft.author_id}`,
-        detail: `${draft.product_slug} · 本人帖 ${draft.selected_post_id} · 需服务端复核` }];
+        detail: `${draft.product_slug} · 本人帖 ${draft.selected_post_id} · 准备时重核证据和链接` }];
     });
   const authorIds = [...new Set(allJobs.flatMap((job) => job.target_author_id ? [job.target_author_id] : []))];
   const { data: reviews } = authorIds.length ? await supabase.from("x_lead_account_reviews")

@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 import templates from "@/lib/mockup-templates.json";
+import fingerprints from "@/lib/account-template-fingerprints.json";
 import { getAppUrl } from "@/lib/env";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import type { ActiveAccountProduct } from "@/lib/x-lead-account-products";
+import { resolveAccountDesignCache } from "@/lib/x-account-design-cache";
 
 export const ACCOUNT_DESIGN_BUCKET = "account-design-previews";
 export const MAX_ACCOUNT_ARTWORK_BYTES = 4 * 1024 * 1024;
+export const ACCOUNT_RENDER_REVISION = "template-render-20261123-v1";
 export type AccountDesignAsset = {
   artworkPath: string;
   artworkHash: string;
@@ -18,6 +21,12 @@ export type AccountDesignAsset = {
 const HASH = /^[a-f0-9]{64}$/;
 const PATH = /^(?:artwork|preview)\/[A-Za-z0-9._/-]+$/;
 const TEMPLATE = new Map(templates.map((item) => [item.id, item.family]));
+const inflight = new Map<string, Promise<AccountDesignAsset>>();
+export function accountRenderRevision(templateId: string) {
+  const fingerprint = (fingerprints as Record<string, string>)[templateId];
+  if (!fingerprint || !HASH.test(fingerprint)) throw new Error("Product template fingerprint is missing");
+  return `${ACCOUNT_RENDER_REVISION}-${fingerprint.slice(0, 20)}`;
+}
 
 export function validAccountDesignAsset(asset: AccountDesignAsset, productSlug: string) {
   const family = productSlug === "custom-pillow" ? "pillow" : productSlug === "face-towel" ? "towel" : null;
@@ -53,7 +62,36 @@ async function ensureStored(path: string, bytes: Uint8Array, mime: "image/png" |
 export async function createAccountDesignAsset(file: File, product: ActiveAccountProduct): Promise<AccountDesignAsset> {
   if (!file || file.size < 1 || file.size > MAX_ACCOUNT_ARTWORK_BYTES)
     throw new Error("Original PNG/WebP artwork must be at most 4 MB");
-  const bytes = new Uint8Array(await file.arrayBuffer());
+  return createAccountDesignAssetFromBytes(new Uint8Array(await file.arrayBuffer()), product);
+}
+
+async function validCachedPreview(bytes: Uint8Array) {
+  if (!bytes.length || bytes.length > 4 * 1024 * 1024 || new TextDecoder().decode(bytes.slice(0, 4)) !== "RIFF") return false;
+  const metadata = await sharp(bytes, { failOn: "error", limitInputPixels: 16_000_000 }).metadata().catch(() => null);
+  return metadata?.format === "webp" && Boolean(metadata.width && metadata.height && metadata.width >= 500 && metadata.height >= 500);
+}
+
+async function cachedPreview(artworkHash: string, templateId: string, revision: string) {
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) throw new Error("Asset storage is unavailable");
+  const bucket = supabase.storage.from(ACCOUNT_DESIGN_BUCKET);
+  const prefix = `cache/${artworkHash}/${templateId}`;
+  const { data, error } = await bucket.list(prefix, { limit: 20, search: `${revision}-` });
+  if (error) throw new Error(`Design cache lookup failed: ${error.message}`);
+  for (const item of data ?? []) {
+    const match = new RegExp(`^${revision}-([a-f0-9]{64})\\.webp$`).exec(item.name);
+    if (!match) continue;
+    const { data: file } = await bucket.download(`${prefix}/${item.name}`);
+    if (!file) continue;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (sha(bytes) !== match[1] || !await validCachedPreview(bytes)) continue;
+    return { bytes, hash: match[1] };
+  }
+  return null;
+}
+
+export async function createAccountDesignAssetFromBytes(bytes: Uint8Array, product: ActiveAccountProduct): Promise<AccountDesignAsset> {
+  if (!bytes.length || bytes.length > 10 * 1024 * 1024) throw new Error("Original artwork exceeds storage limit");
   const meta = await sharp(bytes, { failOn: "error", limitInputPixels: 16_000_000 }).metadata().catch(() => null);
   if (!meta || !["png", "webp"].includes(meta.format ?? "") || !meta.width || !meta.height
     || meta.width < 600 || meta.height < 600 || meta.width > 4096 || meta.height > 4096
@@ -68,25 +106,42 @@ export async function createAccountDesignAsset(file: File, product: ActiveAccoun
   if (png.length > 10 * 1024 * 1024) throw new Error("Normalized artwork exceeds storage limit");
   const artworkHash = sha(png);
   const artworkPath = `artwork/${artworkHash}.png`;
+  const revision = accountRenderRevision(templateId);
+  const key = `${artworkHash}:${templateId}:${revision}`;
+  return resolveAccountDesignCache(inflight, key,
+    async () => {
+      const cached = await cachedPreview(artworkHash, templateId, revision);
+      if (!cached) return null;
+      const previewPath = `preview/${artworkHash}/${templateId}-${cached.hash}.webp`;
+      const asset = { artworkPath, artworkHash, previewPath, previewHash: cached.hash, templateId };
+      if (!validAccountDesignAsset(asset, product.slug)) throw new Error("Cached design identity is invalid");
+      await ensureStored(artworkPath, png, "image/png");
+      await ensureStored(previewPath, cached.bytes, "image/webp");
+      return asset;
+    },
+    () => materializeAccountDesignAsset(png, artworkHash, artworkPath, templateId, revision, product));
+}
+
+async function materializeAccountDesignAsset(png: Uint8Array, artworkHash: string, artworkPath: string,
+  templateId: string, revision: string, product: ActiveAccountProduct): Promise<AccountDesignAsset> {
   const form = new FormData();
   form.set("template_id", templateId);
-  form.set("artwork", new File([png], "account-artwork.png", { type: "image/png" }));
+  const upload = new Uint8Array(png.byteLength);
+  upload.set(png);
+  form.set("artwork", new File([upload], "account-artwork.png", { type: "image/png" }));
   const response = await fetch(`${getAppUrl()}/api/mockup`, { method: "POST", body: form,
     cache: "no-store", signal: AbortSignal.timeout(90_000) });
   if (!response.ok || !String(response.headers.get("content-type") ?? "").startsWith("image/webp"))
     throw new Error("Product-template preview could not be rendered");
   const preview = new Uint8Array(await response.arrayBuffer());
-  if (!preview.length || preview.length > 4 * 1024 * 1024
-    || new TextDecoder().decode(preview.slice(0, 4)) !== "RIFF") throw new Error("Rendered preview is invalid");
-  const rendered = await sharp(preview, { failOn: "error", limitInputPixels: 16_000_000 }).metadata().catch(() => null);
-  if (rendered?.format !== "webp" || !rendered.width || !rendered.height
-    || rendered.width < 500 || rendered.height < 500) throw new Error("Rendered preview is not a valid WebP image");
+  if (!await validCachedPreview(preview)) throw new Error("Rendered preview is invalid");
   const previewHash = sha(preview);
   const previewPath = `preview/${artworkHash}/${templateId}-${previewHash}.webp`;
   const asset = { artworkPath, artworkHash, previewPath, previewHash, templateId };
   if (!validAccountDesignAsset(asset, product.slug)) throw new Error("Preview asset identity is invalid");
   await ensureStored(artworkPath, png, "image/png");
   await ensureStored(previewPath, preview, "image/webp");
+  await ensureStored(`cache/${artworkHash}/${templateId}/${revision}-${previewHash}.webp`, preview, "image/webp");
   return asset;
 }
 

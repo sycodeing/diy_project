@@ -1,5 +1,6 @@
 "use server";
 
+import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
 import { getActiveFirstOrderPromotion } from "@/lib/first-order-promotion";
@@ -10,7 +11,12 @@ import { ACCOUNT_DRAFT_VERSION, createAccountReply, selectAccountDraft, validAcc
 import { ensureAccountProductLink } from "@/lib/x-lead-account-marketing";
 import { getActiveAccountProducts } from "@/lib/x-lead-account-products";
 import { createAccountDesignAsset } from "@/lib/x-account-design-assets";
+import { createAccountDesignAssetFromBytes, accountRenderRevision, pickAccountTemplate } from "@/lib/x-account-design-assets";
+import { selectAccountDesign } from "@/lib/x-account-design-selector";
+import { reuseManualAccountPreview } from "@/lib/x-account-manual-preview";
+import { loadAccountArtwork } from "@/lib/x-account-design-recipes";
 import { contactedSnapshot } from "@/lib/x-account-contacted-snapshot";
+import { validateV2Snapshot, type V2Snapshot } from "@/lib/x-reply-v2";
 
 type DraftWrite = {
   status: DraftSelection["status"];
@@ -50,39 +56,38 @@ function writeFromSelection(selection: DraftSelection): DraftWrite {
     preview_path: null, preview_hash: null, preview_template_id: null, preview_status: "text_only" };
 }
 
-async function saveDraft(authorId: string, row: DraftWrite) {
+async function saveDraft(authorId: string, row: DraftWrite, expectedGeneratedAt: string | null) {
   const supabase = getSupabaseServiceClient();
   if (!supabase) throw new Error("Supabase is not configured");
-  const { data: existing, error: lookupError } = await supabase.from("x_lead_account_drafts")
-    .select("author_id").eq("author_id", authorId).maybeSingle();
-  if (lookupError) throw new Error(lookupError.message);
-  const result = existing
-    ? await supabase.from("x_lead_account_drafts").update(row).eq("author_id", authorId)
-    : await supabase.from("x_lead_account_drafts").insert({ author_id: authorId, ...row });
-  if (result.error) {
-    // A concurrent first generation may have inserted the row. The retry still never touches review_*.
-    if (!existing && result.error.code === "23505") {
-      const retry = await supabase.from("x_lead_account_drafts").update(row).eq("author_id", authorId);
-      if (!retry.error) return;
-    }
-    throw new Error(result.error.message);
+  if (expectedGeneratedAt === null) {
+    const { error } = await supabase.from("x_lead_account_drafts").insert({ author_id: authorId, ...row });
+    if (error) throw new Error(error.code === "23505" ? "草稿在准备期间已由其他操作生成，请刷新。" : error.message);
+    return;
   }
+  const { data, error } = await supabase.from("x_lead_account_drafts")
+    .update(row).eq("author_id", authorId).eq("generated_at", expectedGeneratedAt)
+    .eq("review_status", "unreviewed").select("author_id").maybeSingle();
+  if (error || !data) throw new Error(error?.message ?? "草稿在准备期间已变化，请刷新。");
 }
 
-export async function generateAccountReplyDraft(formData: FormData) {
+export async function ensurePreparedAccountDraft(authorId: string, mode: "auto_preview" | "text_only" = "auto_preview", force = false): Promise<{ status: "ready" | "text_only" | "no_design_match" | "blocked"; reason: string }> {
   await requireAdmin("/admin/x-leads?mode=account_review");
-  const authorId = String(formData.get("authorId") ?? "");
   if (!/^\d{5,30}$/.test(authorId)) throw new Error("Invalid account ID");
   const supabase = getSupabaseServiceClient();
   if (!supabase) throw new Error("Supabase is not configured");
-  try {
-    const [{ data: account, error }, products, snapshot] = await Promise.all([
+  const [{ data: account, error }, { data: previous, error: previousError }, { data: jobs, error: jobsError }, products, snapshot] = await Promise.all([
       supabase.from("x_lead_account_reviews")
         .select("author_id,x_handle,account_status,entry_status,review_status,account_evidence,entry_evidence")
         .eq("author_id", authorId).maybeSingle(),
+      supabase.from("x_lead_account_drafts")
+        .select("author_id,status,review_status,selected_post_id,product_slug,reply_text,marketing_link_id,marketing_url,marketing_expires_at,generated_at,generation_version,preview_status,design_source,design_brief,artwork_path,artwork_hash,preview_path,preview_hash,preview_template_id")
+        .eq("author_id", authorId).maybeSingle(),
+      supabase.from("x_reply_jobs").select("id").eq("target_author_id", authorId)
+        .in("status", ["draft", "queued", "claimed", "sent", "uncertain"]).limit(1),
       getActiveAccountProducts(), contactedSnapshot(),
     ]);
-    if (error || !account) throw new Error(error?.message ?? "Account review is missing");
+    if (error || previousError || jobsError || !account) throw new Error(error?.message ?? previousError?.message ?? jobsError?.message ?? "Account review is missing");
+    if (jobs?.length) throw new Error("该账号已有待审或执行任务，不能改写其草稿快照。");
     const evidence = account.account_evidence && typeof account.account_evidence === "object" && !Array.isArray(account.account_evidence)
       ? account.account_evidence as Record<string, unknown> : {};
     const entry = account.entry_evidence && typeof account.entry_evidence === "object" && !Array.isArray(account.entry_evidence)
@@ -95,28 +100,96 @@ export async function generateAccountReplyDraft(formData: FormData) {
     if (snapshot.authors.has(authorId) || (handle && snapshot.handles.has(handle))
       || (selectedPostId && snapshot.posts.has(selectedPostId)) || anyOwnContacted) {
       await saveDraft(authorId, writeFromSelection({ ...selection, status: "blocked", reason: "账号或所选帖子已有联系记录",
-        selectedPost: null, productSlug: null, productMatchReason: null, conversationAngle: null, matchStrength: 0 }));
-      return revalidatePath("/admin/x-leads");
+        selectedPost: null, productSlug: null, productMatchReason: null, conversationAngle: null, matchStrength: 0 }), previous?.generated_at ?? null);
+      revalidatePath("/admin/x-leads");
+      return { status: "blocked", reason: "账号或所选帖子已有联系记录" };
     }
     const row = writeFromSelection(selection);
     if (selection.status === "draft_ready" && selection.productSlug && selection.selectedPost) {
       const product = products.find((item) => item.slug === selection.productSlug)!;
       const promotion = await getActiveFirstOrderPromotion();
       const offer = canAdvertiseFirstOrder25(promotion, product.variants);
-      const link = await ensureAccountProductLink(authorId, selection.selectedPost.post_id, product.slug);
-      row.reply_text = createAccountReply(selection, link.url, offer);
+      let asset;
+      let design;
+      if (mode === "auto_preview") {
+        let priorBrief: Record<string, unknown> = {};
+        try {
+          const parsed: unknown = JSON.parse(String(previous?.design_brief ?? ""));
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) priorBrief = parsed as Record<string, unknown>;
+        } catch { /* stale brief */ }
+        const templateId = pickAccountTemplate(product);
+        const reusablePreview = async () => {
+          if (!previous || previous.preview_status !== "ready" || previous.selected_post_id !== selection.selectedPost?.post_id
+            || previous.product_slug !== product.slug || previous.preview_template_id !== templateId
+            || !Number.isFinite(Date.parse(String(previous.marketing_expires_at ?? "")))
+            || Date.parse(String(previous.marketing_expires_at ?? "")) <= Date.now() + 24 * 60 * 60_000) return false;
+          const handleForJob = String(account.x_handle ?? "").replace(/^@/, "");
+          const check: V2Snapshot = { queue_version: 2, content_mode: "account_product_preview",
+            target_author_id: authorId, account_draft_author_id: authorId, marketing_link_id: previous.marketing_link_id,
+            source_post_id: previous.selected_post_id, draft_generated_at: previous.generated_at,
+            target_post_url: `https://x.com/${handleForJob}/status/${previous.selected_post_id}`,
+            reply_text: previous.reply_text, account_artwork_path: previous.artwork_path,
+            account_artwork_hash: previous.artwork_hash, account_preview_path: previous.preview_path,
+            account_preview_hash: previous.preview_hash, account_preview_template_id: previous.preview_template_id };
+          return !await validateV2Snapshot(supabase, check);
+        };
+        // A reviewed brand-owned manual upload stays attached during ordinary queue preparation.
+        // The explicit regenerate action passes force=true and replaces it with an automatic design.
+        if (await reuseManualAccountPreview(previous?.design_source, priorBrief, force, reusablePreview))
+          return { status: "ready", reason: "已复用当前有效人工设计图文草稿" };
+        design = selectAccountDesign(selection);
+        if (design.kind !== "no_design_match") {
+          const bytes = await loadAccountArtwork(design, product.slug);
+          const artworkHash = createHash("sha256").update(bytes).digest("hex");
+          if (!force && previous?.preview_status === "ready" && previous.selected_post_id === selection.selectedPost.post_id
+            && previous.product_slug === product.slug && previous.generation_version === ACCOUNT_DRAFT_VERSION
+            && previous.artwork_hash === artworkHash && previous.preview_template_id === templateId
+            && priorBrief.designId === design.designId
+            && priorBrief.renderRevision === (templateId ? accountRenderRevision(templateId) : null)
+            && await reusablePreview()) return { status: "ready", reason: "已复用当前有效图文草稿" };
+          asset = await createAccountDesignAssetFromBytes(bytes, product);
+        }
+      }
+      const link = await ensureAccountProductLink(authorId, selection.selectedPost.post_id, product.slug, asset);
+      row.reply_text = createAccountReply(selection, link.url, offer,
+        design?.kind !== "no_design_match" && design ? { preview: {
+          visibleMotifs: design.visibleMotifs, designReason: design.designReason } } : {});
       row.marketing_link_id = link.id;
       row.marketing_url = link.url;
       row.marketing_expires_at = link.expiresAt;
+      if (asset && design && design.kind !== "no_design_match") Object.assign(row, {
+        design_source: "brand_created", design_brief: JSON.stringify({ visibleMotifs: design.visibleMotifs,
+          designReason: design.designReason, designId: design.designId, generationMethod: design.generationMethod,
+          evidencePostIds: design.evidencePostIds, renderRevision: accountRenderRevision(asset.templateId),
+          matchType: design.kind === "procedural" ? design.matchType : "stated_style" }),
+        artwork_path: asset.artworkPath, artwork_hash: asset.artworkHash,
+        preview_path: asset.previewPath, preview_hash: asset.previewHash,
+        preview_template_id: asset.templateId, preview_status: "ready",
+      });
+      if (mode === "auto_preview" && design?.kind === "no_design_match") {
+        row.reason = `${selection.reason}；${design.reason}`;
+      }
     }
-    await saveDraft(authorId, row);
-  } catch {
-    // Regeneration never leaves a stale ready draft visible after verification fails.
-    await saveDraft(authorId, writeFromSelection({ status: "blocked", reason: "本次重生成未能核实联系人、商品或链接，请稍后重试",
-      evidenceCoverage: "partial", selectedPost: null, productSlug: null, productMatchReason: null,
-      conversationAngle: null, matchStrength: 0 }));
-  }
-  revalidatePath("/admin/x-leads");
+    // Rendering can take time. Do not replace a draft that changed or entered the queue meanwhile.
+    const [{ data: fresh, error: freshError }, { data: active, error: activeError }] = await Promise.all([
+      supabase.from("x_lead_account_drafts").select("generated_at,review_status").eq("author_id", authorId).maybeSingle(),
+      supabase.from("x_reply_jobs").select("id").eq("target_author_id", authorId)
+        .in("status", ["draft", "queued", "claimed", "sent", "uncertain"]).limit(1),
+    ]);
+    if (freshError || activeError) throw new Error("重核草稿或队列失败，请稍后重试。");
+    if (active?.length || fresh?.review_status === "dismissed" || fresh?.generated_at !== (previous?.generated_at ?? undefined))
+      throw new Error("草稿或队列在准备期间已变化，请刷新后重试。");
+    await saveDraft(authorId, row, previous?.generated_at ?? null);
+    revalidatePath("/admin/x-leads");
+    if (selection.status !== "draft_ready") return { status: "blocked", reason: selection.reason };
+    if (mode === "auto_preview" && row.preview_status !== "ready") return { status: "no_design_match", reason: row.reason };
+    return { status: mode === "auto_preview" ? "ready" : "text_only", reason: "待审草稿已保存" };
+}
+
+export async function generateAccountReplyDraft(formData: FormData) {
+  const authorId = String(formData.get("authorId") ?? "");
+  const mode = formData.get("mode") === "text_only" ? "text_only" : "auto_preview";
+  await ensurePreparedAccountDraft(authorId, mode, true);
 }
 
 export async function setAccountDraftReviewStatus(formData: FormData) {
