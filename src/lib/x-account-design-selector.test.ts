@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
+import sharp from "sharp";
 import { compositionFamilyForRecipe, renderProceduralArtwork } from "./x-account-design-recipes";
-import { selectAccountDesign, type DesignChoice } from "./x-account-design-selector";
-import { selectAccountDraft, type AccountDraftInput, type DraftSelection, type OwnPost } from "./x-lead-account-draft";
+import { accountDesignBrief, isFallbackAccountDesignBrief, selectAccountDesign, type DesignChoice } from "./x-account-design-selector";
+import { createAccountReply, selectAccountDraft, type AccountDraftInput, type DraftSelection, type OwnPost } from "./x-lead-account-draft";
 
 const NOW = new Date("2026-11-23T08:00:00Z");
 const ownPost = (id: string, text: string): OwnPost => ({
@@ -29,11 +30,94 @@ test("an abandoned light-pink bedroom palette does not override the new white di
 });
 
 test("a green bedroom does not supply a color for an undecided living room", () => {
-  const choice = selectAccountDesign(ready(
+  const choice = procedural(selectAccountDesign(ready(
     "I can't decide what color my living room should be.",
     [ownPost("222222", "My bedroom is green.")],
-  ));
-  assert.equal(choice.kind, "no_design_match");
+  )));
+  assert.equal(choice.recipeId, "neutral-starter");
+  assert.equal(choice.matchType, "fallback_option");
+  assert.deepEqual(choice.evidencePostIds, ["111111"]);
+  assert.doesNotMatch(choice.designReason, /green|bedroom/i);
+});
+
+test("an undecided actual living room gets a reproducible original neutral starting point", async () => {
+  const selection = ready("picking a color to paint our living room might be my most difficult task");
+  selection.conversationAngle = "the living room color you are choosing";
+  const choice = procedural(selectAccountDesign(selection));
+  assert.equal(choice.recipeId, "neutral-starter");
+  assert.deepEqual(choice.colors, ["#F4F0E8", "#D8CFC1", "#A89B89"]);
+  assert.equal(choice.visibleMotifs, "original wide and narrow neutral stripes");
+  assert.equal(choice.designReason, "a neutral starting point while you choose your colors");
+  const first = await renderProceduralArtwork(choice);
+  const second = await renderProceduralArtwork(choice);
+  assert.equal(createHash("sha256").update(first).digest("hex"), createHash("sha256").update(second).digest("hex"));
+  const meta = await sharp(first).metadata();
+  assert.equal(meta.format, "png");
+  assert.equal(meta.width, 1200);
+  assert.equal(meta.height, 1200);
+  const brief = accountDesignBrief(choice, "render-test-v1");
+  assert.equal(brief.matchType, "fallback_option");
+  assert.equal(brief.fallbackReason, "missing_explicit_palette_or_theme");
+  assert.equal(brief.paletteSource, "brand_default");
+  assert.equal(brief.recipeId, "neutral-starter");
+  assert.equal(brief.recipeVersion, 1);
+  assert.deepEqual(brief.colors, choice.colors);
+  assert.equal(isFallbackAccountDesignBrief(JSON.stringify(brief)), true);
+  assert.equal(isFallbackAccountDesignBrief("old plain text"), false);
+  for (const offer of [false, true]) {
+    const reply = createAccountReply(selection, "https://www.thebestdiyshop.com/g/abcdefghij", offer, { preview: brief });
+    assert.match(reply, /neutral starting point while you choose your colors/);
+    assert.doesNotMatch(reply, /matches|matching|echoes|your neutral|your palette/i);
+    assert.ok(reply.length <= 280, `reply length ${reply.length}`);
+  }
+});
+
+test("fallback does not replace explicit unsupported directions or ambiguous multiple rooms", () => {
+  for (const direction of ["blue", "teal", "modern", "boho", "Japandi", "eclectic", "maximalist", "cyberpunk"]) {
+    const choice = selectAccountDesign(ready(`I'm choosing a ${direction} style for my living room.`));
+    assert.equal(choice.kind, "no_design_match", direction);
+    if (choice.kind === "no_design_match") assert.equal(choice.reason, "本人已提供颜色或主题，但当前暂无对应原创设计");
+  }
+  for (const text of ["I'm choosing #123abc for my living room color.", "I'm changing my living room style. The theme is Japandi."]) {
+    const choice = selectAccountDesign(ready(text));
+    assert.equal(choice.kind, "no_design_match", text);
+    if (choice.kind === "no_design_match") assert.equal(choice.reason, "本人已提供颜色或主题，但当前暂无对应原创设计");
+  }
+  const mixed = selectAccountDesign(ready("I'm trying to figure out what color my living room will be. My room is green."));
+  assert.equal(mixed.kind, "no_design_match");
+  if (mixed.kind === "no_design_match") assert.match(mixed.reason, /多个空间/);
+  const supported = selectAccountDesign(ready("I'm choosing a color for my living room.", [ownPost("222222", "My living room has teal curtains.")]));
+  assert.equal(supported.kind, "no_design_match");
+});
+
+test("fallback needs a live eligible pillow room project and ignores quoted design material", () => {
+  for (const text of ["I ate gingerbread in my apartment.", "I'm choosing colors for my room in GTA.", "I relaxed in my bedroom."]) {
+    assert.equal(selectAccountDesign(ready(text)).kind, "no_design_match", text);
+  }
+  for (const status of ["blocked", "no_match", "evidence_pending"] as const)
+    assert.equal(selectAccountDesign({ ...ready("I'm choosing a color for my living room."), status }).kind, "no_design_match");
+  assert.equal(selectAccountDesign({ ...ready("I'm choosing a color for my living room."), productSlug: "face-towel" }).kind, "no_design_match");
+  for (const modifier of ["new", "own", "real"]) {
+    const choice = procedural(selectAccountDesign(ready(`I'm choosing a color for my ${modifier} living room.`)));
+    assert.equal(choice.matchType, "fallback_option");
+  }
+  for (const text of ["I'm choosing paint colors for my living room.", "I'm deciding on colors for my living room.",
+    "I'm choosing a wall color for my living room.", "I'm picking out colors for my living room.",
+    "I'm figuring out a color scheme for my living room.", "I'm picking a theme for my living room.",
+    "I'm trying to decide what color to paint my living room.", "I can't decide which style to choose for my living room.",
+    "I'm changing the style of my living room.", "I'm choosing a new theme for my living room."]) {
+    const choice = procedural(selectAccountDesign(ready(text)));
+    assert.equal(choice.matchType, "fallback_option", text);
+  }
+  const input: AccountDraftInput = {
+    author_id: "123456789", account_status: "watch", entry_status: "ready", review_status: "unreviewed",
+    account_evidence: { own_post_ids: ["111111"], own_posts: [{ ...ownPost("111111", "I'm choosing a color for my living room."),
+      quoted_tweet: { text: "My living room is blue with a floral theme", media_url: "https://example.com/art.png" } }] },
+    entry_evidence: {},
+  };
+  const choice = procedural(selectAccountDesign(selectAccountDraft(input, [{ slug: "custom-pillow", name: "Pillow" }], NOW)));
+  assert.equal(choice.recipeId, "neutral-starter");
+  assert.deepEqual(choice.evidencePostIds, ["111111"]);
 });
 
 test("quoted artwork and colors from another author do not become the brand design", () => {

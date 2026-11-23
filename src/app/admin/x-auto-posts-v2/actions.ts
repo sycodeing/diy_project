@@ -5,7 +5,7 @@ import { requireAdmin } from "@/lib/auth";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { getXApprovalBlockReason } from "@/lib/x-reply-safety";
 import { hasPriorXContact, supportsXReplyV2PreviewWorker, supportsXReplyV2Worker, validateV2Snapshot, type V2Snapshot } from "@/lib/x-reply-v2";
-import { ensurePreparedAccountDraft } from "@/app/admin/x-leads/account-draft-actions";
+import { ensurePreparedAccountDraft } from "@/app/admin/x-account-candidates/account-draft-actions";
 
 const PATH = "/admin/x-auto-posts-v2";
 const id = /^[0-9a-f-]{36}$/i;
@@ -21,7 +21,7 @@ function db() {
 function selected(formData: FormData, field: string, pattern: RegExp) {
   return [...new Set(formData.getAll(field).map(String).filter((value) => pattern.test(value)))].slice(0, 100);
 }
-function finish(state: V2ActionState) { revalidatePath(PATH); revalidatePath("/admin/x-leads"); return state; }
+function finish(state: V2ActionState) { revalidatePath(PATH); revalidatePath("/admin/x-account-candidates"); return state; }
 
 /** Adds an unapproved snapshot only. Each selection has its own visible failure reason. */
 export async function addV2Drafts(_previous: V2ActionState = EMPTY, formData: FormData): Promise<V2ActionState> {
@@ -144,5 +144,5 @@ export async function withdrawV2Draft(formData: FormData) {
     .eq("id", jobId).eq("queue_version", 2).in("status", ["draft", "queued"])
     .eq("attempt_count", 0).select("id").maybeSingle();
   if (error || !data) throw new Error(error?.message ?? "任务已领取或处理，无法撤回。");
-  revalidatePath(PATH); revalidatePath("/admin/x-leads");
+  revalidatePath(PATH); revalidatePath("/admin/x-account-candidates");
 }

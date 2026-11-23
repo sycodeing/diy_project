@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useXSenderAccount } from "@/lib/use-x-sender-account";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { X_LEAD_REJECTION_REASON_LABELS, X_LEAD_REJECTION_REASONS } from "@/lib/x-lead";
 import { blacklistXLeadAccount, createXLeadAutoTask, createXLeadManualTask, setXLeadSuitability, type QueueActionResult } from "./actions";
@@ -11,9 +12,6 @@ type QueueState = {
   href: string;
   label: string;
 } | null;
-
-const DEFAULT_AUTO_ACCOUNT_KEY = "diyproject:x-auto-default-account-id";
-const DEFAULT_AUTO_ACCOUNT_EVENT = "diyproject:x-auto-default-account-changed";
 
 export function CandidateActions({
   actionable,
@@ -48,37 +46,7 @@ export function CandidateActions({
     reason: initialRejectionReason,
   });
   const [error, setError] = useState<string | null>(null);
-  const fallbackAccountId = accountOptions[0]?.id ?? "";
-  const accountIds = accountOptions.map((account) => account.id).join(",");
-  const [selectedAccountId, setSelectedAccountId] = useState(fallbackAccountId);
-
-  useEffect(() => {
-    const validAccountIds = new Set(accountIds.split(",").filter(Boolean));
-    const applyDefault = (candidate: string | null) => {
-      const next = candidate && validAccountIds.has(candidate) ? candidate : fallbackAccountId;
-      setSelectedAccountId(next);
-      if (next) window.localStorage.setItem(DEFAULT_AUTO_ACCOUNT_KEY, next);
-    };
-    applyDefault(window.localStorage.getItem(DEFAULT_AUTO_ACCOUNT_KEY));
-    const onStorage = (event: StorageEvent) => {
-      if (event.key === DEFAULT_AUTO_ACCOUNT_KEY) applyDefault(event.newValue);
-    };
-    const onDefaultChange = (event: Event) => {
-      applyDefault((event as CustomEvent<string>).detail);
-    };
-    window.addEventListener("storage", onStorage);
-    window.addEventListener(DEFAULT_AUTO_ACCOUNT_EVENT, onDefaultChange);
-    return () => {
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener(DEFAULT_AUTO_ACCOUNT_EVENT, onDefaultChange);
-    };
-  }, [accountIds, fallbackAccountId]);
-
-  function changeDefaultAccount(value: string) {
-    setSelectedAccountId(value);
-    window.localStorage.setItem(DEFAULT_AUTO_ACCOUNT_KEY, value);
-    window.dispatchEvent(new CustomEvent(DEFAULT_AUTO_ACCOUNT_EVENT, { detail: value }));
-  }
+  const [selectedAccountId, changeDefaultAccount] = useXSenderAccount(accountOptions);
 
   async function runAction(action: () => Promise<void>, onSuccess: () => void) {
     setError(null);

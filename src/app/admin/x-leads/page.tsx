@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { AdminListPagination } from "@/components/admin-list-pagination";
 import { AppShell } from "@/components/app-shell";
 import { SetupWarning } from "@/components/setup-warning";
@@ -28,7 +29,6 @@ import {
 import { CandidateActions } from "./candidate-actions";
 import { CandidateMediaPicker } from "./candidate-media-picker";
 import { RawReviewPage } from "./raw-review-page";
-import { AccountReviewPage } from "./account-review-page";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -59,9 +59,16 @@ export type XLeadAccountOption = {
 export default async function XLeadsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ batch?: string; mode?: string; account?: string; entry?: string; job?: string; status?: string; conclusion?: string; segment?: string; review?: string; reason?: string; notice?: string; page?: string }>;
+  searchParams: Promise<{ batch?: string; mode?: string; account?: string; entry?: string; job?: string; status?: string; author?: string; conclusion?: string; segment?: string; review?: string; reason?: string; notice?: string; page?: string }>;
 }) {
   const filters = await searchParams;
+  if (filters.mode === "account_review") {
+    const params = new URLSearchParams();
+    for (const key of ["account", "entry", "job", "status", "author", "page"] as const) {
+      if (filters[key]) params.set(key, filters[key]);
+    }
+    redirect(`/admin/x-account-candidates${params.size ? `?${params}` : ""}`);
+  }
   const isContactShortlist = filters.batch === CONTACT_SHORTLIST_BATCH;
   await requireAdmin(isContactShortlist ? `/admin/x-leads?batch=${CONTACT_SHORTLIST_BATCH}` : "/admin/x-leads");
   const supabase = getSupabaseServiceClient();
@@ -69,7 +76,6 @@ export default async function XLeadsPage({
     return <AppShell admin><main className="mx-auto w-full max-w-3xl px-4 py-10"><SetupWarning /></main></AppShell>;
   }
   if (filters.mode === "raw_review") return <RawReviewPage filters={filters} />;
-  if (filters.mode === "account_review") return <AccountReviewPage filters={filters} />;
   let query = supabase
     .from("x_leads")
     .select("id,post_id,x_handle,post_url,media_url,media_urls,posted_at,discovered_at,selection_status,segment,pet_type,occasion,occasion_confidence,ownership_confidence,us_confidence,us_evidence,lead_score,like_count,reply_count,repost_count,view_count,followers_count,targeting_data,consent_copy,public_copy,direct_message_copy,marketing_link_id,marketing_links!x_leads_marketing_link_id_fkey(id,idempotency_key,source_hash,expires_at,account_user_id,account_was_created,marketing_events(event_type,created_at),orders(id,payment_status,paid_at)),x_manual_posts(id,status,preparation_status,created_at),x_reply_jobs(id,status,preparation_status,created_at)")
@@ -154,7 +160,7 @@ export default async function XLeadsPage({
           </div>
           <Link className="focus-ring rounded-lg border border-line px-4 py-2 font-bold hover:bg-surface" href="/admin/x-lead-search">筛选设置</Link>
           <Link className="focus-ring rounded-lg border border-line px-4 py-2 font-bold hover:bg-surface" href="/admin/x-leads?mode=raw_review">原始待筛帖子</Link>
-          <Link className="focus-ring rounded-lg border border-line px-4 py-2 font-bold hover:bg-surface" href="/admin/x-leads?mode=account_review">账号证据待审</Link>
+          <Link className="focus-ring rounded-lg border border-line px-4 py-2 font-bold hover:bg-surface" href="/admin/x-account-candidates">账号候选</Link>
         </div>
         {noticeText ? <p className="mt-5 rounded-lg border border-line bg-panel p-3 text-sm font-bold">{noticeText}</p> : null}
         <div className="mt-4 flex flex-wrap items-center gap-3">

@@ -5,7 +5,7 @@ import { requireAdmin } from "@/lib/auth";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 
 export async function setAccountReviewStatus(formData: FormData) {
-  const user = await requireAdmin("/admin/x-leads?mode=account_review");
+  const user = await requireAdmin("/admin/x-account-candidates");
   const authorId = String(formData.get("authorId") ?? "");
   const status = String(formData.get("status") ?? "");
   if (!/^\d{5,30}$/.test(authorId) || !["dismissed", "unreviewed"].includes(status)) {
@@ -17,5 +17,5 @@ export async function setAccountReviewStatus(formData: FormData) {
     .update({ review_status: status, reviewed_by: user.id, reviewed_at: new Date().toISOString() })
     .eq("author_id", authorId);
   if (error) throw new Error(error.message);
-  revalidatePath("/admin/x-leads");
+  revalidatePath("/admin/x-account-candidates");
 }

@@ -59,7 +59,7 @@ export default async function XAutoV2Page({ searchParams }: { searchParams: Prom
     <div><p className="text-xs font-black uppercase tracking-widest text-accent-strong">Account-first public replies</p>
       <h1 className="mt-1 text-3xl font-black">自动队列 V2</h1>
       <p className="mt-2 text-sm text-muted">选择账号草稿，回复其近期原帖并介绍相关在售商品。加入后先待审；人工批准才会启动发送。</p>
-      <div className="mt-3 flex gap-4 text-sm"><Link className="text-accent underline" href="/admin/x-leads?mode=account_review">账号候选与证据</Link><Link className="text-accent underline" href="/admin/x-auto-posts">旧版自动队列</Link><Link className="text-accent underline" href="/admin/x-accounts">发送账号与每日配置</Link></div>
+      <div className="mt-3 flex gap-4 text-sm"><Link className="text-accent underline" href="/admin/x-account-candidates">账号候选与证据</Link><Link className="text-accent underline" href="/admin/x-auto-posts">旧版自动队列</Link><Link className="text-accent underline" href="/admin/x-accounts">发送账号与每日配置</Link></div>
     </div>
     <div className="grid gap-4 lg:grid-cols-2"><V2BatchControls kind="add" items={candidates} senders={senderList} /><V2BatchControls kind="approve" items={pending} /></div>
     <section><h2 className="text-xl font-black">V2 任务 · {allJobs.length}</h2>
@@ -74,7 +74,7 @@ export default async function XAutoV2Page({ searchParams }: { searchParams: Prom
           <div className="flex flex-wrap items-center gap-2"><strong>{X_REPLY_STATUS_LABELS[job.status] ?? job.status}</strong>
             <span>@{handles.get(job.target_author_id ?? "") ?? job.target_author_id}</span>
             <span className="text-xs text-muted">任务 {job.id}</span><span className="text-xs text-muted">{new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", dateStyle: "medium", timeStyle: "short" }).format(new Date(job.created_at))}</span>
-            <Link className="text-accent underline" href={`/admin/x-leads?mode=account_review&author=${job.target_author_id}`}>查看账号证据</Link></div>
+            <Link className="text-accent underline" href={`/admin/x-account-candidates?author=${job.target_author_id}`}>查看账号证据</Link></div>
           <p className="mt-1">发送账号 {sender?.display_name ?? senderName(job)} · 商品 {job.product_slug_snapshot} · 本人帖 <a className="text-accent underline" href={`https://x.com/i/status/${job.source_post_id}`} target="_blank" rel="noreferrer">{job.source_post_id}</a></p>
           {job.product_match_reason_snapshot ? <p className="mt-1 text-xs text-muted">匹配理由：{job.product_match_reason_snapshot}</p> : null}
           <p className="mt-2 whitespace-pre-wrap break-words rounded border border-line bg-surface p-2">{job.reply_text}</p>

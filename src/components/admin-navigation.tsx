@@ -12,6 +12,7 @@ const links = [
   { href: "/admin/promotions", label: "首单活动", matches: ["/admin/promotions"] },
   { href: "/admin/analytics", label: "用户行为", matches: ["/admin/analytics"] },
   { href: "/admin/x-leads", label: "X 候选", matches: ["/admin/x-leads", "/admin/x-lead-search"] },
+  { href: "/admin/x-account-candidates", label: "账号候选", matches: ["/admin/x-account-candidates"] },
   { href: "/admin/x-accounts", label: "X 账号/IP", matches: ["/admin/x-accounts"] },
   { href: "/admin/x-auto-posts", label: "X 自动发送", matches: ["/admin/x-auto-posts", "/admin/x-replies"] },
   { href: "/admin/x-auto-posts-v2", label: "自动队列 V2", matches: ["/admin/x-auto-posts-v2"] },

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { isTrustedRawPhotoUrl } from "@/lib/x-lead-raw-review";
-import { RawPostPhotos } from "./raw-post-photos";
+import { RawPostPhotos } from "../x-leads/raw-post-photos";
 import { setAccountReviewStatus } from "./account-review-actions";
 import { generateAccountReplyDraft, setAccountDraftReviewStatus } from "./account-draft-actions";
 import { getActiveAccountProducts } from "@/lib/x-lead-account-products";
@@ -11,17 +11,19 @@ import { AccountV2QueueControl } from "./account-v2-queue-control";
 import { accountV2QueueEligibility } from "./account-v2-queue-eligibility";
 import { AccountDesignControl } from "./account-design-control";
 import { signAccountDesignAsset, validAccountDesignAsset } from "@/lib/x-account-design-assets";
+import { selectAccountDraft } from "@/lib/x-lead-account-draft";
+import { isFallbackAccountDesignBrief, selectAccountDesign } from "@/lib/x-account-design-selector";
 
 const PAGE_SIZE = 30;
 const ACCOUNT_STATES = ["potential", "watch", "insufficient", "excluded"];
 const ENTRY_STATES = ["ready", "no_entry", "context_pending", "hold"];
 
-type Filters = { account?: string; entry?: string; job?: string; status?: string; author?: string; page?: string };
+export type AccountCandidateFilters = { account?: string; entry?: string; job?: string; status?: string; author?: string; page?: string };
 const ACCOUNT_LABELS: Record<string, string> = { potential: "有独立行为证据", watch: "观察", insufficient: "证据不足", excluded: "排除" };
 const ENTRY_LABELS: Record<string, string> = { ready: "有交流入口", no_entry: "暂无入口", context_pending: "父帖待核", hold: "暂缓" };
 function pageTimeMs() { return Date.now(); }
 
-export async function AccountReviewPage({ filters }: { filters: Filters }) {
+export async function AccountReviewPage({ filters }: { filters: AccountCandidateFilters }) {
   const supabase = getSupabaseServiceClient();
   if (!supabase) throw new Error("Supabase is not configured");
   const page = Math.max(1, Number.parseInt(filters.page ?? "1", 10) || 1);
@@ -69,28 +71,28 @@ export async function AccountReviewPage({ filters }: { filters: Filters }) {
   const activeSlugs = new Set(activeProducts.map((product) => product.slug));
   const nowMs = pageTimeMs();
   const pageHref = (next: number) => {
-    const params = new URLSearchParams({ mode: "account_review", page: String(next) });
+    const params = new URLSearchParams({ page: String(next) });
     if (filters.account) params.set("account", filters.account);
     if (filters.entry) params.set("entry", filters.entry);
     if (filters.job) params.set("job", filters.job);
     if (filters.author) params.set("author", filters.author);
     if (filters.status) params.set("status", filters.status);
-    return `/admin/x-leads?${params}`;
+    return `/admin/x-account-candidates?${params}`;
   };
   const filterHref = (name: "account" | "entry" | "status", value: string) => {
-    const params = new URLSearchParams({ mode: "account_review" });
-    for (const [key, selected] of Object.entries({ account: filters.account, entry: filters.entry, status: filters.status, job: filters.job })) {
+    const params = new URLSearchParams();
+    for (const [key, selected] of Object.entries({ account: filters.account, entry: filters.entry, status: filters.status, job: filters.job, author: filters.author })) {
       if (selected && key !== name) params.set(key, selected);
     }
     if (value) params.set(name, value);
-    return `/admin/x-leads?${params}`;
+    return `/admin/x-account-candidates?${params}`;
   };
   return <AppShell admin><main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
-    <div className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-3xl font-black">按账号审阅 X 参与者</h1><Link className="font-bold text-accent underline" href="/admin/x-lead-search">手动启动账号发现</Link></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-3xl font-black">账号候选</h1><Link className="font-bold text-accent underline" href="/admin/x-lead-search">手动启动账号发现</Link></div>
     <Link className="mt-2 inline-block text-sm font-bold text-accent underline" href="/admin/x-auto-posts-v2">查看自动队列 V2</Link>
     <p className="mt-2 text-sm text-muted">稳定作者 ID 跨任务只显示一张最新评估卡；历史种子、回复与近期本人帖保留来源。账号适配与当前交流入口分开，所有结果均待人工核实，未取得联系资格。</p>
     <div className="mt-4 flex flex-wrap gap-2 text-sm">
-      <Link className="rounded-lg border border-line px-3 py-2" href="/admin/x-leads?mode=account_review">全部账号</Link>
+      <Link className="rounded-lg border border-line px-3 py-2" href="/admin/x-account-candidates">全部账号</Link>
       {ACCOUNT_STATES.map((status) => <Link className="rounded-lg border border-line px-3 py-2" key={status} href={filterHref("account", status)}>{ACCOUNT_LABELS[status]}</Link>)}
       {ENTRY_STATES.map((status) => <Link className="rounded-lg border border-line px-3 py-2" key={status} href={filterHref("entry", status)}>{ENTRY_LABELS[status]}</Link>)}
       <Link className="rounded-lg border border-line px-3 py-2" href={filterHref("status", "unreviewed")}>未处理</Link><Link className="rounded-lg border border-line px-3 py-2" href={filterHref("status", "dismissed")}>已忽略</Link>
@@ -112,8 +114,14 @@ export async function AccountReviewPage({ filters }: { filters: Filters }) {
         && row.entry_status !== "hold";
       const queueGate = accountV2QueueEligibility({ draft, account: row, activeSlugs,
         hasActiveQueueJob, nowMs });
-      const account = (row.account_evidence ?? {}) as Record<string, unknown>;
-      const entry = (row.entry_evidence ?? {}) as Record<string, unknown>;
+      const account = row.account_evidence && typeof row.account_evidence === "object" && !Array.isArray(row.account_evidence)
+        ? row.account_evidence as Record<string, unknown> : {};
+      const entry = row.entry_evidence && typeof row.entry_evidence === "object" && !Array.isArray(row.entry_evidence)
+        ? row.entry_evidence as Record<string, unknown> : {};
+      const design = queueGate.ready && draft?.preview_status !== "ready"
+        ? selectAccountDesign(selectAccountDraft({ ...row, account_evidence: account, entry_evidence: entry }, activeProducts, new Date(nowMs))) : null;
+      const automaticPreviewBlockReason = design?.kind === "no_design_match" ? design.reason : null;
+      const automaticPreviewFallback = design?.kind === "procedural" && design.matchType === "fallback_option";
       const person = Array.isArray(account.person_evidence) ? account.person_evidence : [];
       const project = Array.isArray(account.project_evidence) ? account.project_evidence : [];
       const evidence = [...person, ...project] as Array<{ post_id?: string; text?: string; quote?: string; source?: string; created_at?: string; photo_urls?: string[] }>;
@@ -134,7 +142,10 @@ export async function AccountReviewPage({ filters }: { filters: Filters }) {
             previewBrief={draft.design_brief} previewImageUrl={previewUrls.get(row.author_id)}
             disabledReason={hasActiveQueueJob ? "该账号已有 V2 任务；先撤回待审任务，再更新图文草稿。"
               : !draftFresh ? "先生成有效的近期本人帖及在售商品文字草稿，再上传本店原创设计。" : null} /> : null}
-          {queueGate.ready ? <AccountV2QueueControl authorId={row.author_id} senders={senders} />
+          {queueGate.ready ? <AccountV2QueueControl key={`${row.author_id}-${draft?.generated_at}`} authorId={row.author_id} senders={senders}
+            automaticPreviewBlockReason={automaticPreviewBlockReason}
+            automaticPreviewFallback={automaticPreviewFallback}
+            savedFallbackPreview={draft?.preview_status === "ready" && isFallbackAccountDesignBrief(draft.design_brief)} />
             : !hasActiveQueueJob ? <p className="mt-2 text-xs text-muted">{queueGate.reason}</p> : null}
           <div className="mt-2 flex flex-wrap gap-2"><form action={generateAccountReplyDraft}><input type="hidden" name="authorId" value={row.author_id} /><button className="rounded-lg border border-line px-3 py-2 text-xs font-bold" type="submit">{draft ? "自动重生成图文草稿（替换当前设计）" : "自动生成图文待审草稿"}</button></form><form action={generateAccountReplyDraft}><input type="hidden" name="authorId" value={row.author_id} /><input type="hidden" name="mode" value="text_only" /><button className="rounded-lg border border-line px-3 py-2 text-xs font-bold" type="submit">明确生成纯文字</button></form>{draft ? <form action={setAccountDraftReviewStatus}><input type="hidden" name="authorId" value={row.author_id} /><input type="hidden" name="status" value={draft.review_status === "dismissed" ? "unreviewed" : "dismissed"} /><button className="rounded-lg border border-line px-3 py-2 text-xs font-bold" type="submit">{draft.review_status === "dismissed" ? "恢复草稿待审" : "忽略草稿"}</button></form> : null}</div>
           {draft?.preview_status === "ready" ? <p className="mt-1 text-xs text-muted">重新生成会更新待审草稿；明确生成纯文字会清除当前预览。已有队列快照不会被改写。</p> : null}

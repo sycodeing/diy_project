@@ -58,7 +58,7 @@ export async function renderProceduralArtwork(choice: Extract<DesignChoice, { ki
 export function compositionFamilyForRecipe(recipeId: string) {
   if (["black-nouveau", "dark-tonal"].includes(recipeId)) return "curves";
   if (["neutral-white", "black-white-gold"].includes(recipeId)) return "geometric";
-  if (["sage", "warm-neutral"].includes(recipeId)) return "stripes";
+  if (["sage", "warm-neutral", "neutral-starter"].includes(recipeId)) return "stripes";
   if (["burnt-orange", "gold-ivory"].includes(recipeId)) return "arches";
   return "waves";
 }

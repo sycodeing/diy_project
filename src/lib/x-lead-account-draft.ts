@@ -1,4 +1,4 @@
-export const ACCOUNT_DRAFT_VERSION = "account-draft-v1.4";
+export const ACCOUNT_DRAFT_VERSION = "account-draft-v1.5";
 export type DraftStatus = "draft_ready" | "no_match" | "evidence_pending" | "blocked";
 export type OwnPost = { post_id: string; created_at: string; text: string; source: string; direct_parent_status?: string; is_quote?: boolean };
 export type AccountDraftInput = {
@@ -234,7 +234,7 @@ export function selectAccountDraft(input: AccountDraftInput, products: ActiveDra
     : "已存本人帖子未呈现与当前可售商品相连的具体用途" };
 }
 
-export type AccountPreviewBrief = { visibleMotifs: string; designReason: string };
+export type AccountPreviewBrief = { visibleMotifs: string; designReason: string; matchType?: "stated_style" | "proposed_option" | "fallback_option" };
 export function validAccountPreviewBrief(brief: AccountPreviewBrief) {
   return /^[\p{L}\p{N} ,&'-]{5,90}$/u.test(brief.visibleMotifs)
     && /^[\p{L}\p{N} ,&'-]{5,90}$/u.test(brief.designReason);
@@ -246,7 +246,9 @@ export function createAccountReply(selection: DraftSelection, marketingUrl: stri
   if (selection.status !== "draft_ready" || !selection.productSlug || !selection.selectedPost || !selection.conversationAngle)
     throw new Error("No reviewable draft");
   const original = selection.selectedPost.text;
-  const advice = (options.preview ? accountPreviewResponse(original, selection) : accountAdvice(original, selection))
+  const advice = (options.preview?.matchType === "fallback_option"
+    ? "Still choosing your room colors? This is one neutral option to explore."
+    : options.preview ? accountPreviewResponse(original, selection) : accountAdvice(original, selection))
     .replace(/:\s*$/, ".");
   const product = selection.productSlug === "custom-pillow" ? "custom-printed pillow cover" : "customizable face towel";
   const preview = options.preview;
