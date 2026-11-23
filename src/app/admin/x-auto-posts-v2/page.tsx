@@ -66,7 +66,7 @@ export default async function XAutoV2Page({ searchParams }: { searchParams: Prom
         const worker = sender?.executor_id ? workerByExecutor.get(sender.executor_id) : null;
         const compatible = Boolean(worker && supportsXReplyV2Worker(worker.worker_version) && worker.execution_mode === "send"
           && nowMillis - Date.parse(worker.last_seen_at) < 5 * 60_000);
-        return <article className="rounded-xl border border-line bg-panel p-4 text-sm" key={job.id}>
+        return <article id={`v2-job-${job.id}`} className="scroll-mt-6 rounded-xl border border-line bg-panel p-4 text-sm" key={job.id}>
           <div className="flex flex-wrap items-center gap-2"><strong>{X_REPLY_STATUS_LABELS[job.status] ?? job.status}</strong>
             <span>@{handles.get(job.target_author_id ?? "") ?? job.target_author_id}</span>
             <span className="text-xs text-muted">任务 {job.id}</span><span className="text-xs text-muted">{new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", dateStyle: "medium", timeStyle: "short" }).format(new Date(job.created_at))}</span>
