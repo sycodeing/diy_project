@@ -48,8 +48,8 @@ export default async function AccountManualPage() {
       <p>{online ? "手动助手在线；不代表 X 登录或账号状态已就绪。" : "独立手动助手未在线。请先手动启动助手；离线时不创建待开窗口请求。"}</p>
       <p>预期固定出口：{route?.expectedIp ?? "不可读"}。{routeError}</p>
       <p>首次只打开 IP 核对页。本人核对后，复制目标链接，切回该独立绑定 Chrome 窗口，在同一标签地址栏粘贴；首次登录、账号核对、上传图片和发送均由本人完成。后续目标也复用此标签，不另开通用浏览器。</p>
-      <p>发送登记、复制或下载不会关闭窗口。助手不自动保存或复制 Cookie，不自动控制 X 页面；浏览器页面自身仍可能产生后台网络请求。遇验证、限制或账号不符时停止人工发送并保留现场。</p>
-      {confirmation ? <p className="font-bold text-emerald-800">已登记用户声明 IP 已核对（当前助手会话）。仍须本人在 X 自行核对登录账号为 @Le6wCummeratawi。</p> : opened ? <><p>已有按绑定配置打开的窗口，请本人核对；系统未自动验证出口或账号。</p><ManualIpConfirmation requestId={opened.id} /></> : null}
+      <p>助手只确认专用 Chrome 进程仍在；具体标签、页面、出口和登录身份由本人核对。关闭标签不一定退出浏览器；如要结束绑定会话，请本人退出该专用 Chrome。助手不接管或自动重建。发送登记、复制或下载不会关闭窗口。助手不自动保存或复制 Cookie，不自动控制 X 页面；浏览器页面自身仍可能产生后台网络请求。遇验证、限制或账号不符时停止人工发送并保留现场。</p>
+      {confirmation ? <p className="font-bold text-emerald-800">已登记用户声明 IP 已核对（当前助手会话）。仍须本人在 X 自行核对登录账号为 @Le6wCummeratawi。</p> : opened ? <><p>本机专用 Chrome 进程仍在，请本人核对和复用其窗口；系统未自动验证标签、出口或账号。</p><ManualIpConfirmation requestId={opened.id} /></> : null}
       {currentRequests[0] ? <p className="text-xs text-muted">最近开窗状态：{currentRequests[0].status} · {currentRequests[0].message}</p> : null}
     </section>
     <section><h2 className="text-xl font-black">人工待发送与本人登记 · {posts.length}</h2><p className="text-sm text-muted">待发送 {posts.filter((p) => p.status === "draft").length}；本人登记已发送 {posts.filter((p) => p.status === "reported").length}。图片和链接保留原审阅快照；失效时阻断，不静默替换。</p>

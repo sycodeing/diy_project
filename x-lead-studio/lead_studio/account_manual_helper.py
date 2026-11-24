@@ -86,9 +86,9 @@ class NativeManualSessions:
                 return {"status": "blocked", "message": "绑定已变化；保留原窗口和连接，不切网或重建。"}
             if not self.has_live_window():
                 self.blocked = True
-                return {"status": "blocked", "message": "原绑定窗口已关闭，请本人结束助手并显式重新启动后再请求；未自动重开。"}
+                return {"status": "blocked", "message": "原专用 Chrome 进程已退出，请本人结束助手并显式重新启动后再请求；未自动重开。"}
             return {"status": "opened_manual_check", "sessionId": self.session.session_id,
-                    "message": "已有绑定窗口保持不变；请本人核对。未刷新、导航或新建标签。"}
+                    "message": "专用 Chrome 进程仍在，请本人核对并复用其窗口；未刷新、导航或新建标签。"}
         if not self.chrome.is_file():
             return {"status": "failed", "message": "未找到标准 Google Chrome；不会改用 Testing 浏览器。"}
         profile = self.state_dir / "profiles" / ACCOUNT_ID
@@ -108,7 +108,7 @@ class NativeManualSessions:
                 pass
             else:
                 self.blocked = True
-                return {"status": "blocked", "message": "上一助手的持久窗口仍在；本次不会接管或重开。请本人核对旧窗口。"}
+                return {"status": "blocked", "message": "上一助手的专用 Chrome 进程仍在；本次不会接管或重开。请本人核对旧窗口。"}
         resources = AsyncExitStack()
         try:
             # Import and start the proxy bridge only here, never at startup/heartbeat.
@@ -145,7 +145,7 @@ class NativeManualSessions:
             return {"status": "failed", "message": "独立绑定窗口启动失败；没有直连回退或自动重试。"}
 
     async def release_after_user_closed(self) -> None:
-        """Never close a user window. Release relay only once the owned process ended."""
+        """Never close a user window. Release relay only once the owned Chrome process ended."""
         if self.session and not self.has_live_window():
             await self.session.resources.aclose()
 
@@ -201,7 +201,7 @@ async def run_helper(site_url: str, secret: str, state_dir: Path) -> None:
             # Stop new requests immediately while preserving a user's live window
             # and its required relay until that user closes their owned Chrome.
             if sessions.has_live_window():
-                print("Requests stopped. Keeping the owned window route alive until you close that window.", flush=True)
+                print("Requests stopped. Keeping the owned route alive until the dedicated Chrome process exits.", flush=True)
             while sessions.has_live_window():
                 await asyncio.sleep(1)
             await sessions.release_after_user_closed()
