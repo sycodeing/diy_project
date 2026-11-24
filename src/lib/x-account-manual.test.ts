@@ -27,11 +27,9 @@ test("route changes invalidate reuse and offline/restarted helpers cannot author
   assert.equal(freshManualHelper({ ...helper, status: "stopped" }, now), false);
   assert.equal(freshManualHelper(helper, now + 45001), false);
 });
-test("preview reports require explicit upload declaration while text does not", () => {
-  const base = { resultUrl: "https://x.com/Le6wCummeratawi/status/123456789", personallySent: true, previewUploaded: false };
-  assert.match(manualReportError({ ...base, contentMode: "account_product_preview" }) ?? "", /上传/);
-  assert.equal(manualReportError({ ...base, previewUploaded: true, contentMode: "account_product_preview" }), null);
-  assert.equal(manualReportError({ ...base, contentMode: "account_product_link" }), null);
+test("result reporting needs only the fixed sender URL, without checkbox declarations", () => {
+  assert.equal(manualReportError({ resultUrl: "https://x.com/Le6wCummeratawi/status/123456789" }), null);
+  assert.match(manualReportError({ resultUrl: "https://x.com/Latte192837465/status/123456789" }) ?? "", /指定账号/);
 });
 
 test("only new explicit X-home purpose can authorize requests", () => {

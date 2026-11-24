@@ -60,16 +60,13 @@ export async function reportAccountManualSent(_previous: ManualActionState, form
   const admin = await requireAdmin(ACCOUNT_MANUAL_PATH);
   const id = String(form.get("taskId") ?? "");
   const url = canonicalManualResultUrl(String(form.get("resultUrl") ?? ""));
-  if (!uuid.test(id) || !url || form.get("personallySent") !== "yes") return { ok: 0, failed: [{ id, reason: "请确认已由本人使用指定账号发送，并填写该账号的真实结果链接。" }] };
+  const reportError = manualReportError({ resultUrl: String(form.get("resultUrl") ?? "") });
+  if (!uuid.test(id) || !url || reportError) return { ok: 0, failed: [{ id, reason: reportError ?? "任务标识无效。" }] };
   const db = manualDb();
-  const { data: row, error } = await db.from("x_account_manual_posts").select("id,status,account_id,snapshot").eq("id", id).maybeSingle();
+  const { data: row, error } = await db.from("x_account_manual_posts").select("id,status,account_id").eq("id", id).maybeSingle();
   if (error || !row || row.account_id !== MANUAL_SENDER_ID || row.status !== "draft") return { ok: 0, failed: [{ id, reason: "任务不存在或已登记，禁止重复处理。" }] };
-  const reportError = manualReportError({ contentMode: (row.snapshot as ManualSnapshot).content_mode,
-    resultUrl: url, personallySent: form.get("personallySent") === "yes", previewUploaded: form.get("previewUploaded") === "yes" });
-  if (reportError) return { ok: 0, failed: [{ id, reason: reportError }] };
   const { data, error: writeError } = await db.from("x_account_manual_posts")
-    .update({ status: "reported", result_url: url, reported_at: new Date().toISOString(), reported_by: admin.id,
-      preview_uploaded_by_user: form.get("previewUploaded") === "yes" })
+    .update({ status: "reported", result_url: url, reported_at: new Date().toISOString(), reported_by: admin.id })
     .eq("id", id).eq("account_id", MANUAL_SENDER_ID).eq("status", "draft").select("id").maybeSingle();
   return finish(writeError || !data ? { ok: 0, failed: [{ id, reason: writeError?.message ?? "任务已变化。" }] } : { ok: 1, failed: [] });
 }
@@ -110,13 +107,13 @@ async function enqueueManualWindow(adminId: string, taskId: string | null): Prom
 
 export async function requestAccountManualWindow(_previous: ManualActionState, form: FormData): Promise<ManualActionState> {
   const admin = await requireAdmin(ACCOUNT_MANUAL_PATH), id = String(form.get("taskId") ?? "");
-  if (!uuid.test(id) || form.get("understandProfile") !== "yes") return { ok: 0, failed: [{ id, reason: "请确认原 x-use 会话与 Cookie 登录和由 x-use 使用原绑定浏览器打开 X 首页的边界。" }] };
+  if (!uuid.test(id)) return { ok: 0, failed: [{ id, reason: "任务标识无效。" }] };
   return enqueueManualWindow(admin.id, id);
 }
 
 export async function requestAccountIpWindow(_previous: ManualActionState, form: FormData): Promise<ManualActionState> {
   const admin = await requireAdmin("/admin/x-accounts"), id = String(form.get("accountId") ?? "");
-  if (id !== MANUAL_SENDER_ID || form.get("understandProfile") !== "yes") return { ok: 0, failed: [{ id, reason: "只为已启用的固定手动账号开放 x-use 首页窗口；请先确认操作边界。" }] };
+  if (id !== MANUAL_SENDER_ID) return { ok: 0, failed: [{ id, reason: "只为已启用的固定手动账号开放 x-use 首页窗口。" }] };
   return enqueueManualWindow(admin.id, null);
 }
 

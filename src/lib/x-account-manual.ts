@@ -39,9 +39,8 @@ export function canonicalManualResultUrl(value: string): string | null {
   } catch { return null; }
 }
 
-export function manualReportError(input: { contentMode: string; resultUrl: string; personallySent: boolean; previewUploaded: boolean }): string | null {
-  if (!input.personallySent || !canonicalManualResultUrl(input.resultUrl)) return "请确认本人已使用指定账号发送，并填写该账号的真实结果链接。";
-  if (input.contentMode === "account_product_preview" && !input.previewUploaded) return "图文任务须由本人确认已在该回复上传所示商品预览图。";
+export function manualReportError(input: { resultUrl: string }): string | null {
+  if (!canonicalManualResultUrl(input.resultUrl)) return "请填写指定账号的真实结果链接。";
   return null;
 }
 
