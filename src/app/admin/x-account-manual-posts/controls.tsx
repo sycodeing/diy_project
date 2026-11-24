@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { addAccountManualDrafts, confirmAccountManualIp, reportAccountManualSent, requestAccountManualWindow, type ManualActionState } from "./actions";
+import { addAccountManualDrafts, reportAccountManualSent, requestAccountManualWindow, requestAccountIpWindow, type ManualActionState } from "./actions";
 import { MANUAL_SENDER_ID, MANUAL_SENDER_LABEL } from "@/lib/x-account-manual";
 
 const initial = { ok: 0, failed: [] };
@@ -23,23 +23,14 @@ export function ManualAdd({ authorId, hasPreview = true }: { authorId: string; h
   </form>;
 }
 
-export function ManualWindowControl({ taskId, helperOnline }: { taskId: string; helperOnline: boolean }) {
-  const [state, action, pending] = useActionState(requestAccountManualWindow, initial);
+export function ManualWindowControl({ taskId, accountId, helperOnline, blockedReason }: { taskId?: string; accountId?: string; helperOnline: boolean; blockedReason?: string | null }) {
+  const [state, action, pending] = useActionState(accountId ? requestAccountIpWindow : requestAccountManualWindow, initial);
   return <form action={action} className="mt-3 rounded border border-line p-3">
-    <input type="hidden" name="taskId" value={taskId} />
-    <label className="block text-xs leading-5"><input type="checkbox" name="understandProfile" value="yes" required /> 我了解将使用独立持久 Chrome 资料目录及固定代理；首次由本人登录。这里只打开 IP 核对页，不打开 X 或发送。同一绑定已有窗口将保留复用。</label>
-    <button className={`${button} mt-2`} disabled={pending || !helperOnline}>{pending ? "请求中…" : "请求本机绑定 IP 核对窗口"}</button>
-    <Feedback state={state} success="请求已交独立手动助手。请手动刷新查看打开状态；请求不代表窗口或账号已就绪。" />
-  </form>;
-}
-
-export function ManualIpConfirmation({ requestId }: { requestId: string }) {
-  const [state, action, pending] = useActionState(confirmAccountManualIp, initial);
-  return <form action={action} className="mt-2 text-xs">
-    <input type="hidden" name="requestId" value={requestId} />
-    <label><input type="checkbox" name="checkedIp" value="yes" required /> 我已在该独立绑定窗口核对 IP 与页面预期一致</label>
-    <button className={`${button} ml-2`} disabled={pending}>登记本人已核对 IP</button>
-    <Feedback state={state} success="已登记用户声明；不是系统自动验证。" />
+    {accountId ? <input type="hidden" name="accountId" value={accountId} /> : <input type="hidden" name="taskId" value={taskId} />}
+    <label className="block text-xs leading-5"><input type="checkbox" name="understandProfile" value="yes" required /> 我明确请求 x-use 使用该账号原绑定代理及 Cookie 会话打开 X 首页；不批准或发送。保持原 x-use 浏览器配置，同一会话复用。会话结束后不自动保存 Cookie，初始化失败可能关闭窗口。</label>
+    <button className={`${button} mt-2`} disabled={pending || !helperOnline || Boolean(blockedReason)}>{pending ? "请求中…" : "使用绑定代理打开 X 首页（x-use）"}</button>
+    {blockedReason ? <p className="mt-2 text-xs text-amber-900">{blockedReason}</p> : null}
+    <Feedback state={state} success="请求已交独立 x-use 手动助手。请手动刷新查看打开状态；请求不代表窗口或账号已就绪。" />
   </form>;
 }
 

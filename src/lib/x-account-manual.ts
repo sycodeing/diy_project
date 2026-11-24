@@ -3,6 +3,7 @@ export const MANUAL_SENDER_ID = "648f2feb-3820-4306-8192-184444ef7cb8";
 export const MANUAL_SENDER_KEY = "Le6wCummeratawi";
 export const MANUAL_SENDER_LABEL = "theBestDiy / @Le6wCummeratawi";
 export const MANUAL_HELPER_ID = "macbook-account-manual-01";
+export const MANUAL_HELPER_CAPABILITY = "xuse-manual-read-v2";
 export const MANUAL_HELPER_MAX_AGE_MS = 45_000;
 
 export type ManualSnapshot = {
@@ -44,9 +45,22 @@ export function manualReportError(input: { contentMode: string; resultUrl: strin
   return null;
 }
 
-export function freshManualHelper(helper: { boot_id: string; booted_at: string; last_seen_at: string; status: string } | null, now = Date.now()) {
-  if (!helper || helper.status !== "online") return false;
+export function freshManualHelper(helper: { boot_id: string; booted_at: string; last_seen_at: string; status: string; helper_version?: string } | null, now = Date.now()) {
+  if (!helper || helper.status !== "online" || helper.helper_version !== MANUAL_HELPER_CAPABILITY) return false;
   const seen = Date.parse(helper.last_seen_at), booted = Date.parse(helper.booted_at);
   return Number.isFinite(seen) && Number.isFinite(booted) && booted <= seen
     && seen <= now + 5_000 && now - seen < MANUAL_HELPER_MAX_AGE_MS;
+}
+
+export function manualWindowBlockReason(helper: { boot_id: string; booted_at: string; last_seen_at: string; status: string; helper_version?: string; session_state?: string; route_revision?: string | null; expected_ip?: string | null } | null, revision: string, expectedIp: string) {
+  if (!freshManualHelper(helper)) return "x-use 手动助手未在线或版本不兼容；不会启动自动执行器或积压开窗请求。";
+  if (["blocked", "closed"].includes(helper!.session_state ?? "")) return "原绑定会话已关闭或阻断；请本人核对后显式处理助手，不会自动重开。";
+  if (helper!.session_state === "open" && (helper!.route_revision !== revision || helper!.expected_ip !== expectedIp))
+    return "当前绑定与已有会话不一致；保留原窗口，不切网或另建会话。";
+  return null;
+}
+
+export function manualRequestPurposeValid(purpose: unknown, taskId: unknown) {
+  return purpose === "manual_task_x_home" ? typeof taskId === "string" && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(taskId)
+    : purpose === "account_x_home" && taskId === null;
 }

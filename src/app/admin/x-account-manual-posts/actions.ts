@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
-import { ACCOUNT_MANUAL_PATH, canonicalManualResultUrl, freshManualHelper, MANUAL_HELPER_ID, MANUAL_SENDER_ID, manualReportError, type ManualSnapshot } from "@/lib/x-account-manual";
+import { ACCOUNT_MANUAL_PATH, canonicalManualResultUrl, MANUAL_HELPER_ID, MANUAL_SENDER_ID, manualReportError, manualWindowBlockReason, type ManualSnapshot } from "@/lib/x-account-manual";
 import { loadManualRoute, manualDb } from "@/lib/x-account-manual-server";
 import { hasPriorXContact, validateV2Snapshot } from "@/lib/x-reply-v2";
 
@@ -10,7 +10,7 @@ export type ManualActionState = { ok: number; failed: Array<{ id: string; reason
 const uuid = /^[0-9a-f]{8}-[0-9a-f-]{27}$/i;
 const initial: ManualActionState = { ok: 0, failed: [] };
 function finish(state: ManualActionState) {
-  revalidatePath(ACCOUNT_MANUAL_PATH); revalidatePath("/admin/x-account-candidates"); return state;
+  revalidatePath(ACCOUNT_MANUAL_PATH); revalidatePath("/admin/x-accounts"); revalidatePath("/admin/x-account-candidates"); return state;
 }
 
 /** Copies reviewed content only. It never generates, approves, opens X or sends. */
@@ -74,50 +74,55 @@ export async function reportAccountManualSent(_previous: ManualActionState, form
   return finish(writeError || !data ? { ok: 0, failed: [{ id, reason: writeError?.message ?? "任务已变化。" }] } : { ok: 1, failed: [] });
 }
 
-export async function requestAccountManualWindow(_previous: ManualActionState, form: FormData): Promise<ManualActionState> {
-  const admin = await requireAdmin(ACCOUNT_MANUAL_PATH);
-  const id = String(form.get("taskId") ?? "");
-  if (!uuid.test(id) || form.get("understandProfile") !== "yes") return { ok: 0, failed: [{ id, reason: "请确认独立持久窗口、首次本人登录和只打开IP检查页的边界。" }] };
+async function enqueueManualWindow(adminId: string, taskId: string | null): Promise<ManualActionState> {
+  const id = taskId ?? MANUAL_SENDER_ID;
+  const purpose = taskId ? "manual_task_x_home" : "account_x_home";
   try {
-    const route = await loadManualRoute();
-    const db = manualDb();
-    const { data: helper } = await db.from("x_account_manual_helpers").select("*").eq("helper_id", MANUAL_HELPER_ID).maybeSingle();
-    if (!freshManualHelper(helper)) throw new Error("独立手动助手未在线，请先手动启动。当前不会积压开窗请求。");
-    if (["blocked", "closed"].includes(helper!.session_state)) throw new Error("原绑定会话已关闭或阻断；请本人核对窗口并显式重新启动独立助手，不会自动重开。");
-    const { data: row } = await db.from("x_account_manual_posts").select("id,status,account_id,snapshot").eq("id", id).maybeSingle();
-    if (!row || row.status !== "draft" || row.account_id !== MANUAL_SENDER_ID) throw new Error("仅手动待发送任务可以请求IP核对窗口。");
-    const reason = await validateV2Snapshot(db, row.snapshot as ManualSnapshot);
-    if (reason) throw new Error(reason);
-    await db.from("x_account_manual_open_requests").update({ status: "failed", message: "请求已过期，未自动打开窗口。" })
-      .eq("task_id", id).eq("boot_id", helper!.boot_id).eq("status", "pending").lte("expires_at", new Date().toISOString());
-    const { data: prior } = await db.from("x_account_manual_open_requests").select("id,status")
-      .eq("task_id", id).eq("boot_id", helper!.boot_id).in("status", ["pending", "opening", "blocked"])
-      .order("created_at", { ascending: false }).limit(1).maybeSingle();
-    if (prior) throw new Error(prior.status === "blocked" ? "该会话已阻断，须人工核对；不会自动重开。" : "当前开窗请求仍在处理中。请勿重复点击。");
-    const { error } = await db.from("x_account_manual_open_requests").insert({ task_id: id, account_id: MANUAL_SENDER_ID,
+    const route = await loadManualRoute(), db = manualDb();
+    const { data: helper, error: helperError } = await db.from("x_account_manual_helpers").select("*").eq("helper_id", MANUAL_HELPER_ID).maybeSingle();
+    if (helperError) throw new Error("独立手动助手状态不可读，未创建请求。");
+    const block = manualWindowBlockReason(helper, route.revision, route.expectedIp);
+    if (block) throw new Error(block);
+    if (taskId) {
+      const { data: row } = await db.from("x_account_manual_posts").select("id,status,account_id,snapshot").eq("id", taskId).maybeSingle();
+      if (!row || row.status !== "draft" || row.account_id !== MANUAL_SENDER_ID) throw new Error("仅手动待发送任务可以请求x-use 首页窗口。");
+      const reason = await validateV2Snapshot(db, row.snapshot as ManualSnapshot);
+      if (reason) throw new Error(reason);
+    }
+    let expiryQuery = db.from("x_account_manual_open_requests").update({ status: "failed", message: "请求已过期，未自动打开窗口。" })
+      .eq("account_id", MANUAL_SENDER_ID).eq("purpose", purpose).eq("boot_id", helper!.boot_id).eq("status", "pending").lte("expires_at", new Date().toISOString());
+    expiryQuery = taskId ? expiryQuery.eq("task_id", taskId) : expiryQuery.is("task_id", null);
+    const { error: expiryError } = await expiryQuery;
+    if (expiryError) throw new Error("无法确认旧请求状态，未创建新请求。");
+    let priorQuery = db.from("x_account_manual_open_requests").select("id,status")
+      .eq("account_id", MANUAL_SENDER_ID).eq("purpose", purpose).eq("boot_id", helper!.boot_id).in("status", ["pending", "opening", "blocked"]);
+    priorQuery = taskId ? priorQuery.eq("task_id", taskId) : priorQuery.is("task_id", null);
+    const { data: prior, error: priorError } = await priorQuery.order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (priorError) throw new Error("无法确认当前请求状态，未创建新请求。");
+    if (prior) throw new Error(prior.status === "blocked" ? "该会话已阻断，须人工核对；不会自动重开。" : "当前开窗请求仍在处理中，结果未确认。请勿重复点击。");
+    const { error } = await db.from("x_account_manual_open_requests").insert({ task_id: taskId, purpose, account_id: MANUAL_SENDER_ID,
       helper_id: MANUAL_HELPER_ID, boot_id: helper!.boot_id, route_revision: route.revision,
-      expected_ip: route.expectedIp, created_by: admin.id });
+      expected_ip: route.expectedIp, created_by: adminId });
     if (error) throw new Error(error.message);
     return finish({ ok: 1, failed: [] });
   } catch (e) { return { ok: 0, failed: [{ id, reason: e instanceof Error ? e.message : "开窗请求失败" }] }; }
 }
 
-export async function confirmAccountManualIp(_previous: ManualActionState, form: FormData): Promise<ManualActionState> {
-  const admin = await requireAdmin(ACCOUNT_MANUAL_PATH);
-  const id = String(form.get("requestId") ?? "");
-  if (!uuid.test(id) || form.get("checkedIp") !== "yes") return { ok: 0, failed: [{ id, reason: "请本人核对窗口IP后再确认。" }] };
-  try {
-    const db = manualDb(), route = await loadManualRoute();
-    const { data: helper } = await db.from("x_account_manual_helpers").select("*").eq("helper_id", MANUAL_HELPER_ID).maybeSingle();
-    if (!freshManualHelper(helper)) throw new Error("助手会话已失效，请勿沿用旧IP确认。");
-    if (helper!.session_state !== "open" || !helper!.session_id || helper!.route_revision !== route.revision || helper!.expected_ip !== route.expectedIp)
-      throw new Error("当前本机窗口已关闭、阻断或绑定变化，不能使用历史确认。");
-    const { data, error } = await db.from("x_account_manual_open_requests")
-      .update({ status: "ip_confirmed", user_confirmed_at: new Date().toISOString(), user_confirmed_by: admin.id })
-      .eq("id", id).eq("boot_id", helper!.boot_id).eq("account_id", MANUAL_SENDER_ID)
-      .eq("route_revision", route.revision).eq("expected_ip", route.expectedIp)
-      .eq("status", "opened_manual_check").eq("session_id", helper!.session_id).select("id").maybeSingle();
-    if (error || !data) throw new Error(error?.message ?? "会话、账号或绑定已变化，不能沿用此次确认。");
-    return finish({ ok: 1, failed: [] });
-  } catch (e) { return { ok: 0, failed: [{ id, reason: e instanceof Error ? e.message : "确认失败" }] }; }
+export async function requestAccountManualWindow(_previous: ManualActionState, form: FormData): Promise<ManualActionState> {
+  const admin = await requireAdmin(ACCOUNT_MANUAL_PATH), id = String(form.get("taskId") ?? "");
+  if (!uuid.test(id) || form.get("understandProfile") !== "yes") return { ok: 0, failed: [{ id, reason: "请确认原 x-use 会话与 Cookie 登录和由 x-use 使用原绑定浏览器打开 X 首页的边界。" }] };
+  return enqueueManualWindow(admin.id, id);
+}
+
+export async function requestAccountIpWindow(_previous: ManualActionState, form: FormData): Promise<ManualActionState> {
+  const admin = await requireAdmin("/admin/x-accounts"), id = String(form.get("accountId") ?? "");
+  if (id !== MANUAL_SENDER_ID || form.get("understandProfile") !== "yes") return { ok: 0, failed: [{ id, reason: "只为已启用的固定手动账号开放 x-use 首页窗口；请先确认操作边界。" }] };
+  return enqueueManualWindow(admin.id, null);
+}
+
+/** Legacy IP-only confirmations cannot authorize the new X-home protocol. */
+export async function confirmAccountManualIp(_previous: ManualActionState, _form: FormData): Promise<ManualActionState> {
+  void _previous; void _form;
+  await requireAdmin(ACCOUNT_MANUAL_PATH);
+  return { ok: 0, failed: [{ id: "legacy", reason: "旧 IP-only 确认入口已停用；请使用新的 x-use 手动主页入口。" }] };
 }

@@ -178,33 +178,11 @@ export async function lockCurrentVpnEgress(formData: FormData) {
   redirect(`${PAGE_PATH}?notice=vpn-locked`);
 }
 
-export async function requestXAccountMappingVerification(formData: FormData) {
+/** Retained for stale server-action clients; never enqueue legacy auto inspections. */
+export async function requestXAccountMappingVerification(_formData: FormData) {
+  void _formData;
   await requireAdmin(PAGE_PATH);
-  const supabase = serviceClient();
-  const accountId = idSchema.parse(String(formData.get("accountId") ?? ""));
-  const { data: account, error: accountError } = await supabase.from("x_reply_accounts")
-    .select("id,executor_id,expected_x_handle,network_mode,expected_egress_ip,x_reply_account_proxies(account_id)")
-    .eq("id", accountId)
-    .eq("active", true)
-    .maybeSingle();
-  if (accountError || !account) throw new Error(accountError?.message ?? "账号不存在或已经停用。");
-  if (!account.executor_id) throw new Error("请先绑定执行器。");
-  if (!account.expected_x_handle) throw new Error("请先填写期望的 X 用户名。");
-  const proxy = Array.isArray(account.x_reply_account_proxies) ? account.x_reply_account_proxies[0] : account.x_reply_account_proxies;
-  if (account.network_mode === "vpn_direct" && !account.expected_egress_ip) throw new Error("请先锁定 VPN 出口 IP。");
-  if (account.network_mode === "fixed_proxy" && !proxy) throw new Error("请先配置固定代理。");
-
-  const requestedAt = new Date().toISOString();
-  const { data: updated, error } = await supabase.from("x_reply_accounts").update({
-    verification_status: "pending",
-    verification_requested_at: requestedAt,
-    verification_started_at: null,
-    verification_completed_at: null,
-    verification_error: null,
-  }).eq("id", accountId).select("id").maybeSingle();
-  if (error || !updated) throw new Error(error?.message ?? "验证任务创建失败。");
-  revalidatePath(PAGE_PATH);
-  redirect(`${PAGE_PATH}?notice=verification-requested`);
+  throw new Error("旧自动执行器开窗入口已停用。请使用本页独立 x-use 手动入口；不会恢复自动执行器。");
 }
 
 export async function deleteXAccount(formData: FormData) {
