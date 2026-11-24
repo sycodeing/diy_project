@@ -15,7 +15,7 @@ const links = [
   { href: "/admin/x-account-candidates", label: "账号候选", matches: ["/admin/x-account-candidates"] },
   { href: "/admin/x-accounts", label: "X 账号/IP", matches: ["/admin/x-accounts"] },
   { href: "/admin/x-auto-posts", label: "X 自动发送", matches: ["/admin/x-auto-posts", "/admin/x-replies"] },
-  { href: "/admin/x-auto-posts-v2", label: "自动队列 V2", matches: ["/admin/x-auto-posts-v2"] },
+  { href: "/admin/x-account-manual-posts", label: "账号手动发送队列", matches: ["/admin/x-account-manual-posts", "/admin/x-auto-posts-v2"] },
   { href: "/admin/x-manual-posts", label: "X 手动发送", matches: ["/admin/x-manual-posts"] },
 ];
 

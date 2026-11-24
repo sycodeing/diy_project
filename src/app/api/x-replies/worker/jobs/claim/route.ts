@@ -148,6 +148,7 @@ export async function POST(request: Request) {
     error_code: "worker_disappeared",
     error_message: "本机执行器领取任务后超过 30 分钟未回报。请先到 X 核对，禁止自动重试。",
   }).eq("status", "claimed")
+    .eq("queue_version", 1)
     .eq("worker_id", heartbeat.executorId)
     .lt("claimed_at", staleBefore);
   if (staleError) return NextResponse.json({ error: staleError.message }, { status: 500 });
@@ -217,7 +218,8 @@ export async function POST(request: Request) {
       gateStatus.get(accountId), version, firstJobByAccount.get(accountId)))
     .map(([accountId]) => accountId);
   const v1Accounts = eligibleAccounts(1);
-  const v2Accounts = eligibleAccounts(2);
+  // Isolated manual queue: never claim old V2 rows, even if previously approved.
+  const v2Accounts: string[] = [];
   if (!v1Accounts.length && !v2Accounts.length) return new Response(null, { status: 204 });
 
   const modes = ["legacy_preview"];
@@ -225,6 +227,7 @@ export async function POST(request: Request) {
   if (heartbeat.capabilities.includes(X_REPLY_V2_CAPABILITY) && supportsXReplyV2Worker(heartbeat.workerVersion)) modes.push("account_product_link");
   if (heartbeat.capabilities.includes(X_REPLY_V2_PREVIEW_CAPABILITY) && supportsXReplyV2PreviewWorker(heartbeat.workerVersion)) modes.push("account_product_preview");
   const readCandidate = async (version: 1 | 2, accountIds: string[]) => {
+    if (version !== 1) return { data: null, error: null };
     if (!accountIds.length) return { data: null, error: null };
     let queuedQuery = supabase
       .from("x_reply_jobs")
@@ -363,6 +366,7 @@ export async function POST(request: Request) {
     error_code: null,
     error_message: null,
   }).eq("id", queued.id).eq("status", "queued").eq("attempt_count", 0)
+    .eq("queue_version", 1)
     .not("approved_at", "is", null)
     .eq("content_mode", queued.content_mode)
     .eq("reply_text", queued.reply_text)

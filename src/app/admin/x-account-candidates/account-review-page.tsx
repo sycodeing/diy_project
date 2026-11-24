@@ -53,13 +53,17 @@ export async function AccountReviewPage({ filters }: { filters: AccountCandidate
   if (draftError) throw new Error(draftError.message);
   if (queueError) throw new Error(queueError.message);
   if (senderError) throw new Error(senderError.message);
+  const { data: manualRows, error: manualError } = rows.length ? await supabase.from("x_account_manual_posts")
+    .select("id,target_author_id,status").in("target_author_id", rows.map((row) => row.author_id)).in("status", ["draft", "reported"])
+    : { data: [], error: null };
+  if (manualError) throw new Error(manualError.message);
   const drafts = new Map((draftData ?? []).map((draft) => [draft.author_id, draft]));
   const previewUrls = new Map(await Promise.all((draftData ?? []).filter((draft) => draft.preview_status === "ready"
     && draft.product_slug && draft.artwork_path && draft.artwork_hash && draft.preview_path && draft.preview_hash && draft.preview_template_id
     && validAccountDesignAsset({ artworkPath: draft.artwork_path, artworkHash: draft.artwork_hash,
       previewPath: draft.preview_path, previewHash: draft.preview_hash, templateId: draft.preview_template_id }, draft.product_slug))
     .map(async (draft) => [draft.author_id, await signAccountDesignAsset(draft.preview_path!, 15 * 60)] as const)));
-  const queueByAuthor = new Map<string, { id: string; status: string }>();
+  const queueByAuthor = new Map<string, { id: string; status: string; manual?: boolean }>();
   const activeQueueStatuses = new Set(["draft", "queued", "claimed", "sent", "uncertain"]);
   for (const job of queueData ?? []) {
     if (!job.target_author_id) continue;
@@ -67,6 +71,7 @@ export async function AccountReviewPage({ filters }: { filters: AccountCandidate
     if (!prior || !activeQueueStatuses.has(prior.status) && activeQueueStatuses.has(job.status))
       queueByAuthor.set(job.target_author_id, { id: job.id, status: job.status });
   }
+  for (const job of manualRows ?? []) queueByAuthor.set(job.target_author_id, { id: job.id, status: job.status === "reported" ? "sent" : "draft", manual: true });
   const senders = (senderData ?? []).map((sender) => ({ id: sender.id, label: `${sender.display_name} (${sender.account_key})` }));
   const activeSlugs = new Set(activeProducts.map((product) => product.slug));
   const nowMs = pageTimeMs();
@@ -89,7 +94,7 @@ export async function AccountReviewPage({ filters }: { filters: AccountCandidate
   };
   return <AppShell admin><main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
     <div className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-3xl font-black">账号候选</h1><Link className="font-bold text-accent underline" href="/admin/x-lead-search">手动启动账号发现</Link></div>
-    <Link className="mt-2 inline-block text-sm font-bold text-accent underline" href="/admin/x-auto-posts-v2">查看自动队列 V2</Link>
+    <Link className="mt-2 inline-block text-sm font-bold text-accent underline" href="/admin/x-account-manual-posts">查看账号手动发送队列</Link>
     <p className="mt-2 text-sm text-muted">稳定作者 ID 跨任务只显示一张最新评估卡；历史种子、回复与近期本人帖保留来源。账号适配与当前交流入口分开，所有结果均待人工核实，未取得联系资格。</p>
     <div className="mt-4 flex flex-wrap gap-2 text-sm">
       <Link className="rounded-lg border border-line px-3 py-2" href="/admin/x-account-candidates">全部账号</Link>
@@ -132,17 +137,17 @@ export async function AccountReviewPage({ filters }: { filters: AccountCandidate
         {evidence.map((item) => <div className="mt-2 rounded-lg border border-line p-3 text-sm" key={`${item.post_id}-${item.quote}`}><a className="font-bold text-accent underline" href={`https://x.com/i/status/${item.post_id}`} target="_blank" rel="noreferrer">{item.source === "reply" ? "本人回复" : "近期本人帖"} · {item.post_id}</a><span className="ml-2 text-xs text-muted">{item.created_at || "时间未知"}</span><p className="mt-1 whitespace-pre-wrap break-words">{item.text}</p><p className="mt-1 text-xs text-muted">证据原句：{item.quote}</p>{Array.isArray(item.photo_urls) && item.photo_urls.length ? <RawPostPhotos urls={item.photo_urls.filter(isTrustedRawPhotoUrl).slice(0, 4)} postUrl={`https://x.com/i/status/${item.post_id}`} /> : null}</div>)}
         <div className="mt-3 border-t border-line pt-3 text-sm"><strong>当前交流入口：</strong>{entry.post_id ? <a className="text-accent underline" href={`https://x.com/i/status/${entry.post_id}`} target="_blank" rel="noreferrer">{String(entry.text ?? entry.post_id)}</a> : "尚无适合的新入口"}<p className="mt-1 text-xs text-muted">入口时间 {String(entry.created_at ?? "未知")} · 直接父帖：{String(entry.direct_parent_status ?? "unknown")}；不继承种子作者身份或图片。</p>{Array.isArray(entry.photo_urls) && entry.photo_urls.length ? <RawPostPhotos urls={(entry.photo_urls as string[]).filter(isTrustedRawPhotoUrl).slice(0, 4)} postUrl={`https://x.com/i/status/${entry.post_id}`} /> : null}</div>
         <div className="mt-3 rounded-lg border border-line bg-surface p-3 text-sm">
-          {queueJob ? <p className="mb-2"><Link className="font-bold text-accent underline" href={`/admin/x-auto-posts-v2#v2-job-${queueJob.id}`}>V2 队列：{queueJob.status === "draft" ? "已加入，待人工批准" : X_REPLY_STATUS_LABELS[queueJob.status] ?? queueJob.status} · 查看任务</Link>{!hasActiveQueueJob ? <span className="ml-2 text-xs text-muted">该任务已结束；经重新核实后可再次加入待审。</span> : null}</p> : null}
+          {queueJob ? <p className="mb-2"><Link className="font-bold text-accent underline" href={`/admin/x-account-manual-posts#${queueJob.manual ? "manual-job" : "v2-job"}-${queueJob.id}`}>队列：{queueJob.manual ? (queueJob.status === "draft" ? "人工待发送" : "本人登记已发送") : X_REPLY_STATUS_LABELS[queueJob.status] ?? queueJob.status} · 查看任务</Link>{!hasActiveQueueJob ? <span className="ml-2 text-xs text-muted">该任务已结束；经重新核实后可再次加入待审。</span> : null}</p> : null}
           <div className="flex flex-wrap items-center gap-2"><strong>公开回复草稿：</strong><span>{draft?.status === "draft_ready" ? "待人工审阅" : draft?.status === "no_match" ? "暂无商品匹配" : draft?.status === "evidence_pending" ? "证据待补" : draft?.status === "blocked" ? "已阻断" : "尚未生成"}</span><span className="text-xs text-muted">{draft?.evidence_coverage === "partial" ? "已有证据覆盖不完整" : draft?.evidence_coverage === "full" ? "已存有限本人帖快照" : ""}</span></div>
           {draft ? <p className="mt-1 text-xs text-muted">{draft.reason} · {draft.generation_version} · {draft.generated_at}</p> : null}
           {draft?.selected_post_id ? <p className="mt-2 text-xs">所选本人帖：<a className="text-accent underline" href={`https://x.com/i/status/${draft.selected_post_id}`} target="_blank" rel="noreferrer">{draft.selected_post_id}</a> · {draft.selected_post_created_at}<br />{draft.selected_post_excerpt}</p> : null}
           {draft?.product_match_reason ? <p className="mt-2 text-xs">商品用途判断：{draft.product_match_reason}；选中商品 {draft.product_slug}。原帖图片未用于设计；{draft.preview_status === "ready" ? "本店原创平面设计已合成商品示例，待人工审图。" : "当前为纯文字建议，未附商品示例图。"}</p> : null}
-          {draftFresh ? <div className="mt-2"><p className="whitespace-pre-wrap rounded border border-line bg-panel p-2">{draft.reply_text}</p><a className="mt-1 inline-block text-xs text-accent underline" href={draft.marketing_url!} target="_blank" rel="noreferrer">查看该商品归因链接</a><p className="text-xs text-muted">链接至 {draft.marketing_expires_at}；{queueJob ? `队列状态：${queueJob.status === "draft" ? "已加入，待人工批准" : X_REPLY_STATUS_LABELS[queueJob.status] ?? queueJob.status}。` : "尚未加入队列。"}</p></div> : draft?.status === "draft_ready" ? <p className="mt-2 text-xs text-muted">草稿链接已过期、商品不可售或人工已忽略；请重生成并复核。</p> : null}
+          {draftFresh ? <div className="mt-2"><p className="whitespace-pre-wrap rounded border border-line bg-panel p-2">{draft.reply_text}</p><a className="mt-1 inline-block text-xs text-accent underline" href={draft.marketing_url!} target="_blank" rel="noreferrer">查看该商品归因链接</a><p className="text-xs text-muted">链接至 {draft.marketing_expires_at}；{queueJob ? `队列状态：${queueJob.status === "draft" ? "已加入人工队列" : X_REPLY_STATUS_LABELS[queueJob.status] ?? queueJob.status}。` : "尚未加入队列。"}</p></div> : draft?.status === "draft_ready" ? <p className="mt-2 text-xs text-muted">草稿链接已过期、商品不可售或人工已忽略；请重生成并复核。</p> : null}
           {draft ? <AccountDesignControl authorId={row.author_id} previewStatus={draft.preview_status}
             previewBrief={draft.design_brief} previewImageUrl={previewUrls.get(row.author_id)}
-            disabledReason={hasActiveQueueJob ? "该账号已有 V2 任务；先撤回待审任务，再更新图文草稿。"
+            disabledReason={hasActiveQueueJob ? "该账号已有队列或历史任务，不能改写素材快照。"
               : !draftFresh ? "先生成有效的近期本人帖及在售商品文字草稿，再上传本店原创设计。" : null} /> : null}
-          {queueGate.ready ? <AccountV2QueueControl key={`${row.author_id}-${draft?.generated_at}`} authorId={row.author_id} senders={senders}
+          {queueGate.ready ? <AccountV2QueueControl key={`${row.author_id}-${draft?.generated_at}`} authorId={row.author_id} senders={senders} hasPreview={draft?.preview_status === "ready"}
             automaticPreviewBlockReason={automaticPreviewBlockReason}
             automaticPreviewFallback={automaticPreviewFallback}
             savedFallbackPreview={draft?.preview_status === "ready" && isFallbackAccountDesignBrief(draft.design_brief)} />

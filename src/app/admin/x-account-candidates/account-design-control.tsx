@@ -38,7 +38,7 @@ export function AccountDesignControl({ authorId, previewImageUrl, previewStatus,
 
   return <form action={action} className="mt-3 rounded-lg border border-line bg-panel p-3 text-sm">
     <h3 className="font-bold">原创商品预览</h3>
-    <p className="mt-1 text-xs text-muted">默认可自动选择本店原创图并用真实商品模板合成；原帖图片不会作印花。已保存预览仍需单独加入 V2 待审并人工批准。</p>
+    <p className="mt-1 text-xs text-muted">默认可自动选择本店原创图并用真实商品模板合成；原帖图片不会作印花。已保存预览可加入账号手动发送队列，由本人核对并发送。</p>
     {previewStatus ? <p className="mt-2 text-xs">预览状态：{STATUS_LABEL[previewStatus] ?? previewStatus}</p> : null}
     {previewStatus === "ready" && isFallbackAccountDesignBrief(previewBrief)
       ? <p className="mt-1 text-xs text-muted">中性起点预览 · 本店建议配色，并非从用户原帖提取。</p> : null}

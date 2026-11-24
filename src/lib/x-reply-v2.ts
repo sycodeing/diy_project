@@ -167,8 +167,21 @@ export async function validateV2Snapshot(supabase: ServiceClient, job: V2Snapsho
 }
 
 /** Historical contacts are checked globally, independently of sender account. */
-export async function hasPriorXContact(supabase: ServiceClient, authorId: string, handle: string, postId: string, exceptJobId?: string) {
+export async function hasPriorXContact(supabase: ServiceClient, authorId: string, handle: string, postId: string, exceptJobId?: string, exceptManualId?: string) {
   const normalized = handle.toLowerCase().replace(/^@/, "");
+  for (let offset = 0; offset < 10000; offset += 500) {
+    const { data, error } = await supabase.from("x_account_manual_posts").select("id,target_author_id,target_post_url")
+      .in("status", ["draft", "reported"]).order("id").range(offset, offset + 499);
+    if (error || !data) throw new Error("Manual account contacts unavailable");
+    for (const row of data) {
+      if (row.id === exceptManualId) continue;
+      const url = String(row.target_post_url ?? "");
+      if (row.target_author_id === authorId || url.endsWith(`/status/${postId}`)
+        || new RegExp(`^https://(?:www\\.)?(?:x|twitter)\\.com/${normalized}/status/`, "i").test(url)) return true;
+    }
+    if (data.length < 500) break;
+    if (offset === 9500) throw new Error("Manual account contacts exceeded bound");
+  }
   for (let offset = 0; offset < 10000; offset += 500) {
     const { data, error } = await supabase.from("x_reply_jobs")
       .select("id,target_author_id,target_post_url").in("status", ["queued", "claimed", "sent", "uncertain"])

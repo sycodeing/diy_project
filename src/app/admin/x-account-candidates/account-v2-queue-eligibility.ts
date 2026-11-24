@@ -8,13 +8,13 @@ type QueueAccount = {
   account_evidence: unknown;
 };
 
-/** Display gate only; addV2Drafts performs the authoritative live server checks. */
+/** Display gate only; the manual action performs the authoritative live checks. */
 export function accountV2QueueEligibility(input: {
   draft: QueueDraft | null | undefined; account: QueueAccount; activeSlugs: ReadonlySet<string>;
   hasActiveQueueJob: boolean; nowMs: number;
 }): { ready: boolean; reason: string } {
   const { draft, account, activeSlugs, hasActiveQueueJob, nowMs } = input;
-  if (hasActiveQueueJob) return { ready: false, reason: "该账号已有待审或执行中的 V2 任务。" };
+  if (hasActiveQueueJob) return { ready: false, reason: "该账号已有队列或联系记录。" };
   if (!draft) return { ready: false, reason: "尚无草稿；请先生成。" };
   if (draft.status !== "draft_ready") return { ready: false, reason: "当前草稿没有可用的商品回复；请查看原因并补证或重生成。" };
   if (draft.review_status !== "unreviewed" || account.review_status === "dismissed"

@@ -33,6 +33,16 @@ export async function GET(request: Request) {
     if (offset === 9500) return NextResponse.json({ error: "Reply snapshot exceeded safe bound." }, { status: 503 });
   }
   const postIds = new Set<string>();
+  let manualReserved = 0;
+  for (let offset = 0; offset < 10000; offset += 500) {
+    const { data, error } = await supabase.from("x_account_manual_posts").select("target_post_url,target_author_id")
+      .in("status", ["draft", "reported"]).order("id").range(offset, offset + 499);
+    if (error || !data) return NextResponse.json({ error: "Manual contact snapshot unavailable." }, { status: 503 });
+    replies.push(...data);
+    manualReserved += data.length;
+    if (data.length < 500) break;
+    if (offset === 9500) return NextResponse.json({ error: "Manual contact snapshot exceeded bound." }, { status: 503 });
+  }
   const handles = new Set<string>();
   const authorIds = new Set<string>();
   for (const lead of leads) {
@@ -53,5 +63,6 @@ export async function GET(request: Request) {
   }
   return NextResponse.json({ snapshot_at: new Date().toISOString(),
     post_ids: [...postIds], author_ids: [...authorIds], handles: [...handles],
-    source_counts: { contacted_leads: leads.length, sent_or_uncertain_replies: replies.length } });
+    source_counts: { contacted_leads: leads.length, sent_or_uncertain_replies: replies.length - manualReserved,
+      manual_reserved_or_reported: manualReserved } });
 }

@@ -75,7 +75,7 @@ export async function ensurePreparedAccountDraft(authorId: string, mode: "auto_p
   if (!/^\d{5,30}$/.test(authorId)) throw new Error("Invalid account ID");
   const supabase = getSupabaseServiceClient();
   if (!supabase) throw new Error("Supabase is not configured");
-  const [{ data: account, error }, { data: previous, error: previousError }, { data: jobs, error: jobsError }, products, snapshot] = await Promise.all([
+    const [{ data: account, error }, { data: previous, error: previousError }, { data: jobs, error: jobsError }, products, snapshot, { data: manualJobs, error: manualError }] = await Promise.all([
       supabase.from("x_lead_account_reviews")
         .select("author_id,x_handle,account_status,entry_status,review_status,account_evidence,entry_evidence")
         .eq("author_id", authorId).maybeSingle(),
@@ -85,9 +85,11 @@ export async function ensurePreparedAccountDraft(authorId: string, mode: "auto_p
       supabase.from("x_reply_jobs").select("id").eq("target_author_id", authorId)
         .in("status", ["draft", "queued", "claimed", "sent", "uncertain"]).limit(1),
       getActiveAccountProducts(), contactedSnapshot(),
+      supabase.from("x_account_manual_posts").select("id").eq("target_author_id", authorId).in("status", ["draft", "reported"]).limit(1),
     ]);
     if (error || previousError || jobsError || !account) throw new Error(error?.message ?? previousError?.message ?? jobsError?.message ?? "Account review is missing");
-    if (jobs?.length) throw new Error("该账号已有待审或执行任务，不能改写其草稿快照。");
+    if (manualError) throw new Error("手动队列状态不可读，停止改写草稿。");
+    if (jobs?.length || manualJobs?.length) throw new Error("该账号已有待审、人工或执行任务，不能改写其草稿快照。");
     const evidence = account.account_evidence && typeof account.account_evidence === "object" && !Array.isArray(account.account_evidence)
       ? account.account_evidence as Record<string, unknown> : {};
     const entry = account.entry_evidence && typeof account.entry_evidence === "object" && !Array.isArray(account.entry_evidence)
