@@ -32,9 +32,9 @@ export default async function AccountManualPage() {
   let route: Awaited<ReturnType<typeof loadManualRoute>> | null = null, routeError = "";
   try { route = await loadManualRoute(); } catch (e) { routeError = e instanceof Error ? e.message : "绑定不可读"; }
   const online = freshManualHelper(helper);
-  const currentRequests = (requests ?? []).filter((r) => ["account_x_home", "manual_task_x_home"].includes(r.purpose) && online && r.boot_id === helper?.boot_id && r.route_revision === route?.revision && r.expected_ip === route?.expectedIp);
+  const currentRequests = (requests ?? []).filter((r) => ["account_x_home", "manual_task_x_home", "manual_task_x_post"].includes(r.purpose) && online && r.boot_id === helper?.boot_id && r.route_revision === route?.revision && r.expected_ip === route?.expectedIp);
   const sessionOpen = helper?.session_state === "open" && helper.observed_x_handle === MANUAL_SENDER_KEY && helper.route_revision === route?.revision && helper.expected_ip === route?.expectedIp;
-  const confirmation = currentRequests.find((r) => sessionOpen && r.status === "opened_x_home" && r.session_id === helper?.session_id && r.observed_x_handle === MANUAL_SENDER_KEY);
+  const confirmation = currentRequests.find((r) => sessionOpen && ["opened_x_home", "opened_x_post"].includes(r.status) && r.session_id === helper?.session_id && r.observed_x_handle === MANUAL_SENDER_KEY);
   const windowBlock = route ? manualWindowBlockReason(helper, route.revision, route.expectedIp) : routeError;
   const cards = await Promise.all(posts.map(async (post) => ({ post,
     block: post.status === "draft" ? await validateV2Snapshot(db, post.snapshot) : null,
@@ -47,7 +47,7 @@ export default async function AccountManualPage() {
       <h2 className="font-black">x-use 手动浏览器会话</h2>
       <p>{online ? "独立 x-use 手动助手在线；尚不代表 X 登录或当前会话可用。" : "独立 x-use 手动助手离线或版本不兼容。不会启动自动执行器，也不积压开窗请求。"}</p>
       <p>预期固定出口：{route?.expectedIp ?? "不可读"}。{routeError}</p>
-      <p>只有本人明确点击开窗后，才通过原 x-use MCP、绑定代理和账号 Cookie 会话核对出口、打开 X 首页及核对可见登录账号。保持原浏览器 backend 和 context 配置；不是标准 Chrome 持久 profile。后续使用同一会话和标签，不自动发送或批准。</p>
+      <p>只有本人明确点击开窗后，才通过原 x-use MCP、绑定代理和账号 Cookie 会话核对出口、打开 X 首页及核对可见登录账号。保持原浏览器 backend 和 context 配置；不是标准 Chrome 持久 profile。后续帖子按钮只在本助手持有的原 context 同一标签导航，不再注入 Cookie；其他进程的窗口不能自动接管。</p>
       <p>复制、下载或登记不会关闭会话。助手空闲心跳只检查本地连接，不后台访问 X；浏览器页面自身仍会产生网络请求。会话结束不自动保存 Cookie；机器休眠、强杀或网络故障不保证连接持续。遇验证、限制或身份不符时停止，不自动恢复或重试。原池初始化失败可能清理窗口，不能保证失败窗口保留。</p>
       {confirmation ? <p className="font-bold text-emerald-800">该 x-use 会话打开时已核对绑定出口及可见账号为 @Le6wCummeratawi；当前页面和身份仍请本人复核；复制目标后在该会话同一标签手动导航、上传和发送。</p> : null}
       {currentRequests[0] ? <p className="text-xs text-muted">最近开窗状态：{currentRequests[0].status} · {currentRequests[0].message}</p> : null}
@@ -61,7 +61,7 @@ export default async function AccountManualPage() {
         {image ? <figure className="mb-3 max-w-sm"><AdminAsyncImage alt="该任务原审阅商品预览图" src={image} /><figcaption className="text-xs text-muted">原审阅预览图 · SHA256 {post.snapshot.account_preview_hash}</figcaption></figure> : <p className="text-sm">此条是明确选择的纯文字草稿，没有附件。</p>}
         <p className="mb-2 text-xs text-muted">复制文案不会附图；图文任务请在 X 手动上传下载的商品预览图。PNG 为原 WebP 快照的下载派生文件，原快照及哈希不变。</p><div className="flex flex-wrap gap-2"><CopyButton label="复制文案" value={post.reply_text} />{image ? <a className="rounded border border-line px-3 py-2 text-sm" href={`/api/x-account-manual/posts/${post.id}/preview`}>下载商品预览图</a> : null}
           {confirmation && !block && post.status === "draft" ? <CopyButton emphasized label="复制目标链接，回绑定标签粘贴" value={post.target_post_url} /> : null}</div>
-        {post.status === "draft" ? block ? <p className="mt-2 text-red-800">已阻断：{block}。不能打开目标或自动重生成。</p> : <><ManualWindowControl taskId={post.id} helperOnline={online && Boolean(route)} blockedReason={windowBlock} /><ManualReport taskId={post.id} withPreview={post.snapshot.content_mode === "account_product_preview"} /></> : <p className="mt-2 text-sm">人工登记时间 {post.reported_at}；结果 {post.result_url ? <CopyButton label="复制本人登记结果链接" value={post.result_url} /> : "—"}。系统未访问 X 核验。</p>}
+        {post.status === "draft" ? block ? <p className="mt-2 text-red-800">已阻断：{block}。不能打开目标或自动重生成。</p> : <><ManualWindowControl taskId={post.id} helperOnline={online && Boolean(route)} blockedReason={windowBlock ?? (!sessionOpen ? "请先在账号页建立原绑定 x-use 会话；不会为帖子请求新建 Cookie 会话。" : null)} /><ManualReport taskId={post.id} withPreview={post.snapshot.content_mode === "account_product_preview"} /></> : <p className="mt-2 text-sm">人工登记时间 {post.reported_at}；结果 {post.result_url ? <CopyButton label="复制本人登记结果链接" value={post.result_url} /> : "—"}。系统未访问 X 核验。</p>}
       </article>)}</div>
     </section>
     <section><h2 className="text-xl font-black">原 V2 历史与未迁移记录 · {retainedHistory.length}</h2><p className="text-sm text-muted">保留原发送账号。已发送或结果未决的记录不可转成其他账号重发，也没有重试入口。</p>

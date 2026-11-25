@@ -25,7 +25,7 @@ class XUseManualSessions:
 
     def heartbeat_session(self):
         values = {k: self.state[k] for k in ("sessionId", "routeRevision", "expectedIp", "ownerHandle") if self.state.get(k)}
-        return {"sessionState": "blocked" if self.blocked else self.state.get("sessionState", "idle"), **values}
+        return {"sessionState": "closed" if self.state.get("sessionState") == "closed" else "blocked" if self.blocked else self.state.get("sessionState", "idle"), **values}
 
     async def poll_local_status(self):
         if not self.client:
@@ -97,6 +97,30 @@ class XUseManualSessions:
                 # Unknown open outcome: preserve a possibly visible page/relay.
                 self.state["live"] = True
             return {"status": "blocked", "message": "x-use 手动入口未确认就绪；不会另建会话或重试。"}
+
+    async def open_post(self, request):
+        # A post request never creates a new MCP/context or imports Cookies.
+        import re
+        target = request.get("targetPostUrl")
+        if not isinstance(target, str) or not re.fullmatch(r"https://x\.com/[A-Za-z0-9_]{1,15}/status/[0-9]{5,30}", target):
+            return {"status": "blocked", "message": "目标帖子链接无效；未导航。"}
+        if not self.client:
+            return {"status": "blocked", "message": "无法接管已有窗口：本助手未持有其原 context；不会另建 Cookie 会话。请保留原窗口。"}
+        result = await self.open_home(request)
+        if result.get("status") != "opened_x_home":
+            return result
+        try:
+            data = await self._call("manual_open_post", {"account": ACCOUNT_KEY,
+                "revision": request.get("routeRevision"), "expected_ip": request.get("expectedIp"),
+                "session_id": self.state.get("sessionId"), "target_url": request.get("targetPostUrl")})
+            self.state = data
+            if not data.get("ok"):
+                self.blocked = True
+                return {"status": "blocked", "message": "原 x-use 会话无法安全打开目标；保留窗口，不重试或另建会话。"}
+            return {**self._opened("已在原 x-use context 的同一标签打开目标帖子；请本人复核，未发送。"), "status": "opened_x_post"}
+        except Exception:
+            self.blocked = True
+            return {"status": "blocked", "message": "目标打开结果未确认；保留原会话，不重试。"}
 
     def _opened(self, message):
         return {"status": "opened_x_home", "sessionId": self.state["sessionId"],

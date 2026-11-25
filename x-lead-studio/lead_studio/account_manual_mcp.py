@@ -11,7 +11,7 @@ from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 ACCOUNT = "Le6wCummeratawi"
-CAPABILITY = "xuse-manual-read-v2"
+CAPABILITY = "xuse-manual-read-v3"
 
 
 def restricted_server():
@@ -45,7 +45,7 @@ def restricted_server():
         metadata = ctx.session_pool.session_status(ACCOUNT)
         live = bool(metadata.get("warm") and metadata.get("browser_connected") is not False
                     and metadata.get("tab_closed") is not True)
-        state = "blocked" if held["blocked"] else "open" if live and held["entry"] else "closed" if held["session_id"] else "idle"
+        state = "closed" if held["session_id"] and metadata.get("tab_closed") is True else "blocked" if held["blocked"] else "open" if live and held["entry"] else "closed" if held["session_id"] else "idle"
         return {"sessionState": state, "live": live, "sessionId": held["session_id"],
                 "routeRevision": held["revision"], "expectedIp": held["expected_ip"],
                 "ownerHandle": held["owner"], "transport": metadata}
@@ -150,6 +150,41 @@ def restricted_server():
                 # Preserve a warm leased page for the operator. Cold-start errors
                 # retain the official pool's cleanup behavior; no fake promise.
                 return {"ok": False, "reason": getattr(error, "reason", "manual_open_failed"), **local_state()}
+
+    @server.tool()
+    async def manual_open_post(account: str, revision: str, expected_ip: str, session_id: str, target_url: str) -> dict:
+        async with opening:
+            if (account != ACCOUNT or not re.fullmatch(r"https://x\.com/[A-Za-z0-9_]{1,15}/status/[0-9]{5,30}", target_url)
+                    or session_id != held["session_id"] or revision != held["revision"]
+                    or expected_ip != held["expected_ip"] or local_state()["sessionState"] != "open"):
+                return {"ok": False, "reason": "existing_session_required", **local_state()}
+            action_id = None
+            try:
+                _, raw, _ = resolve_account(ctx, ACCOUNT)
+                require_active(raw, ACCOUNT)
+                ctx.safety_store.check_pause(ACCOUNT)
+                # The long lease already owns this pool entry. Calling the
+                # ordinary pool wrapper here would deadlock or allow cold start.
+                if ctx.session_pool.entry_for(ACCOUNT).browser_manager is not held["entry"]:
+                    raise SessionError("session_expired")
+                action_id = ctx.safety_store.reserve(ACCOUNT, "read", None,
+                    {"manual": "open_post"}, read_operation="navigate")
+                await owner_from_current_page(held["entry"])
+                await held["entry"].navigate(target_url)
+                held["owner"] = await owner_from_current_page(held["entry"])
+                ctx.safety_store.finish(ACCOUNT, action_id, "succeeded")
+                return {"ok": True, "reused": True, **local_state()}
+            except BaseException as error:
+                held["blocked"] = True
+                if action_id:
+                    ctx.safety_store.finish(ACCOUNT, action_id, "failed")
+                if isinstance(error, BrowserBlocked):
+                    ctx.safety_store.pause(ACCOUNT, error.reason, preserve_manual=True)
+                elif not isinstance(error, PolicyError):
+                    ctx.safety_store.pause(ACCOUNT, "manual_pause", preserve_manual=True)
+                if isinstance(error, asyncio.CancelledError):
+                    raise
+                return {"ok": False, "reason": getattr(error, "reason", "post_open_failed"), **local_state()}
 
     @server.tool()
     async def local_status() -> dict:

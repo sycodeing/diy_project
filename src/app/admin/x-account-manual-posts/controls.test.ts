@@ -8,7 +8,7 @@ import { MANUAL_SENDER_ID } from "@/lib/x-account-manual";
 test("account and task entry buttons need no checkbox or hidden consent", () => {
   for (const props of [{ accountId: MANUAL_SENDER_ID }, { taskId: "test-task" }]) {
     const html = renderToStaticMarkup(createElement(ManualWindowControl, { ...props, helperOnline: true }));
-    assert.match(html, /使用绑定代理打开 X 首页（x-use）/);
+    assert.match(html, props.accountId ? /使用绑定代理打开 X 首页（x-use）/ : /在原 x-use 标签打开目标帖子/);
     assert.doesNotMatch(html, /checkbox|understandProfile|disabled=""/);
   }
 });

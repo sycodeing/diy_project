@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
-import { ACCOUNT_MANUAL_PATH, canonicalManualResultUrl, MANUAL_HELPER_ID, MANUAL_SENDER_ID, manualReportError, manualWindowBlockReason, type ManualSnapshot } from "@/lib/x-account-manual";
+import { ACCOUNT_MANUAL_PATH, canonicalManualResultUrl, canonicalManualTargetUrl, MANUAL_HELPER_ID, MANUAL_SENDER_ID, manualReportError, manualWindowBlockReason, type ManualSnapshot } from "@/lib/x-account-manual";
 import { loadManualRoute, manualDb } from "@/lib/x-account-manual-server";
 import { hasPriorXContact, validateV2Snapshot } from "@/lib/x-reply-v2";
 
@@ -73,7 +73,7 @@ export async function reportAccountManualSent(_previous: ManualActionState, form
 
 async function enqueueManualWindow(adminId: string, taskId: string | null): Promise<ManualActionState> {
   const id = taskId ?? MANUAL_SENDER_ID;
-  const purpose = taskId ? "manual_task_x_home" : "account_x_home";
+  const purpose = taskId ? "manual_task_x_post" : "account_x_home";
   try {
     const route = await loadManualRoute(), db = manualDb();
     const { data: helper, error: helperError } = await db.from("x_account_manual_helpers").select("*").eq("helper_id", MANUAL_HELPER_ID).maybeSingle();
@@ -81,8 +81,10 @@ async function enqueueManualWindow(adminId: string, taskId: string | null): Prom
     const block = manualWindowBlockReason(helper, route.revision, route.expectedIp);
     if (block) throw new Error(block);
     if (taskId) {
-      const { data: row } = await db.from("x_account_manual_posts").select("id,status,account_id,snapshot").eq("id", taskId).maybeSingle();
-      if (!row || row.status !== "draft" || row.account_id !== MANUAL_SENDER_ID) throw new Error("仅手动待发送任务可以请求x-use 首页窗口。");
+      const { data: row } = await db.from("x_account_manual_posts").select("id,status,account_id,snapshot,target_post_url").eq("id", taskId).maybeSingle();
+      if (!row || row.status !== "draft" || row.account_id !== MANUAL_SENDER_ID) throw new Error("仅手动待发送任务可以请求打开目标帖子。");
+      if (helper?.session_state !== "open" || !helper.session_id) throw new Error("请先在账号页建立原 x-use 绑定会话；帖子按钮不会新建 Cookie 会话。");
+      if (!canonicalManualTargetUrl(row.target_post_url)) throw new Error("目标帖子链接无效。");
       const reason = await validateV2Snapshot(db, row.snapshot as ManualSnapshot);
       if (reason) throw new Error(reason);
     }

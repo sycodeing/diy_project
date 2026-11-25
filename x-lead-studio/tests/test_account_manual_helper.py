@@ -104,8 +104,114 @@ def test_actual_idle_helper_never_imports_xuse_or_starts_mcp(tmp_path, monkeypat
     monkeypatch.setattr(builtins, "__import__", guarded_import)
     async def check():
         loop = asyncio.get_running_loop()
-        monkeypatch.setattr(loop, "add_signal_handler", lambda _sig, callback: callbacks.append(callback))
+        monkeypatch.setattr(loop, "add_signal_handler", lambda _sig, callback, *args: callbacks.append(lambda: callback(*args)))
         await helper.run_helper("https://www.thebestdiyshop.com", "fake-secret", tmp_path, tmp_path / "fake-xuse-home")
     asyncio.run(check())
-    assert operations == ["register", "heartbeat", "claim", "stop"]
+    assert operations == ["register", "heartbeat", "claim", "stop", "stop"]
     assert not (tmp_path / "fake-xuse-home").exists()
+
+
+def test_post_requests_only_reuse_owned_client_and_never_start_a_context(tmp_path):
+    manager = XUseManualSessions(tmp_path)
+    post = request(purpose="manual_task_x_post", taskId="one", targetPostUrl="https://x.com/pet/status/123456")
+    assert asyncio.run(manager.open_post(post))["status"] == "blocked"
+    assert manager.client is None and not tmp_path.joinpath("logs").exists()
+    manager.client = object()
+    state = {"ok": True, "sessionState": "open", "live": True, "sessionId": "one",
+             "routeRevision": "a" * 64, "expectedIp": "192.0.2.1", "ownerHandle": ACCOUNT_KEY}
+    calls = []
+    async def fake_call(name, args):
+        calls.append((name, args))
+        assert name in {"local_status", "manual_open_post"}
+        return dict(state)
+    manager._call = fake_call
+    async def check():
+        for target in ["https://x.com/pet/status/123456", "https://x.com/dog/status/654321"]:
+            assert (await manager.open_post(dict(post, targetPostUrl=target)))["status"] == "opened_x_post"
+        assert [args["target_url"] for name, args in calls if name == "manual_open_post"] == ["https://x.com/pet/status/123456", "https://x.com/dog/status/654321"]
+        assert (await manager.open_post(dict(post, accountKey="other")))["status"] == "blocked"
+        assert (await manager.open_post(dict(post, expectedIp="192.0.2.2")))["status"] == "blocked"
+        assert manager.has_live_window()
+    asyncio.run(check())
+
+
+def test_long_open_keeps_independent_heartbeat_and_stop_preserves_window(tmp_path, monkeypatch):
+    import httpx
+    import lead_studio.account_manual_helper as helper
+    import lead_studio.account_manual_xuse as xuse
+    callbacks, operations, beats_during_open = [], [], []
+    clock = {"opening": False, "claimed": False, "closed": False}
+    class Sessions:
+        def __init__(self, _): self.blocked = False
+        async def poll_local_status(self): pass
+        def heartbeat_session(self): return {"sessionState": "open" if clock["opening"] else "idle"}
+        def has_live_window(self): return clock["opening"] and not clock["closed"]
+        async def open_home(self, _):
+            clock["opening"] = True
+            # Simulated long browser operation spans several heartbeat periods.
+            await asyncio.sleep(.04)
+            assert len(beats_during_open) >= 2
+            return {"status": "blocked", "message": "offline simulated result"}
+        async def release_after_user_closed(self):
+            assert not self.has_live_window()
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): return None
+        async def post(self, url, *, headers, json):
+            operation = json["operation"]
+            operations.append(operation)
+            if operation == "register": payload = {"bootedAt": "2026-11-24T10:00:00Z"}
+            elif operation == "claim" and not clock["claimed"]:
+                clock["claimed"] = True
+                payload = {"request": request(bootId=json["bootId"], id="request", createdAt="2026-11-24T10:00:00Z", expiresAt="2099-11-24T10:02:00Z")}
+            else: payload = {"ok": True}
+            if operation == "heartbeat" and clock["opening"]: beats_during_open.append(operation)
+            if operation == "complete": callbacks[0]()
+            if operation == "stop":
+                assert clock["opening"]  # retained until explicit simulated user close
+                clock["closed"] = True
+            return httpx.Response(200, json=payload, request=httpx.Request("POST", url))
+    monkeypatch.setattr(xuse, "XUseManualSessions", Sessions)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: Client())
+    monkeypatch.setattr(helper, "HEARTBEAT_SECONDS", .005)
+    async def check():
+        loop = asyncio.get_running_loop()
+        monkeypatch.setattr(loop, "add_signal_handler", lambda _sig, callback, *args: callbacks.append(lambda: callback(*args)))
+        await helper.run_helper("https://www.thebestdiyshop.com", "fake-secret", tmp_path, tmp_path)
+    asyncio.run(check())
+    assert operations.count("register") == 1
+    assert operations.count("complete") == 1 and operations[-1] == "stop"
+
+
+def test_stop_during_claim_does_not_start_the_returned_navigation(tmp_path, monkeypatch):
+    import httpx
+    import lead_studio.account_manual_helper as helper
+    import lead_studio.account_manual_xuse as xuse
+    callbacks, operations = [], []
+    class Sessions:
+        def __init__(self, _): pass
+        def heartbeat_session(self): return {"sessionState": "idle"}
+        def has_live_window(self): return False
+        async def poll_local_status(self): pass
+        async def open_home(self, _): raise AssertionError("must not start after stop")
+        async def open_post(self, _): raise AssertionError("must not navigate after stop")
+        async def release_after_user_closed(self): pass
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): pass
+        async def post(self, url, *, headers, json):
+            op = json['operation']
+            operations.append(op)
+            payload = {"bootedAt": "2026-11-24T10:00:00Z"} if op == "register" else {"ok": True}
+            if op == "claim":
+                callbacks[0]()
+                payload = {"request": request(id="request", bootId=json['bootId'], purpose="manual_task_x_post", taskId="one", createdAt="2026-11-24T10:00:00Z", expiresAt="2099-11-24T10:02:00Z")}
+            if op == "complete": assert json['status'] == 'blocked'
+            return httpx.Response(200, json=payload, request=httpx.Request("POST", url))
+    monkeypatch.setattr(xuse, "XUseManualSessions", Sessions)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: Client())
+    async def check():
+        monkeypatch.setattr(asyncio.get_running_loop(), "add_signal_handler", lambda _sig, callback, *args: callbacks.append(lambda: callback(*args)))
+        await helper.run_helper("https://www.thebestdiyshop.com", "fake-secret", tmp_path, tmp_path)
+    asyncio.run(check())
+    assert operations == ['register', 'heartbeat', 'claim', 'complete', 'stop', 'stop']

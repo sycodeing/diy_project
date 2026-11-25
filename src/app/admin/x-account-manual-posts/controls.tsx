@@ -27,8 +27,8 @@ export function ManualWindowControl({ taskId, accountId, helperOnline, blockedRe
   const [state, action, pending] = useActionState(accountId ? requestAccountIpWindow : requestAccountManualWindow, initial);
   return <form action={action} className="mt-3 rounded border border-line p-3">
     {accountId ? <input type="hidden" name="accountId" value={accountId} /> : <input type="hidden" name="taskId" value={taskId} />}
-    <p className="text-xs leading-5">点击按钮将通过原绑定 x-use 会话打开 X 首页，不批准或发送；同一会话复用。</p>
-    <button className={`${button} mt-2`} disabled={pending || !helperOnline || Boolean(blockedReason)}>{pending ? "请求中…" : "使用绑定代理打开 X 首页（x-use）"}</button>
+    <p className="text-xs leading-5">{accountId ? "点击后通过原 x-use 打开首页；已有同绑定会话时仅复用。" : "点击后在本助手持有的原 x-use context 同一标签打开目标帖子；不重新注入 Cookie。"}</p>
+    <button className={`${button} mt-2`} disabled={pending || !helperOnline || Boolean(blockedReason)}>{pending ? "请求中…" : accountId ? "使用绑定代理打开 X 首页（x-use）" : "在原 x-use 标签打开目标帖子"}</button>
     {blockedReason ? <p className="mt-2 text-xs text-amber-900">{blockedReason}</p> : null}
     <Feedback state={state} success="请求已交独立 x-use 手动助手。请手动刷新查看打开状态；请求不代表窗口或账号已就绪。" />
   </form>;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 // @ts-expect-error Explicit extension for Node type stripping.
-import { canonicalManualResultUrl, freshManualHelper, MANUAL_SENDER_ID, manualSenderMatches, manualReportError, MANUAL_HELPER_CAPABILITY, manualRequestPurposeValid, manualWindowBlockReason } from "./x-account-manual.ts";
+import { canonicalManualResultUrl, freshManualHelper, MANUAL_SENDER_ID, manualSenderMatches, manualReportError, MANUAL_HELPER_CAPABILITY, manualRequestPurposeValid, manualWindowBlockReason, canonicalManualTargetUrl, manualHelperRegistrationBlocked, manualHelperLifecycleUpdate } from "./x-account-manual.ts";
 // @ts-expect-error Explicit extension for Node type stripping.
 import { manualRouteRevision } from "./x-account-manual-route.ts";
 
@@ -35,6 +35,7 @@ test("result reporting needs only the fixed sender URL, without checkbox declara
 test("only new explicit X-home purpose can authorize requests", () => {
   assert.equal(manualRequestPurposeValid("account_x_home", null), true);
   assert.equal(manualRequestPurposeValid("manual_task_x_home", MANUAL_SENDER_ID), true);
+  assert.equal(manualRequestPurposeValid("manual_task_x_post", MANUAL_SENDER_ID), true);
   for (const [purpose, task] of [["legacy_ip", MANUAL_SENDER_ID], ["manual_task", MANUAL_SENDER_ID], ["account_x_home", MANUAL_SENDER_ID], ["manual_task_x_home", null], ["unknown", null]])
     assert.equal(manualRequestPurposeValid(purpose, task), false);
 });
@@ -45,4 +46,22 @@ test("native helper capabilities and terminal sessions cannot enable X-home butt
   assert.match(manualWindowBlockReason({ ...helper, helper_version: "1.0.0-native-manual" }, "r", "192.0.2.1") ?? "", /版本/);
   for (const session_state of ["closed", "blocked"]) assert.match(manualWindowBlockReason({ ...helper, session_state }, "r", "192.0.2.1") ?? "", /阻断/);
   assert.match(manualWindowBlockReason({ ...helper, session_state: "open", route_revision: "old", expected_ip: "192.0.2.1" }, "r", "192.0.2.1") ?? "", /不一致/);
+});
+
+test("post URLs are restricted to canonical exact X posts", () => {
+  assert.equal(canonicalManualTargetUrl("https://x.com/pet/status/123456"), "https://x.com/pet/status/123456");
+  for (const value of ["https://x.com/home", "https://x.com/pet/status/123456?x=1", "https://x.com.evil/pet/status/123456", null])
+    assert.equal(canonicalManualTargetUrl(value), null);
+});
+
+test("registration preserves retained old contexts and stopping does not erase their identity", () => {
+  const helper = { boot_id: "old", session_id: "owned", session_state: "open", route_revision: "r", expected_ip: "192.0.2.1", observed_x_handle: "owner" };
+  assert.equal(manualHelperRegistrationBlocked(helper, "new"), true);
+  assert.equal(manualHelperRegistrationBlocked({ ...helper, session_state: "closed" }, "new"), false);
+  const stopped = manualHelperLifecycleUpdate(helper, { operation: "stop" }, "now");
+  assert.equal(stopped.status, "stopped");
+  assert.equal(stopped.session_id, "owned");
+  assert.equal(stopped.session_state, "open");
+  assert.equal(manualHelperLifecycleUpdate(helper, { operation: "stop", sessionState: "closed" }, "now").session_state, "closed");
+  assert.equal(manualHelperLifecycleUpdate({ ...helper, session_state: "blocked" }, { operation: "heartbeat", sessionState: "open" }, "now").session_state, "blocked");
 });

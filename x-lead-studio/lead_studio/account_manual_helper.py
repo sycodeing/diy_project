@@ -19,7 +19,8 @@ from typing import Any
 HELPER_ID = "macbook-account-manual-01"
 ACCOUNT_ID = "648f2feb-3820-4306-8192-184444ef7cb8"
 ACCOUNT_KEY = "Le6wCummeratawi"
-CAPABILITY = "xuse-manual-read-v2"
+CAPABILITY = "xuse-manual-read-v3"
+HEARTBEAT_SECONDS = 5
 
 
 def request_is_current(request: dict[str, Any], boot_id: str, booted_at: str, now: float | None = None) -> bool:
@@ -28,9 +29,9 @@ def request_is_current(request: dict[str, Any], boot_id: str, booted_at: str, no
         current = time.time() if now is None else now
         return (request.get("bootId") == boot_id and request.get("accountId") == ACCOUNT_ID
                 and request.get("accountKey") == ACCOUNT_KEY
-                and request.get("purpose") in {"account_x_home", "manual_task_x_home"}
+                and request.get("purpose") in {"account_x_home", "manual_task_x_home", "manual_task_x_post"}
                 and ((request.get("purpose") == "account_x_home" and request.get("taskId") is None)
-                     or (request.get("purpose") == "manual_task_x_home" and bool(request.get("taskId"))))
+                     or (request.get("purpose") in {"manual_task_x_home", "manual_task_x_post"} and bool(request.get("taskId"))))
                 and stamp(request["createdAt"]) >= stamp(booted_at)
                 and stamp(request["expiresAt"]) > current
                 and len(str(request.get("routeRevision", ""))) == 64)
@@ -45,8 +46,13 @@ async def run_helper(site_url: str, secret: str, state_dir: Path, x_use_home: Pa
     sessions = XUseManualSessions(x_use_home or Path.home() / "Library" / "Application Support" / "x-use")
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
+    stop_reason = "operator_stop"
+    def request_stop(reason):
+        nonlocal stop_reason
+        stop_reason = reason
+        stop.set()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop.set)
+        loop.add_signal_handler(sig, request_stop, "signal_stop")
     endpoint = f"{site_url.rstrip('/')}/api/x-account-manual/helper"
     async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
         async def call(operation: str, **values: Any):
@@ -56,20 +62,43 @@ async def run_helper(site_url: str, secret: str, state_dir: Path, x_use_home: Pa
         response.raise_for_status()
         booted_at = str(response.json()["bootedAt"])
         print("Manual x-use helper online. No MCP, account config, browser or bound proxy starts before a fresh explicit request.", flush=True)
+        async def keep_heartbeat():
+            last_success = time.monotonic()
+            while not stop.is_set():
+                try:
+                    # Cached lifecycle data only: never wait for MCP/DOM while
+                    # keeping the independent backend lease alive.
+                    heartbeat = await call("heartbeat", **sessions.heartbeat_session())
+                    if heartbeat.status_code == 409:
+                        request_stop("backend_boot_expired")
+                        return
+                    heartbeat.raise_for_status()
+                    last_success = time.monotonic()
+                except Exception:
+                    print("Manual helper heartbeat unavailable; no browser retry.", flush=True)
+                    if time.monotonic() - last_success >= 40:
+                        request_stop("heartbeat_unavailable")
+                        return
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=HEARTBEAT_SECONDS)
+                except asyncio.TimeoutError:
+                    pass
+        heartbeat_task = asyncio.create_task(keep_heartbeat())
+        await asyncio.sleep(0)
         try:
             while not stop.is_set():
                 try:
                     await sessions.poll_local_status()
-                    heartbeat = await call("heartbeat", **sessions.heartbeat_session())
-                    if heartbeat.status_code == 409:
-                        stop.set(); break
-                    heartbeat.raise_for_status()
+                    if stop.is_set():
+                        break
                     response = await call("claim")
                     response.raise_for_status()
                     if response.status_code != 204:
                         request = response.json().get("request", {})
-                        if request_is_current(request, boot_id, booted_at):
-                            result = await sessions.open_home(request)
+                        if stop.is_set():
+                            result = {"status": "blocked", "message": "助手已停止接收请求；未开始打开窗口或导航。"}
+                        elif request_is_current(request, boot_id, booted_at):
+                            result = await sessions.open_post(request) if request.get("purpose") == "manual_task_x_post" else await sessions.open_home(request)
                         else:
                             sessions.blocked = True
                             result = {"status": "blocked", "message": "请求不属于当前启动或已过期，未打开窗口。"}
@@ -84,8 +113,11 @@ async def run_helper(site_url: str, secret: str, state_dir: Path, x_use_home: Pa
                 except asyncio.TimeoutError:
                     pass
         finally:
+            stop.set()
+            await heartbeat_task
+            print(f"Manual helper stopped accepting requests: {stop_reason}.", flush=True)
             try:
-                await call("stop")
+                await call("stop", **sessions.heartbeat_session())
             except Exception:
                 pass
             # Stop new requests immediately while preserving a user's live window
@@ -96,6 +128,10 @@ async def run_helper(site_url: str, secret: str, state_dir: Path, x_use_home: Pa
                 await asyncio.sleep(1)
                 await sessions.poll_local_status()
             await sessions.release_after_user_closed()
+            try:
+                await call("stop", **sessions.heartbeat_session())
+            except Exception:
+                pass
 
 
 def main() -> None:
