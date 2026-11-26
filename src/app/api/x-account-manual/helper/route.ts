@@ -13,6 +13,7 @@ const input = z.object({ operation: z.enum(["register", "heartbeat", "claim", "c
   sessionState: z.enum(["idle", "open", "blocked", "closed"]).optional(), idleNeverStarted: z.literal(true).optional(),
   routeRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(), expectedIp: z.string().max(64).optional(),
   ownerHandle: z.literal(MANUAL_SENDER_KEY).optional(), egressIp: z.string().max(64).optional(),
+  failureCategory: z.enum(["recoverable", "blocked", "closed"]).optional(),
   message: z.string().max(300).optional() });
 
 /** Dedicated helper only: never touches worker heartbeats, auto claim, approvals or cookies. */
@@ -68,6 +69,7 @@ export async function POST(request: Request) {
   // v3 navigation work. Never replace their boot or session on deployment.
   if (body.capability !== MANUAL_HELPER_CAPABILITY && body.operation === "claim") return new Response(null, { status: 204 });
   if (body.operation === "complete") {
+    if (body.failureCategory === "recoverable" && body.status !== "failed") return NextResponse.json({ error: "Invalid recoverable completion" }, { status: 400 });
     if (!body.requestId || !body.status || opened && (!body.sessionId || !body.ownerHandle || !body.egressIp)) return NextResponse.json({ error: "Invalid completion" }, { status: 400 });
     const { data: current } = await db.from("x_account_manual_open_requests").select("purpose,task_id,expected_ip")
       .eq("id", body.requestId).eq("boot_id", body.bootId).eq("status", "opening").maybeSingle();
@@ -78,7 +80,7 @@ export async function POST(request: Request) {
       observed_x_handle: body.ownerHandle ?? null,
       session_id: body.sessionId ?? null, completed_at: now, message: body.message ?? null })
       .eq("id", body.requestId).eq("boot_id", body.bootId).eq("helper_id", body.helperId).eq("status", "opening").select("id").maybeSingle();
-    if (!opened) await db.from("x_account_manual_helpers").update({ session_state: "blocked" })
+    if (!error && data && !opened && body.failureCategory !== "recoverable") await db.from("x_account_manual_helpers").update({ session_state: body.failureCategory === "closed" ? "closed" : "blocked" })
       .eq("helper_id", body.helperId).eq("boot_id", body.bootId);
     return error || !data ? NextResponse.json({ error: "Completion no longer current" }, { status: 409 }) : NextResponse.json({ ok: true });
   }

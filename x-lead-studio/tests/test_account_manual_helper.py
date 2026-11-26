@@ -47,15 +47,15 @@ def test_existing_xuse_session_is_reused_without_navigation_and_route_change_is_
     asyncio.run(check())
 
 
-def test_local_transport_error_preserves_possible_window_and_never_creates_a_new_session(tmp_path):
+def test_local_transport_error_preserves_window_without_claiming_a_permanent_platform_block(tmp_path):
     manager = XUseManualSessions(tmp_path)
     manager.client = object()
     manager.state = {"sessionState": "open", "live": True}
     async def fail(*_): raise TimeoutError()
     manager._call = fail
     asyncio.run(manager.poll_local_status())
-    assert manager.blocked and manager.has_live_window()
-    assert manager.heartbeat_session()["sessionState"] == "blocked"
+    assert not manager.blocked and manager.transport_unavailable and manager.has_live_window()
+    assert manager.heartbeat_session()["sessionState"] == "open"
 
 
 def test_only_after_user_page_closed_release_calls_end_then_closes_mcp_relay(tmp_path):
@@ -283,3 +283,49 @@ def test_backend_explicit_rejection_stops_idle_helper_without_reregister(tmp_pat
         await helper.run_helper('https://www.thebestdiyshop.com','fake-secret',tmp_path,tmp_path)
     asyncio.run(check())
     assert operations == ['register','heartbeat','stop','stop']
+
+
+def test_recoverable_post_failure_preserves_context_and_next_explicit_request_revalidates(tmp_path):
+    manager = XUseManualSessions(tmp_path)
+    manager.client = object()
+    state = {"ok": True, "sessionState": "open", "live": True, "sessionId": "one",
+             "routeRevision": "a"*64, "expectedIp": "192.0.2.1", "ownerHandle": ACCOUNT_KEY}
+    calls = []
+    async def fake(name, args):
+        calls.append(name)
+        if name == 'manual_open_post' and calls.count(name) == 1:
+            return {**state, "ok": False, "failureCategory": "recoverable", "stage": "owner_after", "reason": "identity_not_ready"}
+        return dict(state)
+    manager._call = fake
+    async def check():
+        value = request(purpose='manual_task_x_post', taskId='one', targetPostUrl='https://x.com/pet/status/123456')
+        result = await manager.open_post(value)
+        assert result['status'] == 'failed' and result['failureCategory'] == 'recoverable'
+        assert 'owner_after/identity_not_ready' in result['message']
+        assert not manager.blocked and manager.has_live_window()
+        assert calls == ['local_status', 'manual_open_post']
+        assert (await manager.open_post(dict(value, targetPostUrl='https://x.com/dog/status/654321')))['status'] == 'opened_x_post'
+        assert calls == ['local_status', 'manual_open_post', 'local_status', 'manual_open_post']
+    asyncio.run(check())
+
+
+def test_one_local_status_rpc_failure_allows_only_next_explicit_request_to_revalidate(tmp_path):
+    manager = XUseManualSessions(tmp_path)
+    original = manager.client = object()
+    state = {"ok": True, "sessionState": "open", "live": True, "sessionId": "one",
+             "routeRevision": "a"*64, "expectedIp": "192.0.2.1", "ownerHandle": ACCOUNT_KEY}
+    manager.state = dict(state)
+    calls = []
+    async def fake(name, args):
+        calls.append(name)
+        if len(calls) == 1: raise TimeoutError('offline local RPC failure')
+        return dict(state)
+    manager._call = fake
+    async def check():
+        value = request(purpose='manual_task_x_post', taskId='one', targetPostUrl='https://x.com/pet/status/123456')
+        assert (await manager.open_post(value))['status'] == 'failed'
+        assert calls == ['local_status'] and not manager.blocked and manager.has_live_window()
+        assert (await manager.open_post(value))['status'] == 'opened_x_post'
+        assert calls == ['local_status', 'local_status', 'manual_open_post']
+        assert manager.client is original
+    asyncio.run(check())

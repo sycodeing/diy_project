@@ -91,3 +91,26 @@ test("transient helper read failure returns 503 without expiring the boot", asyn
   assert.equal((await heartbeat()).status, 503);
   assert.equal(db.helper.status, "online");
 });
+
+test("recoverable completion fails only its request and never revives blocked or closed helpers", async () => {
+  const requestId = "22222222-2222-4222-8222-222222222222";
+  for (const session_state of ["open", "blocked", "closed"]) {
+    const db = memory({ session_state, last_seen_at: new Date().toISOString() }, [{ id: requestId,
+      helper_id: id, boot_id: boot, purpose: "manual_task_x_post", task_id: requestId, status: "opening", expected_ip: "192.0.2.1" }]);
+    const res = await heartbeat({ operation: "complete", requestId, status: "failed", failureCategory: "recoverable", message: "[owner_after/identity_not_ready]" });
+    assert.equal(res.status, 200);
+    assert.equal(db.requests[0].status, "failed");
+    assert.equal(db.helper.session_state, session_state);
+  }
+});
+test("platform or unclassified failures stay blocked and actual closure stays closed", async () => {
+  const requestId = "22222222-2222-4222-8222-222222222222";
+  for (const failureCategory of ["blocked", "closed", undefined]) {
+    const db = memory({ session_state: "open", last_seen_at: new Date().toISOString() }, [{ id: requestId,
+      helper_id: id, boot_id: boot, purpose: "manual_task_x_post", task_id: requestId, status: "opening", expected_ip: "192.0.2.1" }]);
+    assert.equal((await heartbeat({ operation: "complete", requestId, status: "blocked", failureCategory })).status, 200);
+    assert.equal(db.helper.session_state, failureCategory === "closed" ? "closed" : "blocked");
+  }
+  memory({ last_seen_at: new Date().toISOString() });
+  assert.equal((await heartbeat({ operation: "complete", requestId, status: "blocked", failureCategory: "recoverable" })).status, 400);
+});

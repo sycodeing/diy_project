@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import re
+import json
+import sys
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
@@ -37,18 +40,49 @@ def restricted_server():
         delattr(server, "xuse_auto_drain")
     assert not hasattr(server, "xuse_auto_drain")
     held: dict[str, Any] = {"task": None, "release": None, "ready": None, "entry": None,
-                            "blocked": False, "session_id": None, "revision": None,
+                            "blocked": False, "closed": False, "session_id": None, "revision": None,
                             "expected_ip": None, "owner": None}
     opening = asyncio.Lock()
 
     def local_state():
         metadata = ctx.session_pool.session_status(ACCOUNT)
-        live = bool(metadata.get("warm") and metadata.get("browser_connected") is not False
-                    and metadata.get("tab_closed") is not True)
-        state = "closed" if held["session_id"] and metadata.get("tab_closed") is True else "blocked" if held["blocked"] else "open" if live and held["entry"] else "closed" if held["session_id"] else "idle"
+        # A disconnected driver is not proof the operator's window vanished.
+        live = bool(metadata.get("warm") and metadata.get("tab_closed") is not True)
+        closed = held["closed"] or held["session_id"] and (metadata.get("tab_closed") is True or not metadata.get("warm") or metadata.get("browser_connected") is False)
+        state = "closed" if closed else "blocked" if held["blocked"] else "open" if live and held["entry"] and held["owner"] else "idle"
         return {"sessionState": state, "live": live, "sessionId": held["session_id"],
                 "routeRevision": held["revision"], "expectedIp": held["expected_ip"],
                 "ownerHandle": held["owner"], "transport": metadata}
+
+    def failure(error, stage, initial=False):
+        raw_reason = getattr(error, "reason", None)
+        reason = raw_reason if isinstance(raw_reason, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", raw_reason) else "technical_error"
+        category, pause_recorded = "recoverable", None
+        if isinstance(error, BrowserBlocked):
+            category = "blocked"
+            held["blocked"] = True  # Remains blocked even if pause persistence fails.
+            try:
+                ctx.safety_store.pause(ACCOUNT, reason, preserve_manual=True)
+                pause_recorded = True
+            except Exception:
+                pause_recorded = False
+        elif reason in {"ownership_mismatch", "invalid_proxy", "fixed_account_required", "binding_mismatch"}:
+            category = "blocked"
+        elif isinstance(error, PolicyError) and reason not in {"cooldown", "minute_budget", "daily_budget"}:
+            category = "blocked"  # Existing pauses are never cleared.
+        elif reason == "session_expired" or local_state()["sessionState"] == "closed":
+            category = "closed"
+        if initial and category == "recoverable":
+            category = "blocked"
+        if category == "blocked":
+            held["blocked"] = True
+        elif category == "closed":
+            held["closed"] = True
+        diagnostic = {"reason": reason, "stage": stage, "failureCategory": category}
+        if pause_recorded is not None:
+            diagnostic["pauseRecorded"] = pause_recorded
+        print(json.dumps({"event": "manual_request_failed", "at": datetime.now(timezone.utc).isoformat(), **diagnostic}), file=sys.stderr, flush=True)
+        return {"ok": False, **diagnostic, **local_state()}
 
     async def lease():
         try:
@@ -63,20 +97,27 @@ def restricted_server():
     async def owner_from_current_page(browser):
         # Same visible controls used by the existing local identity check.
         # A public profile or the Cookie owner lock is not login identity proof.
-        await browser.check_blocked()
+        # Official readiness only waits/reads this page; verify_session would
+        # navigate home and is deliberately not used here.
+        await browser.ensure_ready()
         link = browser.page.locator('[data-testid="AppTabBar_Profile_Link"]')
         switcher = browser.page.locator('[data-testid="SideNav_AccountSwitcher_Button"]')
+        await link.first.wait_for(state="visible", timeout=10000)
         if await link.count() != 1 or not await link.is_visible() or await switcher.count() != 1 or not await switcher.is_visible():
-            raise SessionError("ownership_unverified")
+            raise SessionError("identity_not_ready")
         href = await link.get_attribute("href") or ""
+        if not href:
+            raise SessionError("identity_not_ready")
         location = urlsplit(urljoin("https://x.com", href))
         if (location.scheme != "https" or location.hostname not in {"x.com", "www.x.com"}
                 or location.username or location.password or location.port or location.query or location.fragment):
-            raise SessionError("ownership_unverified")
+            raise SessionError("ownership_mismatch")
         match = re.fullmatch(r"/([A-Za-z0-9_]{1,15})/?", location.path)
         label = " ".join((await switcher.inner_text()).split())
-        if not match or match[1].lower() != ACCOUNT.lower() or not re.search(r"(?<![A-Za-z0-9_])@" + re.escape(ACCOUNT) + r"(?![A-Za-z0-9_])", label, re.I):
-            raise SessionError("ownership_unverified")
+        if not match or match[1].lower() != ACCOUNT.lower():
+            raise SessionError("ownership_mismatch")
+        if not re.search(r"(?<![A-Za-z0-9_])@" + re.escape(ACCOUNT) + r"(?![A-Za-z0-9_])", label, re.I):
+            raise SessionError("ownership_mismatch" if re.search(r"@[A-Za-z0-9_]{1,15}", label) else "identity_not_ready")
         return ACCOUNT
 
     async def reserve_owner_read():
@@ -104,6 +145,7 @@ def restricted_server():
                 if held["revision"] != revision or held["expected_ip"] != expected_ip:
                     held["blocked"] = True
                 return {"ok": local_state()["sessionState"] == "open", "reused": True, **local_state()}
+            stage = "initial_open"
             try:
                 _, raw, _ = resolve_account(ctx, ACCOUNT)
                 require_active(raw, ACCOUNT)
@@ -114,9 +156,11 @@ def restricted_server():
                 # in memory. No accounts file, active flag or Cookie is written.
                 ctx.config_loader.accounts = [dict(a, proxy=proxy_url) if a.get("account_id") == ACCOUNT else a
                                               for a in ctx.config_loader.accounts]
+                stage = "proxy_probe"
                 result = await probe(account=ACCOUNT)
                 if not result.get("ok") or result.get("egress_ip") != expected_ip:
                     raise SessionError("invalid_proxy")
+                stage = "initial_ready"
                 await browser_call(ctx, ACCOUNT, "ensure_ready", kind="read", recovery_read=False)
                 # Acquire an already-established entry only; never silently cold
                 # start again in the gap between readiness and the long lease.
@@ -132,59 +176,61 @@ def restricted_server():
                     raise SessionError("session_expired")
                 if ctx.session_pool.entry_for(ACCOUNT) is not existing:
                     raise SessionError("session_expired")
+                stage = "owner_ready"
                 action_id = await reserve_owner_read()
                 try:
                     held["owner"] = await owner_from_current_page(held["entry"])
                 except BaseException:
                     ctx.safety_store.finish(ACCOUNT, action_id, "failed")
-                    ctx.safety_store.pause(ACCOUNT, "manual_pause", preserve_manual=True)
                     raise
                 ctx.safety_store.finish(ACCOUNT, action_id, "succeeded")
                 return {"ok": True, "reused": False, **local_state()}
             except BaseException as error:
-                held["blocked"] = True
-                if isinstance(error, BrowserBlocked):
-                    ctx.safety_store.pause(ACCOUNT, error.reason, preserve_manual=True)
                 if isinstance(error, asyncio.CancelledError):
                     raise
-                # Preserve a warm leased page for the operator. Cold-start errors
-                # retain the official pool's cleanup behavior; no fake promise.
-                return {"ok": False, "reason": getattr(error, "reason", "manual_open_failed"), **local_state()}
+                # Initialization failures keep their prior conservative terminal
+                # lifecycle; this patch adds no new initialization retry entry.
+                return failure(error, stage, initial=True)
 
     @server.tool()
     async def manual_open_post(account: str, revision: str, expected_ip: str, session_id: str, target_url: str) -> dict:
         async with opening:
-            if (account != ACCOUNT or not re.fullmatch(r"https://x\.com/[A-Za-z0-9_]{1,15}/status/[0-9]{5,30}", target_url)
-                    or session_id != held["session_id"] or revision != held["revision"]
-                    or expected_ip != held["expected_ip"] or local_state()["sessionState"] != "open"):
-                return {"ok": False, "reason": "existing_session_required", **local_state()}
-            action_id = None
+            stage, action_id = "binding", None
             try:
+                if account != ACCOUNT or revision != held["revision"] or expected_ip != held["expected_ip"] or session_id != held["session_id"]:
+                    raise SessionError("binding_mismatch")
+                if not re.fullmatch(r"https://x\.com/[A-Za-z0-9_]{1,15}/status/[0-9]{5,30}", target_url):
+                    raise SessionError("invalid_target")
+                state = local_state()
+                if state["sessionState"] != "open":
+                    return {"ok": False, "reason": "existing_session_required", "stage": stage,
+                            "failureCategory": "closed" if state["sessionState"] == "closed" else "blocked", **state}
                 _, raw, _ = resolve_account(ctx, ACCOUNT)
                 require_active(raw, ACCOUNT)
                 ctx.safety_store.check_pause(ACCOUNT)
-                # The long lease already owns this pool entry. Calling the
-                # ordinary pool wrapper here would deadlock or allow cold start.
-                if ctx.session_pool.entry_for(ACCOUNT).browser_manager is not held["entry"]:
+                existing = ctx.session_pool.entry_for(ACCOUNT)
+                if existing is None or existing.closing or existing.browser_manager is not held["entry"]:
                     raise SessionError("session_expired")
+                stage = "policy"
                 action_id = ctx.safety_store.reserve(ACCOUNT, "read", None,
                     {"manual": "open_post"}, read_operation="navigate")
+                stage = "owner_before"
                 await owner_from_current_page(held["entry"])
+                stage = "navigate"
                 await held["entry"].navigate(target_url)
+                stage = "owner_after"
                 held["owner"] = await owner_from_current_page(held["entry"])
                 ctx.safety_store.finish(ACCOUNT, action_id, "succeeded")
                 return {"ok": True, "reused": True, **local_state()}
             except BaseException as error:
-                held["blocked"] = True
                 if action_id:
-                    ctx.safety_store.finish(ACCOUNT, action_id, "failed")
-                if isinstance(error, BrowserBlocked):
-                    ctx.safety_store.pause(ACCOUNT, error.reason, preserve_manual=True)
-                elif not isinstance(error, PolicyError):
-                    ctx.safety_store.pause(ACCOUNT, "manual_pause", preserve_manual=True)
+                    try:
+                        ctx.safety_store.finish(ACCOUNT, action_id, "failed")
+                    except Exception:
+                        pass  # Preserve the original platform/identity failure classification.
                 if isinstance(error, asyncio.CancelledError):
                     raise
-                return {"ok": False, "reason": getattr(error, "reason", "post_open_failed"), **local_state()}
+                return failure(error, stage)
 
     @server.tool()
     async def local_status() -> dict:
