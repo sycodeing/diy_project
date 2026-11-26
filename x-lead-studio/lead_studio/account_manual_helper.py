@@ -62,8 +62,10 @@ async def run_helper(site_url: str, secret: str, state_dir: Path, x_use_home: Pa
         response.raise_for_status()
         booted_at = str(response.json()["bootedAt"])
         print("Manual x-use helper online. No MCP, account config, browser or bound proxy starts before a fresh explicit request.", flush=True)
+        backend_ready = asyncio.Event()
+        last_success = 0.0
         async def keep_heartbeat():
-            last_success = time.monotonic()
+            nonlocal last_success
             while not stop.is_set():
                 try:
                     # Cached lifecycle data only: never wait for MCP/DOM while
@@ -73,10 +75,12 @@ async def run_helper(site_url: str, secret: str, state_dir: Path, x_use_home: Pa
                         request_stop("backend_boot_expired")
                         return
                     heartbeat.raise_for_status()
-                    last_success = time.monotonic()
+                    last_success = time.time()
+                    backend_ready.set()
                 except Exception:
+                    backend_ready.clear()
                     print("Manual helper heartbeat unavailable; no browser retry.", flush=True)
-                    if time.monotonic() - last_success >= 40:
+                    if not sessions.can_renew_idle_heartbeat() and time.time() - last_success >= 40:
                         request_stop("heartbeat_unavailable")
                         return
                 try:
@@ -89,13 +93,19 @@ async def run_helper(site_url: str, secret: str, state_dir: Path, x_use_home: Pa
             while not stop.is_set():
                 try:
                     await sessions.poll_local_status()
+                    if not backend_ready.is_set() or time.time() - last_success >= 40:
+                        try:
+                            await asyncio.wait_for(stop.wait(), timeout=HEARTBEAT_SECONDS)
+                        except asyncio.TimeoutError:
+                            pass
+                        continue
                     if stop.is_set():
                         break
                     response = await call("claim")
                     response.raise_for_status()
                     if response.status_code != 204:
                         request = response.json().get("request", {})
-                        if stop.is_set():
+                        if stop.is_set() or not backend_ready.is_set() or time.time() - last_success >= 40:
                             result = {"status": "blocked", "message": "助手已停止接收请求；未开始打开窗口或导航。"}
                         elif request_is_current(request, boot_id, booted_at):
                             result = await sessions.open_post(request) if request.get("purpose") == "manual_task_x_post" else await sessions.open_home(request)
@@ -109,7 +119,7 @@ async def run_helper(site_url: str, secret: str, state_dir: Path, x_use_home: Pa
                     # Never print response bodies, proxy credentials or local browser paths.
                     print("Manual helper request failed; no automatic browser retry.", flush=True)
                 try:
-                    await asyncio.wait_for(stop.wait(), timeout=5)
+                    await asyncio.wait_for(stop.wait(), timeout=HEARTBEAT_SECONDS)
                 except asyncio.TimeoutError:
                     pass
         finally:

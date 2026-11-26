@@ -3,14 +3,14 @@ import { z } from "zod";
 import { getXReplyWorkerSecret } from "@/lib/env";
 import { isAuthorizedXReplyWorker } from "@/lib/x-reply-worker-auth";
 import { decryptProxyUrl } from "@/lib/x-proxy-crypto";
-import { MANUAL_HELPER_ID, MANUAL_HELPER_CAPABILITY, manualRequestPurposeValid, MANUAL_SENDER_ID, MANUAL_SENDER_KEY, freshManualHelper, canonicalManualTargetUrl, manualHelperRegistrationBlocked, manualHelperLifecycleUpdate } from "@/lib/x-account-manual";
+import { MANUAL_HELPER_ID, MANUAL_HELPER_CAPABILITY, manualRequestPurposeValid, MANUAL_SENDER_ID, MANUAL_SENDER_KEY, freshManualHelper, canonicalManualTargetUrl, manualHelperRegistrationBlocked, manualHelperLifecycleUpdate, canRenewIdleManualHeartbeat, manualRequestPreventsIdleRenewal } from "@/lib/x-account-manual";
 import { manualDb, loadManualRoute } from "@/lib/x-account-manual-server";
 
 export const runtime = "nodejs";
 const input = z.object({ operation: z.enum(["register", "heartbeat", "claim", "complete", "stop"]),
   helperId: z.literal(MANUAL_HELPER_ID), capability: z.enum(["xuse-manual-read-v2", MANUAL_HELPER_CAPABILITY]), bootId: z.string().uuid(), requestId: z.string().uuid().optional(),
   sessionId: z.string().uuid().optional(), status: z.enum(["opened_x_home", "opened_x_post", "blocked", "failed"]).optional(),
-  sessionState: z.enum(["idle", "open", "blocked", "closed"]).optional(),
+  sessionState: z.enum(["idle", "open", "blocked", "closed"]).optional(), idleNeverStarted: z.literal(true).optional(),
   routeRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(), expectedIp: z.string().max(64).optional(),
   ownerHandle: z.literal(MANUAL_SENDER_KEY).optional(), egressIp: z.string().max(64).optional(),
   message: z.string().max(300).optional() });
@@ -34,14 +34,35 @@ export async function POST(request: Request) {
       session_id: null, route_revision: null, expected_ip: null, observed_x_handle: null, session_state: "idle" });
     return error ? NextResponse.json({ error: "Manual registration failed" }, { status: 503 }) : NextResponse.json({ bootedAt: now });
   }
-  const { data: helper } = await db.from("x_account_manual_helpers").select("*").eq("helper_id", body.helperId).eq("boot_id", body.bootId).maybeSingle();
-  if (!helper || helper.helper_version !== body.capability || body.operation !== "stop" && !freshManualHelper({ ...helper, helper_version: MANUAL_HELPER_CAPABILITY })) return NextResponse.json({ error: "Manual helper boot expired" }, { status: 409 });
+  const { data: helper, error: helperError } = await db.from("x_account_manual_helpers").select("*").eq("helper_id", body.helperId).eq("boot_id", body.bootId).maybeSingle();
+  if (helperError) return NextResponse.json({ error: "Manual helper state unavailable" }, { status: 503 });
+  if (!helper || helper.helper_version !== body.capability) return NextResponse.json({ error: "Manual helper boot mismatch" }, { status: 409 });
+  const stale = !freshManualHelper({ ...helper, helper_version: MANUAL_HELPER_CAPABILITY });
+  if (body.operation !== "stop" && stale) {
+    if (!canRenewIdleManualHeartbeat(helper, body)) return NextResponse.json({ error: "Manual helper boot expired" }, { status: 409 });
+    // Fence pending work before making the lease fresh. A competing old claim
+    // either loses its pending CAS or appears in the subsequent audit read.
+    const { error: fenceError } = await db.from("x_account_manual_open_requests").update({ status: "failed", completed_at: now,
+      message: "助手心跳中断；旧请求已失效，未自动重放。请本人重新点击。" })
+      .eq("helper_id", body.helperId).eq("boot_id", body.bootId).eq("status", "pending");
+    if (fenceError) return NextResponse.json({ error: "Idle heartbeat recovery unavailable" }, { status: 503 });
+    const { data: prior, error: priorError } = await db.from("x_account_manual_open_requests").select("status,claimed_at")
+      .eq("helper_id", body.helperId).eq("boot_id", body.bootId);
+    if (priorError) return NextResponse.json({ error: "Idle heartbeat recovery unavailable" }, { status: 503 });
+    if ((prior ?? []).some(manualRequestPreventsIdleRenewal)) return NextResponse.json({ error: "Manual session history requires review" }, { status: 409 });
+  }
   if (body.operation === "heartbeat" || body.operation === "stop") {
     if (body.operation === "heartbeat" && (!body.sessionState || body.sessionState === "open" && (!body.sessionId || !body.routeRevision || !body.expectedIp || body.ownerHandle !== MANUAL_SENDER_KEY)))
       return NextResponse.json({ error: "Current local session state required" }, { status: 400 });
-    const { error } = await db.from("x_account_manual_helpers").update(manualHelperLifecycleUpdate(helper, { ...body, operation: body.operation }, now))
+    let update = db.from("x_account_manual_helpers").update(manualHelperLifecycleUpdate(helper, { ...body, operation: body.operation }, now))
       .eq("helper_id", body.helperId).eq("boot_id", body.bootId);
-    return error ? NextResponse.json({ error: "Manual heartbeat failed" }, { status: 503 }) : NextResponse.json({ ok: true });
+    if (body.operation === "heartbeat") {
+      update = update.eq("status", "online").eq("session_state", helper.session_state);
+      update = helper.session_id ? update.eq("session_id", helper.session_id) : update.is("session_id", null);
+    }
+    const { data: updated, error } = await update.select("helper_id").maybeSingle();
+    return error ? NextResponse.json({ error: "Manual heartbeat failed" }, { status: 503 })
+      : !updated ? NextResponse.json({ error: "Manual helper state changed" }, { status: 409 }) : NextResponse.json({ ok: true });
   }
   // Old helpers can keep their original user window alive, but cannot claim
   // v3 navigation work. Never replace their boot or session on deployment.

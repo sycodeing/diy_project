@@ -88,3 +88,15 @@ export function manualHelperLifecycleUpdate(helper: Record<string, unknown>, bod
     session_state: stopped && body.sessionState === "closed" ? "closed"
       : ["blocked", "closed"].includes(String(helper.session_state)) ? helper.session_state : body.sessionState ?? helper.session_state };
 }
+
+/** Only a never-started idle owner may renew its backend lease after sleep. */
+export function canRenewIdleManualHeartbeat(helper: { status: string; session_state?: string; session_id?: string | null }, body: {
+  operation: string; sessionState?: string; sessionId?: string; idleNeverStarted?: boolean;
+}) {
+  return body.operation === "heartbeat" && body.idleNeverStarted === true && body.sessionState === "idle"
+    && !body.sessionId && helper.status === "online" && helper.session_state === "idle" && !helper.session_id;
+}
+
+export function manualRequestPreventsIdleRenewal(request: { status: string; claimed_at?: string | null }) {
+  return Boolean(request.claimed_at) || !["pending", "failed"].includes(request.status);
+}

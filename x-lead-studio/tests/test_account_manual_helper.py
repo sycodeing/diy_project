@@ -25,7 +25,7 @@ def test_new_purpose_boot_and_expiry_prevent_native_or_previous_authorization_re
 def test_existing_xuse_session_is_reused_without_navigation_and_route_change_is_terminal(tmp_path):
     manager = XUseManualSessions(tmp_path)
     assert manager.client is None and manager.resources is None
-    assert manager.heartbeat_session() == {"sessionState": "idle"}
+    assert manager.heartbeat_session() == {"sessionState": "idle", "idleNeverStarted": True}
     manager.client = object()
     state = {"ok": True, "sessionState": "open", "live": True, "sessionId": "one",
              "routeRevision": "a" * 64, "expectedIp": "192.0.2.1", "ownerHandle": ACCOUNT_KEY}
@@ -215,3 +215,71 @@ def test_stop_during_claim_does_not_start_the_returned_navigation(tmp_path, monk
         await helper.run_helper("https://www.thebestdiyshop.com", "fake-secret", tmp_path, tmp_path)
     asyncio.run(check())
     assert operations == ['register', 'heartbeat', 'claim', 'complete', 'stop', 'stop']
+
+
+def test_idle_network_recovery_after_sleep_retries_only_backend_without_register_or_x(tmp_path, monkeypatch):
+    import builtins
+    import httpx
+    import lead_studio.account_manual_helper as helper
+    callbacks, operations = [], []
+    clock = {"now": 1000., "claims": 0, "beats": 0}
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): pass
+        async def post(self, url, *, headers, json):
+            assert url == "https://www.thebestdiyshop.com/api/x-account-manual/helper"
+            op = json['operation']
+            operations.append(op)
+            if op == "heartbeat":
+                clock['beats'] += 1
+                assert json['idleNeverStarted'] is True
+                if clock['beats'] == 2: raise httpx.ConnectError("offline simulated wake")
+            if op == "claim":
+                clock['claims'] += 1
+                if clock['claims'] == 1: clock['now'] += 70  # >45s sleep/network gap
+                else: callbacks[0]()
+            payload = {"bootedAt": "2026-11-24T10:00:00Z"} if op == "register" else {"ok": True}
+            return httpx.Response(204 if op == "claim" else 200, json=payload, request=httpx.Request("POST", url))
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: Client())
+    monkeypatch.setattr(helper, "HEARTBEAT_SECONDS", .001)
+    monkeypatch.setattr(helper.time, "time", lambda: clock['now'])
+    original = builtins.__import__
+    def guarded(name, *args, **kwargs):
+        assert name.split('.')[0] not in {"xuse", "mcp", "patchright"}
+        return original(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    async def check():
+        monkeypatch.setattr(asyncio.get_running_loop(), "add_signal_handler", lambda _sig, callback, *args: callbacks.append(lambda: callback(*args)))
+        await helper.run_helper("https://www.thebestdiyshop.com", "fake-secret", tmp_path, tmp_path / 'unused-xuse')
+    asyncio.run(check())
+    assert operations.count('register') == 1 and clock['beats'] >= 3
+    assert operations.count('claim') == 2 and operations[-2:] == ['stop', 'stop']
+    assert not (tmp_path / 'unused-xuse').exists()
+
+
+def test_never_started_proof_is_latched_off_after_any_attempt_even_if_client_is_gone(tmp_path):
+    manager = XUseManualSessions(tmp_path)
+    assert manager.can_renew_idle_heartbeat()
+    manager.ever_attempted = True
+    manager.client = manager.resources = None
+    assert not manager.can_renew_idle_heartbeat()
+    assert 'idleNeverStarted' not in manager.heartbeat_session()
+
+
+def test_backend_explicit_rejection_stops_idle_helper_without_reregister(tmp_path, monkeypatch):
+    import httpx
+    import lead_studio.account_manual_helper as helper
+    operations = []
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): pass
+        async def post(self, url, *, headers, json):
+            operations.append(json['operation'])
+            payload = {"bootedAt": "2026-11-24T10:00:00Z"} if json['operation'] == 'register' else {"ok": True}
+            return httpx.Response(409 if json['operation'] == 'heartbeat' else 200, json=payload, request=httpx.Request('POST',url))
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **_: Client())
+    async def check():
+        monkeypatch.setattr(asyncio.get_running_loop(), 'add_signal_handler', lambda *_: None)
+        await helper.run_helper('https://www.thebestdiyshop.com','fake-secret',tmp_path,tmp_path)
+    asyncio.run(check())
+    assert operations == ['register','heartbeat','stop','stop']

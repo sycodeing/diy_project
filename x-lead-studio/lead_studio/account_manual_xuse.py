@@ -19,12 +19,20 @@ class XUseManualSessions:
         self.client: Any = None
         self.state: dict[str, Any] = {"sessionState": "idle", "live": False}
         self.blocked = False
+        self.ever_attempted = False
 
     def has_live_window(self):
         return bool(self.state.get("live"))
 
+    def can_renew_idle_heartbeat(self):
+        return (not self.ever_attempted and not self.blocked and self.client is None
+                and self.resources is None and self.state.get("sessionState") == "idle"
+                and not self.state.get("sessionId") and not self.has_live_window())
+
     def heartbeat_session(self):
         values = {k: self.state[k] for k in ("sessionId", "routeRevision", "expectedIp", "ownerHandle") if self.state.get(k)}
+        if self.can_renew_idle_heartbeat():
+            values["idleNeverStarted"] = True
         return {"sessionState": "closed" if self.state.get("sessionState") == "closed" else "blocked" if self.blocked else self.state.get("sessionState", "idle"), **values}
 
     async def poll_local_status(self):
@@ -58,6 +66,7 @@ class XUseManualSessions:
             return self._opened("已复用同一 x-use 绑定会话；未导航、刷新或创建标签。")
         if self.blocked:
             return {"status": "blocked", "message": "本次助手已阻断，不自动重试。"}
+        self.ever_attempted = True
         resources = AsyncExitStack()
         self.resources = resources
         open_attempted = False

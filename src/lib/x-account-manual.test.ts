@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 // @ts-expect-error Explicit extension for Node type stripping.
-import { canonicalManualResultUrl, freshManualHelper, MANUAL_SENDER_ID, manualSenderMatches, manualReportError, MANUAL_HELPER_CAPABILITY, manualRequestPurposeValid, manualWindowBlockReason, canonicalManualTargetUrl, manualHelperRegistrationBlocked, manualHelperLifecycleUpdate } from "./x-account-manual.ts";
+import { canonicalManualResultUrl, freshManualHelper, MANUAL_SENDER_ID, manualSenderMatches, manualReportError, MANUAL_HELPER_CAPABILITY, manualRequestPurposeValid, manualWindowBlockReason, canonicalManualTargetUrl, manualHelperRegistrationBlocked, manualHelperLifecycleUpdate, canRenewIdleManualHeartbeat, manualRequestPreventsIdleRenewal } from "./x-account-manual.ts";
 // @ts-expect-error Explicit extension for Node type stripping.
 import { manualRouteRevision } from "./x-account-manual-route.ts";
 
@@ -64,4 +64,19 @@ test("registration preserves retained old contexts and stopping does not erase t
   assert.equal(stopped.session_state, "open");
   assert.equal(manualHelperLifecycleUpdate(helper, { operation: "stop", sessionState: "closed" }, "now").session_state, "closed");
   assert.equal(manualHelperLifecycleUpdate({ ...helper, session_state: "blocked" }, { operation: "heartbeat", sessionState: "open" }, "now").session_state, "blocked");
+});
+
+test("only a never-started online idle heartbeat can renew after sleep", () => {
+  const helper = { status: "online", session_state: "idle", session_id: null };
+  const body = { operation: "heartbeat", sessionState: "idle", idleNeverStarted: true };
+  assert.equal(canRenewIdleManualHeartbeat(helper, body), true);
+  for (const change of [{ status: "stopped" }, { session_state: "open" }, { session_state: "blocked" }, { session_state: "closed" }, { session_id: "owned" }])
+    assert.equal(canRenewIdleManualHeartbeat({ ...helper, ...change }, body), false);
+  assert.equal(canRenewIdleManualHeartbeat(helper, { ...body, idleNeverStarted: false }), false);
+  assert.equal(canRenewIdleManualHeartbeat(helper, { ...body, sessionId: "owned" }), false);
+  assert.equal(manualRequestPreventsIdleRenewal({ status: "pending" }), false);
+  assert.equal(manualRequestPreventsIdleRenewal({ status: "failed", claimed_at: null }), false);
+  for (const status of ["opening", "blocked", "opened_x_home", "opened_x_post"])
+    assert.equal(manualRequestPreventsIdleRenewal({ status }), true);
+  assert.equal(manualRequestPreventsIdleRenewal({ status: "failed", claimed_at: "claimed" }), true);
 });
